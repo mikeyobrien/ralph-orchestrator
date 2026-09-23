@@ -15,13 +15,21 @@
 //! | `hats.<id>.instructions`                | `roles/<id>.md` (`prompt_file`)   |
 //! | `hats.<id>.triggers` (inverted)         | `[handoff] <event> = [role, ...]` |
 //! | `hats.<id>.concurrency` (when > 1)      | `[[role]] concurrency`            |
-//! | `hats.<id>.aggregate`                   | `[[role]] aggregate`              |
+//! | any hat `concurrency` > 1               | `parallel.enabled`, `max_branches` |
+//! | concurrent `hats.<id>.timeout`          | `parallel.branch_timeout_ms`      |
+//! | `hats.<id>.aggregate`                   | `[[role]] aggregate` on the concurrent role that feeds it |
 //! | `event_loop.completion_promise`         | `event_loop.completion_promise`   |
 //! | `event_loop.required_events`            | `event_loop.required_events`      |
 //! | `event_loop.max_iterations`             | `event_loop.max_iterations`       |
 //! | `event_loop.max_runtime_seconds`         | `event_loop.max_runtime` (ms)     |
 //! | `event_loop.max_cost_usd`                | `event_loop.max_cost_usd`         |
 //! | `core.guardrails`                        | `harness.md`                      |
+//!
+//! Autoloop resolves a declarative wave inside one iteration, joins it, and
+//! reads the wave's aggregate strategy from the concurrent role itself. So a
+//! Ralph aggregator hat's `aggregate` moves onto the concurrent role whose
+//! `publishes` feed its `triggers`. An aggregator with no such producer has
+//! nothing to wait for and is rejected rather than silently ignored.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -82,6 +90,8 @@ pub fn generate_preset(config: &RalphConfig, dir: &Path) -> io::Result<()> {
         handoff.insert("loop.start".to_string(), vec![starter]);
     }
 
+    let role_aggregates = concurrent_role_aggregates(&hats)?;
+
     // topology.toml
     let mut topo = String::new();
     topo.push_str(&format!("name = {}\n", q("ralph")));
@@ -98,7 +108,7 @@ pub fn generate_preset(config: &RalphConfig, dir: &Path) -> io::Result<()> {
         if hat.concurrency > 1 {
             topo.push_str(&format!("concurrency = {}\n", hat.concurrency));
         }
-        if let Some(aggregate) = &hat.aggregate {
+        if let Some(aggregate) = role_aggregates.get(id.as_str()) {
             // Ralph's aggregate schema currently accepts only wait_for_all.
             let mode = "wait_for_all";
             let timeout_ms = u64::from(aggregate.timeout) * 1_000;
@@ -317,6 +327,70 @@ pub(crate) fn autoloop_backend_spec(
 }
 
 /// Write `autoloops.toml` from ralph's event-loop config.
+/// Map each aggregator hat's `aggregate` onto the concurrent role(s) whose
+/// published events trigger it, keyed by that concurrent role's id.
+fn concurrent_role_aggregates<'a>(
+    hats: &[(&'a String, &'a ralph_core::HatConfig)],
+) -> io::Result<BTreeMap<&'a str, &'a ralph_core::AggregateConfig>> {
+    let mut out = BTreeMap::new();
+    for (aggregator_id, aggregator) in hats {
+        let Some(aggregate) = &aggregator.aggregate else {
+            continue;
+        };
+        let producers: Vec<&str> = hats
+            .iter()
+            .filter(|(_, hat)| {
+                hat.concurrency > 1
+                    && hat
+                        .publishes
+                        .iter()
+                        .any(|event| aggregator.triggers.contains(event))
+            })
+            .map(|(id, _)| id.as_str())
+            .collect();
+        if producers.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "hat {aggregator_id:?} sets `aggregate`, but no hat with `concurrency > 1` publishes any of its triggers; \
+                     autoloop aggregates a declarative wave on the concurrent role, so remove `aggregate` or add a concurrent producer"
+                ),
+            ));
+        }
+        for producer in producers {
+            out.insert(producer, aggregate);
+        }
+    }
+    Ok(out)
+}
+
+/// `parallel.*` settings that turn on autoloop's declarative waves.
+///
+/// Autoloop ignores `[[role]] concurrency` unless `parallel.enabled` is true,
+/// and caps each wave at `parallel.max_branches` (default 3), so both must be
+/// written whenever any hat is concurrent.
+fn parallel_settings(config: &RalphConfig) -> Vec<(&'static str, String)> {
+    let concurrent: Vec<&ralph_core::HatConfig> = config
+        .hats
+        .values()
+        .filter(|hat| hat.concurrency > 1)
+        .collect();
+    let Some(max_branches) = concurrent.iter().map(|hat| hat.concurrency).max() else {
+        return Vec::new();
+    };
+    let mut settings = vec![
+        ("parallel.enabled", "true".to_string()),
+        ("parallel.max_branches", max_branches.to_string()),
+    ];
+    if let Some(timeout) = concurrent.iter().filter_map(|hat| hat.timeout).max() {
+        settings.push((
+            "parallel.branch_timeout_ms",
+            (u64::from(timeout) * 1_000).to_string(),
+        ));
+    }
+    settings
+}
+
 fn write_autoloops(config: &RalphConfig, dir: &Path) -> io::Result<()> {
     let el = &config.event_loop;
     let mut auto = String::new();
@@ -350,6 +424,9 @@ fn write_autoloops(config: &RalphConfig, dir: &Path) -> io::Result<()> {
             "event_loop.required_events = {}\n",
             arr(&el.required_events)
         ));
+    }
+    for (key, value) in parallel_settings(config) {
+        auto.push_str(&format!("{key} = {value}\n"));
     }
     auto.push('\n');
     for (key, value) in autoloop_backend_spec(config)? {
@@ -550,10 +627,17 @@ hats:
     }
 
     #[test]
-    fn writes_hat_aggregate_with_millisecond_timeout() {
+    fn moves_hat_aggregate_onto_the_concurrent_producer_in_milliseconds() {
         let cfg: RalphConfig = serde_yaml::from_str(
             r#"
 hats:
+  reviewer:
+    name: Reviewer
+    description: "reviews"
+    triggers: ["review.file"]
+    publishes: ["review.done"]
+    instructions: "Review it."
+    concurrency: 2
   synthesizer:
     name: Synthesizer
     description: "synthesizes"
@@ -572,8 +656,85 @@ hats:
         generate_preset(&cfg, dir.path()).unwrap();
 
         let topo = fs::read_to_string(dir.path().join("topology.toml")).unwrap();
-        assert!(topo.contains("id = \"synthesizer\"\n"));
-        assert!(topo.contains("aggregate = { mode = \"wait_for_all\", timeout_ms = 300000 }\n"));
+        let aggregate = "aggregate = { mode = \"wait_for_all\", timeout_ms = 300000 }\n";
+        assert!(role_block(&topo, "reviewer").contains(aggregate));
+        assert!(!role_block(&topo, "synthesizer").contains("aggregate"));
+    }
+
+    #[test]
+    fn rejects_an_aggregate_hat_with_no_concurrent_producer() {
+        let cfg: RalphConfig = serde_yaml::from_str(
+            r#"
+hats:
+  synthesizer:
+    name: Synthesizer
+    description: "synthesizes"
+    triggers: ["review.done"]
+    publishes: ["review.complete"]
+    instructions: "Synthesize it."
+    aggregate:
+      mode: wait_for_all
+      timeout: 300
+"#,
+        )
+        .expect("valid aggregate hat config");
+        let cfg = pin_backend(cfg);
+        let dir = tempfile::tempdir().unwrap();
+
+        let error = generate_preset(&cfg, dir.path()).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        let message = error.to_string();
+        assert!(message.contains("\"synthesizer\""), "{message}");
+        assert!(message.contains("concurrency > 1"), "{message}");
+    }
+
+    #[test]
+    fn enables_autoloop_parallel_waves_for_concurrent_hats() {
+        let cfg: RalphConfig = serde_yaml::from_str(
+            r#"
+hats:
+  reviewer:
+    name: Reviewer
+    description: "reviews"
+    triggers: ["review.file"]
+    publishes: ["review.done"]
+    instructions: "Review it."
+    concurrency: 5
+    timeout: 600
+"#,
+        )
+        .expect("valid concurrent hat config");
+        let cfg = pin_backend(cfg);
+        let dir = tempfile::tempdir().unwrap();
+
+        generate_preset(&cfg, dir.path()).unwrap();
+
+        let auto = fs::read_to_string(dir.path().join("autoloops.toml")).unwrap();
+        assert!(auto.contains("parallel.enabled = true\n"), "{auto}");
+        // autoloop caps a wave at max_branches (default 3), so 5 must be explicit.
+        assert!(auto.contains("parallel.max_branches = 5\n"), "{auto}");
+        assert!(
+            auto.contains("parallel.branch_timeout_ms = 600000\n"),
+            "{auto}"
+        );
+    }
+
+    #[test]
+    fn leaves_autoloop_parallel_off_without_concurrent_hats() {
+        let dir = tempfile::tempdir().unwrap();
+
+        generate_preset(&config_with_hats(), dir.path()).unwrap();
+
+        let auto = fs::read_to_string(dir.path().join("autoloops.toml")).unwrap();
+        assert!(!auto.contains("parallel."), "{auto}");
+    }
+
+    fn role_block<'a>(topo: &'a str, id: &str) -> &'a str {
+        let id_line = format!("id = \"{id}\"");
+        topo.split("[[role]]\n")
+            .find(|block| block.lines().any(|line| line == id_line))
+            .unwrap_or_else(|| panic!("role {id} should be generated"))
     }
 
     #[test]
@@ -592,18 +753,19 @@ hats:
         generate_preset(&cfg, dir.path()).expect("wave review preset should generate");
 
         let topo = fs::read_to_string(dir.path().join("topology.toml")).unwrap();
-        let reviewer = topo
-            .split("[[role]]\n")
-            .find(|block| block.lines().any(|line| line == "id = \"reviewer\""))
-            .expect("reviewer role should be generated");
+        let reviewer = role_block(&topo, "reviewer");
         assert!(reviewer.contains("concurrency = 3\n"));
-
-        let synthesizer = topo
-            .split("[[role]]\n")
-            .find(|block| block.lines().any(|line| line == "id = \"synthesizer\""))
-            .expect("synthesizer role should be generated");
+        // The synthesizer's aggregate governs the reviewer wave it waits on.
         assert!(
-            synthesizer.contains("aggregate = { mode = \"wait_for_all\", timeout_ms = 300000 }\n")
+            reviewer.contains("aggregate = { mode = \"wait_for_all\", timeout_ms = 300000 }\n")
+        );
+        assert!(!role_block(&topo, "synthesizer").contains("aggregate"));
+        let auto = fs::read_to_string(dir.path().join("autoloops.toml")).unwrap();
+        assert!(auto.contains("parallel.enabled = true\n"), "{auto}");
+        assert!(auto.contains("parallel.max_branches = 3\n"), "{auto}");
+        assert!(
+            auto.contains("parallel.branch_timeout_ms = 600000\n"),
+            "{auto}"
         );
         assert!(topo.contains("\"review.perspective\" = [\"reviewer\"]\n"));
         assert!(topo.contains("\"review.done\" = [\"synthesizer\"]\n"));
