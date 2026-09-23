@@ -1,0 +1,9 @@
+=== sample 23 rc=101
+  left: VersionUnknown { path: "/var/tmp/.tmpkmaQY0/autoloop", source: Vendored }
+ right: Ok { path: "/var/tmp/.tmpkmaQY0/autoloop", version: "0.10.1", source: Vendored }
+    autoloop_health::tests::autoloop_health_uses_executable_version_without_package_json
+test result: FAILED. 738 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.08s
+=== sample 43 rc=101
+    testing::fake_autoloop::tests::barrier_touches_ready_and_waits_for_release
+test result: FAILED. 738 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.23s
+samples=60 fails=2 health_mentions=5

@@ -1,0 +1,17 @@
+    Checking reqwest v0.12.28
+    Checking tracing-subscriber v0.3.22
+    Checking chrono v0.4.42
+    Checking ralph-proto v3.0.0 (/home/mobrienv/Developer/ralph-orchestrator.worktrees/v3-complete/crates/ralph-proto)
+    Checking ratatui-widgets v0.3.0
+    Checking termimad v0.31.3
+    Checking ahash v0.8.12
+    Checking uuid v1.21.0
+    Checking insta v1.46.1
+    Checking ratatui-macros v0.7.0
+    Checking jsonschema v0.18.3
+    Checking ratatui v0.30.0
+    Checking ralph-core v3.0.0 (/home/mobrienv/Developer/ralph-orchestrator.worktrees/v3-complete/crates/ralph-core)
+    Checking ralph-adapters v3.0.0 (/home/mobrienv/Developer/ralph-orchestrator.worktrees/v3-complete/crates/ralph-adapters)
+    Checking ralph-tui v3.0.0 (/home/mobrienv/Developer/ralph-orchestrator.worktrees/v3-complete/crates/ralph-tui)
+    Checking ralph-bench v3.0.0 (/home/mobrienv/Developer/ralph-orchestrator.worktrees/v3-complete/crates/ralph-bench)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.32s

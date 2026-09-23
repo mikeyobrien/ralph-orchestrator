@@ -1,0 +1,22 @@
+=== tree: a04126e + working tree (docs-only fix)
+
+=== ralph-tui render-under-load
+running 1 test
+test autoloop_source::tests::render_under_load_keeps_one_truthful_status_and_newest_lines ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 273 filtered out; finished in 1.23s
+
+
+=== ralph-cli integration_autoloop_tui_live_stream
+test tui_quit_clean_exit_and_coordination ... ok
+test tui_shows_incremental_backend_stream_before_iteration_finish_and_reconciles_once ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+
+=== ralph-core engine_state
+test engine_state::tests::owned_root_rejects_autoloop_symlink_without_touching_its_target ... ok
+test engine_state::tests::owned_root_rejects_direct_and_nested_descendant_symlinks ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 740 filtered out; finished in 0.00s
+

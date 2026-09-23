@@ -1,0 +1,106 @@
+COMMIT 3322fd7 docs(engine): correct final gate evidence
+
+.ralph/tasks/ralph-owned-autoloop-state.code-task.md
+COMMIT 2242eec fix(smoke): harden live provider safety gates
+
+.github/workflows/ci.yml
+presets/live-harness-smoke/DOGFOOD.md
+presets/live-harness-smoke/README.md
+presets/live-harness-smoke/scripts/require_smoke_handoff.py
+tools/smoke-live-harnesses.sh
+tools/smoke_live_harness_results.py
+tools/smoke_process_group.py
+tools/tests/test_smoke_live_harnesses.py
+COMMIT 5b7876c fix(tui): bound stream identities and lifecycle lines
+
+.ralph/tasks/tui-stream-history-backpressure.code-task.md
+Cargo.lock
+crates/ralph-adapters/Cargo.toml
+crates/ralph-adapters/src/backend_stream_tailer.rs
+crates/ralph-tui/src/autoloop_source.rs
+COMMIT 1e67e52 chore: auto-commit before merge (loop primary)
+
+.ralph/tasks/tui-stream-history-backpressure.code-task.md
+COMMIT faa2b71 fix(smoke): validate canonical completion without retries
+
+presets/live-harness-smoke/autoloops.toml
+presets/live-harness-smoke/scripts/require_smoke_handoff.py
+tools/smoke_live_harness_results.py
+tools/tests/test_smoke_live_harnesses.py
+COMMIT 86066b6 fix(tui): protect reconciled history under line pressure
+
+crates/ralph-tui/src/autoloop_source.rs
+COMMIT ebeb81f fix(smoke): abort immediately on missing provider handoff
+
+presets/live-harness-smoke/autoloops.toml
+presets/live-harness-smoke/scripts/require_smoke_handoff.py
+tools/tests/test_smoke_live_harnesses.py
+COMMIT 1a2a43d fix(smoke): render executable contracts for every role
+
+presets/live-harness-smoke/harness.md
+presets/live-harness-smoke/roles/claude.md
+presets/live-harness-smoke/roles/codex.md
+presets/live-harness-smoke/roles/hermes.md
+presets/live-harness-smoke/roles/kiro.md
+presets/live-harness-smoke/roles/opencode.md
+presets/live-harness-smoke/roles/pi.md
+tools/tests/test_smoke_live_harnesses.py
+COMMIT 0a5f660 fix(smoke): resolve provider-visible run evidence path
+
+.ralph/specs/manual-live-harness-smoke.spec.md
+.ralph/tasks/manual-live-harness-smoke.code-task.md
+presets/live-harness-smoke/harness.md
+presets/live-harness-smoke/roles/claude.md
+presets/live-harness-smoke/roles/codex.md
+presets/live-harness-smoke/roles/hermes.md
+presets/live-harness-smoke/roles/kiro.md
+presets/live-harness-smoke/roles/opencode.md
+presets/live-harness-smoke/roles/pi.md
+tools/tests/test_smoke_live_harnesses.py
+COMMIT 49434db chore: satisfy strict touched-crate clippy
+
+crates/ralph-adapters/src/autoloop_events.rs
+crates/ralph-adapters/src/autoloop_runner.rs
+crates/ralph-adapters/src/backend_stream_tailer.rs
+crates/ralph-adapters/tests/autoloop_native_contract_integration.rs
+crates/ralph-tui/src/autoloop_source.rs
+COMMIT 3d4b8ca fix: satisfy clippy lifetime lint
+
+crates/ralph-core/src/event_parser.rs
+COMMIT 2ac3c1f style: apply workspace rustfmt
+
+crates/ralph-adapters/src/backend_stream_tailer.rs
+crates/ralph-tui/src/widgets/help.rs
+COMMIT e275303 fix: preserve bounded TUI stream history
+
+crates/ralph-tui/src/autoloop_source.rs
+COMMIT de2eaa4 fix: bound backend stream identity and backpressure
+
+crates/ralph-adapters/src/backend_stream_tailer.rs
+crates/ralph-tui/src/autoloop_source.rs
+COMMIT 3c8eaed docs(presets): explain manual live smoke
+
+presets/README.md
+presets/live-harness-smoke/README.md
+COMMIT 91b094d test(smoke): cover fake live harness matrix
+
+.github/workflows/ci.yml
+tools/tests/test_smoke_live_harnesses.py
+COMMIT 47f8dfd feat(tools): validate live smoke evidence
+
+tools/smoke-live-harnesses.sh
+tools/smoke_live_harness_results.py
+COMMIT 830ecfe feat(tools): add bounded live harness smoke runner
+
+tools/smoke-live-harnesses.sh
+COMMIT e0178bf feat(presets): add manual live harness smoke
+
+presets/live-harness-smoke/autoloops.toml
+presets/live-harness-smoke/harness.md
+presets/live-harness-smoke/roles/claude.md
+presets/live-harness-smoke/roles/codex.md
+presets/live-harness-smoke/roles/hermes.md
+presets/live-harness-smoke/roles/kiro.md
+presets/live-harness-smoke/roles/opencode.md
+presets/live-harness-smoke/roles/pi.md
+presets/live-harness-smoke/topology.toml

@@ -1,0 +1,8 @@
+=== sample 25 rc=101
+failures:
+PROBE_EXEC_ERROR kind=ExecutableFileBusy raw=Text file busy (os error 26) path=/var/tmp/.tmpdvhRIH/autoloop
+thread 'autoloop_health::tests::autoloop_health_uses_executable_version_without_package_json' (2572589) panicked at crates/ralph-core/src/autoloop_health.rs:338:9:
+  left: VersionUnknown { path: "/var/tmp/.tmpdvhRIH/autoloop", source: Vendored }
+ right: Ok { path: "/var/tmp/.tmpdvhRIH/autoloop", version: "0.10.1", source: Vendored }
+failures:
+    autoloop_health::tests::autoloop_health_uses_executable_version_without_package_json

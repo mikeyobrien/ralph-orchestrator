@@ -1,0 +1,70 @@
+# revision 6, re-measurement of the two corrected sentences at 27ec1df
+
+## frontmatter: tracked .ralph/tasks/*.code-task.md with no frontmatter
+.ralph/tasks/backend-agnostic-e2e.code-task.md
+.ralph/tasks/context-window-utilization.code-task.md
+.ralph/tasks/manual-live-harness-smoke.code-task.md
+.ralph/tasks/multi-loop-concurrency.code-task.md
+.ralph/tasks/tui-stream-history-backpressure.code-task.md
+
+## state root: \.ralph/autoloop occurrences, HEAD vs rollup tip, over the smoke cluster
+11 0 tools/tests/test_smoke_live_harnesses.py
+4 0 presets/live-harness-smoke/README.md
+2 0 tools/smoke-live-harnesses.sh
+1 0 presets/live-harness-smoke/scripts/require_smoke_handoff.py
+1 0 .ralph/tasks/manual-live-harness-smoke.code-task.md
+0 0 .github/workflows/ci.yml
+0 0 tools/smoke_live_harness_results.py
+0 0 tools/smoke_process_group.py
+
+## the defect: header revision bullets and change sections at 27ec1df
+14:- Revision 2 corrects the port mechanism. The critic rejected revision 1 at
+18:- Revision 3 is the Step 2 gate, `task-1790097924-daa7` / `code-assist:v3-complete:step-02:verify-reconciliation`.
+23:- Revision 4 re-measures every state claim in the classification table and in
+26:- Revision 5 corrects two false state claims revision 4 introduced: the size of
+532:### What this revision changed
+648:### What revision 4 changed
+656:### What revision 5 changed
+
+## 27ec1df hunks: 2, both in the two corrected sentences
+2
+
+## byte-identical check, HEAD vs rollup tip, 13 claimed paths
+      1 same .ralph/tasks/tui-stream-history-backpressure.code-task.md
+      1 same .ralph/specs/manual-live-harness-smoke.spec.md
+      1 same presets/README.md
+      1 same presets/live-harness-smoke/topology.toml
+      1 same presets/live-harness-smoke/roles/pi.md
+      1 same presets/live-harness-smoke/roles/opencode.md
+      1 same presets/live-harness-smoke/roles/kiro.md
+      1 same presets/live-harness-smoke/roles/hermes.md
+      1 same presets/live-harness-smoke/roles/codex.md
+      1 same presets/live-harness-smoke/roles/claude.md
+      1 same presets/live-harness-smoke/harness.md
+      1 same presets/live-harness-smoke/DOGFOOD.md
+      1 same presets/live-harness-smoke/autoloops.toml
+identical=13
+
+## differing paths in the smoke cluster scope
+.github/workflows/ci.yml
+.ralph/tasks/manual-live-harness-smoke.code-task.md
+presets/live-harness-smoke/README.md
+presets/live-harness-smoke/scripts/require_smoke_handoff.py
+tools/smoke-live-harnesses.sh
+tools/smoke_live_harness_results.py
+tools/smoke_process_group.py
+tools/tests/test_smoke_live_harnesses.py
+8
+
+## code-task doc line counts
+83 HEAD
+83 56690c0
+83 origin/wip/v3-prerelease-rollup
+
+## tally
+
+## gates at 27ec1df + revision 6 edit (working tree)
+git diff --name-only 27ec1df: .ralph/specs/v3-reconciliation.md
+em-dash/curly-quote in added lines: 0
+cargo fmt --all -- --check: exit 0
+python smoke matrix: Ran 10 tests in 5.569s, OK, six-row PASS

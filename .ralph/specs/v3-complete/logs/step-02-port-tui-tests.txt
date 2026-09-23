@@ -1,0 +1,70 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.34s
+     Running unittests src/lib.rs (target/debug/deps/ralph_tui-b3246fc59d266086)
+
+running 26 tests
+test app::tests::dispatch_guidance_suppressed_under_autoloop_source ... ok
+test autoloop_source::tests::absent_empty_and_unsafe_run_ids_do_not_create_run_state ... ok
+test autoloop_source::tests::ask_pending_sanitizes_footer_question ... ok
+test autoloop_source::tests::ask_pending_sets_footer_and_line ... ok
+test autoloop_source::tests::banner_before_start_uses_announced_role_without_duplicate_buffer ... ok
+test autoloop_source::tests::duplicate_iteration_start_does_not_create_second_buffer ... ok
+test autoloop_source::tests::banner_labels_each_iteration_with_its_current_role ... ok
+test autoloop_source::tests::banner_maps_role_id_to_display_name ... ok
+test autoloop_source::tests::explicit_preset_uses_role_ids_for_all_iterations ... ok
+test autoloop_source::tests::iteration_start_sets_iteration_and_max ... ok
+test autoloop_source::tests::backend_output_splits_into_lines ... ok
+test autoloop_source::tests::loop_finish_completes_and_freezes_elapsed ... ok
+test autoloop_source::tests::progress_timeout_clears_pending_ask ... ok
+test autoloop_source::tests::long_unicode_human_ask_caps_complete_history_and_footer_lines ... ok
+test autoloop_source::tests::safe_run_id_creates_run_state_beneath_the_configured_root ... ok
+test autoloop_source::tests::long_unicode_stop_reason_caps_complete_rendered_line ... ok
+test autoloop_source::tests::missing_backend_stream_preserves_boundary_only_output ... ok
+test autoloop_source::tests::reader_uses_ralph_workspace_when_loop_start_omits_work_dir ... ok
+test autoloop_source::tests::start_before_banner_resolves_live_header_without_engine_suffix ... ok
+test widgets::help::tests::guidance_section_marked_unavailable_under_autoloop_source ... ok
+test autoloop_source::tests::saturated_cancellation_retains_eof_warning_within_bound ... ok
+test autoloop_source::tests::eof_without_terminal_event_appends_error_line ... ok
+test autoloop_source::tests::final_drain_after_cancel_applies_loop_finish ... ok
+test autoloop_source::tests::saturated_reconciliation_preserves_tools_final_tail_lifecycle_and_export ... ok
+test autoloop_source::tests::backend_output_preserves_distinct_tools_across_history_and_export ... ok
+test autoloop_source::tests::repeated_oversized_growth_coalesces_status_and_retains_newest_lines ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 247 filtered out; finished in 0.71s
+
+   Compiling tower-http v0.6.8
+   Compiling ratatui-crossterm v0.1.0
+   Compiling coolor v1.1.0
+   Compiling hyper-util v0.1.19
+   Compiling ratatui v0.30.0
+   Compiling crokey-proc_macros v1.3.0
+   Compiling crokey v1.3.0
+   Compiling termimad v0.31.3
+   Compiling hyper-rustls v0.27.7
+   Compiling reqwest v0.12.28
+   Compiling ralph-core v3.0.0 (/home/mobrienv/Developer/ralph-orchestrator.worktrees/v3-complete/crates/ralph-core)
+   Compiling ralph-adapters v3.0.0 (/home/mobrienv/Developer/ralph-orchestrator.worktrees/v3-complete/crates/ralph-adapters)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 19.02s
+     Running unittests src/lib.rs (target/debug/deps/ralph_adapters-6f9c77ec5abb7122)
+
+running 11 tests
+test backend_stream_tailer::tests::missing_stream_is_empty_and_a_later_file_is_discovered ... ok
+test backend_stream_tailer::tests::pi_stream_emits_assistant_message_end_text_and_tool_calls ... ok
+test backend_stream_tailer::tests::claude_stream_emits_only_new_assistant_text_and_tool_calls ... ok
+test backend_stream_tailer::tests::identical_idless_structured_tool_events_use_bounded_fallback_identity ... ok
+test backend_stream_tailer::tests::tool_paths_hide_workspace_and_private_run_prefixes ... ok
+test backend_stream_tailer::tests::repeated_tool_records_are_deduplicated_by_id_not_rendered_text ... ok
+test backend_stream_tailer::tests::oversized_unterminated_record_is_fully_counted_and_not_retained ... ok
+test backend_stream_tailer::tests::huge_existing_stream_reads_only_tail_window_and_caps_retained_output ... ok
+test backend_stream_tailer::tests::poll_output_pending_identity_and_line_sizes_remain_bounded ... ok
+test backend_stream_tailer::tests::multi_megabyte_tool_ids_retain_only_fixed_width_distinct_identity ... ok
+test backend_stream_tailer::tests::repeated_oversized_polls_report_one_truthful_cumulative_status ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 371 filtered out; finished in 0.23s
+
+=== RED-CAPABILITY PROOF (pre-port tailer at HEAD + ported reader/tests) ===
+cmd: git show HEAD:crates/ralph-adapters/src/backend_stream_tailer.rs > crates/ralph-adapters/src/backend_stream_tailer.rs && cargo test -p ralph-tui --lib render_under_load
+result: exit 101, compile errors:
+  error[E0026]: variant ToolSummary does not have a field named text (autoloop_source.rs:393)
+  error[E0599]: no variant named Backpressure found for enum StreamLine (autoloop_source.rs:402)
+Reading: the port adds the identity-carrying ToolSummary and the coalesced Backpressure variant
+the tests assert on; pre-port code cannot satisfy the ported reader contract at all.

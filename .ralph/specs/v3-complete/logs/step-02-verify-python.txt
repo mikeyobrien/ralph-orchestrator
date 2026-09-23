@@ -1,0 +1,23 @@
+### python fake smoke matrix
+test_auth_preflight_aggregates_failures_without_workspace_or_launch (tools.tests.test_smoke_live_harnesses.FakeRunnerIntegration.test_auth_preflight_aggregates_failures_without_workspace_or_launch) ... ok
+test_failure_matrix_is_fail_closed (tools.tests.test_smoke_live_harnesses.FakeRunnerIntegration.test_failure_matrix_is_fail_closed) ... ok
+test_real_runner_path_reports_six_passes_without_paid_executables (tools.tests.test_smoke_live_harnesses.FakeRunnerIntegration.test_real_runner_path_reports_six_passes_without_paid_executables) ... ok
+test_timeout_terminates_paid_provider_descendant_process_group (tools.tests.test_smoke_live_harnesses.FakeRunnerIntegration.test_timeout_terminates_paid_provider_descendant_process_group) ... ok
+test_gate_accepts_each_exact_provider_turn (tools.tests.test_smoke_live_harnesses.HandoffGateContract.test_gate_accepts_each_exact_provider_turn) ... ok
+test_gate_rejects_a_missing_handoff_before_retry (tools.tests.test_smoke_live_harnesses.HandoffGateContract.test_gate_rejects_a_missing_handoff_before_retry) ... ok
+test_all_role_backend_overrides_reach_native_launch_selection (tools.tests.test_smoke_live_harnesses.NativePresetSelectionIntegration.test_all_role_backend_overrides_reach_native_launch_selection) ... ok
+test_blocking_handoff_hook_prevents_a_second_paid_turn (tools.tests.test_smoke_live_harnesses.NativePresetSelectionIntegration.test_blocking_handoff_hook_prevents_a_second_paid_turn) ... ok
+test_fixed_probes_use_the_rendered_run_state_directory (tools.tests.test_smoke_live_harnesses.PromptProbeContract.test_fixed_probes_use_the_rendered_run_state_directory) ... ok
+test_probe_fails_closed_when_rendered_run_directory_is_missing (tools.tests.test_smoke_live_harnesses.PromptProbeContract.test_probe_fails_closed_when_rendered_run_directory_is_missing) ... ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 5.454s
+
+OK
+
+claude    claude-sdk   yes             yes                 yes       PASS
+codex     command      yes             yes                 yes       PASS
+opencode  command      yes             yes                 yes       PASS
+pi        pi           yes             yes                 yes       PASS
+hermes    acp          yes             yes                 yes       PASS
+kiro      acp          yes             yes                 yes       PASS

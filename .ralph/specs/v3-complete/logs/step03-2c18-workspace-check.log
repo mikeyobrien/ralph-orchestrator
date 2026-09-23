@@ -1,0 +1,10 @@
+    Checking ralph-proto v3.0.0 (/home/mobrienv/Developer/ralph-orchestrator.worktrees/v3-complete/crates/ralph-proto)
+    Checking ralph-core v3.0.0 (/home/mobrienv/Developer/ralph-orchestrator.worktrees/v3-complete/crates/ralph-core)
+    Checking ralph-telegram v3.0.0 (/home/mobrienv/Developer/ralph-orchestrator.worktrees/v3-complete/crates/ralph-telegram)
+    Checking ralph-adapters v3.0.0 (/home/mobrienv/Developer/ralph-orchestrator.worktrees/v3-complete/crates/ralph-adapters)
+    Checking ralph-api v3.0.0 (/home/mobrienv/Developer/ralph-orchestrator.worktrees/v3-complete/crates/ralph-api)
+    Checking ralph-e2e v3.0.0 (/home/mobrienv/Developer/ralph-orchestrator.worktrees/v3-complete/crates/ralph-e2e)
+    Checking ralph-tui v3.0.0 (/home/mobrienv/Developer/ralph-orchestrator.worktrees/v3-complete/crates/ralph-tui)
+    Checking ralph-bench v3.0.0 (/home/mobrienv/Developer/ralph-orchestrator.worktrees/v3-complete/crates/ralph-bench)
+    Checking ralph-cli v3.0.0 (/home/mobrienv/Developer/ralph-orchestrator.worktrees/v3-complete/crates/ralph-cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.42s

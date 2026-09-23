@@ -1,0 +1,3 @@
+    Blocking waiting for file lock on build directory
+   Compiling ralph-proto v3.0.0 (/home/mobrienv/Developer/ralph-orchestrator.worktrees/v3-complete/crates/ralph-proto)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 17.32s

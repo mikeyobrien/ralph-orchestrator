@@ -1,0 +1,1671 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.68s
+     Running unittests src/lib.rs (target/debug/deps/ralph_cli-959d8e70e4c24bae)
+
+running 6 tests
+test tests::clean_diagnostics_no_dir_is_ok ... ok
+test tests::clean_diagnostics_deletes_dir ... ok
+test tests::clean_diagnostics_dry_run_keeps_dir ... ok
+test tests::clean_events_no_files_is_ok ... ok
+test tests::clean_events_deletes_only_event_artifacts ... ok
+test tests::clean_events_dry_run_keeps_files ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/ralph-7d9263ecf1c7aa50)
+
+running 420 tests
+test autoloop_engine::tests::autoloop_prompt_is_empty_when_no_source_is_configured ... ok
+test autoloop_engine::tests::autoloop_prompt_reads_file_when_inline_text_is_absent ... ok
+test autoloop_engine::tests::external_sigkill_exit_remains_failure ... ok
+test autoloop_engine::tests::autoloop_prompt_errors_when_configured_file_is_missing ... ok
+test autoloop_engine::tests::autoloop_prompt_uses_file_when_inline_text_is_whitespace ... ok
+test autoloop_engine::tests::daemon_dependency_failure_creates_no_owned_state ... ok
+test autoloop_engine::tests::autoloop_prompt_prefers_inline_text_over_file ... ok
+test autoloop_engine::tests::failure_class_stop_reasons_exit_non_zero ... ok
+test autoloop_engine::tests::failed_run_without_terminal_event_keeps_malformed_jsonl_fallback ... ok
+test autoloop_engine::tests::failed_run_rejects_a_completion_terminal_event ... ok
+test autoloop_engine::tests::failed_run_ignores_untrusted_error_log_detail ... ok
+test autoloop_engine::tests::implicit_continue_errors_when_loop_id_marker_is_missing ... ok
+test autoloop_engine::tests::headless_formatter_sanitizes_human_ask ... ok
+test autoloop_engine::tests::headless_formatter_reports_hat_names_without_stale_or_unknown_roles ... ok
+test autoloop_engine::tests::implicit_continue_errors_when_loop_id_marker_is_blank ... ok
+test autoloop_engine::tests::r12_maps_every_canonical_stop_reason_without_unknown_fallback ... ok
+test autoloop_engine::tests::ralph_sigkill_maps_to_stopped ... ok
+test autoloop_engine::tests::ralph_signaled_status_without_exit_code_maps_to_stopped ... ok
+test autoloop_engine::tests::explicit_continue_loop_id_wins_over_marker ... ok
+test autoloop_engine::tests::fresh_primary_run_replaces_stale_loop_id_marker ... ok
+test autoloop_engine::tests::ralph_sigterm_kill_maps_to_stopped ... ok
+test autoloop_engine::tests::successful_summary_is_preserved ... ok
+test autoloop_engine::tests::implicit_continue_reuses_loop_id_marker ... ok
+test autoloop_engine::tests::unknown_stop_reason_is_a_non_zero_engine_error ... ok
+test autoloop_engine::tests::unknown_stop_reason_is_replaced_with_a_fixed_safe_category ... ok
+test autoloop_engine::tests::requested_termination_markers_override_reason_and_are_consumed ... ok
+test autoloop_preset_gen::tests::explicit_preset_does_not_override_unset_max_iterations ... ok
+test autoloop_engine::tests::successful_summary_requires_exact_owned_paths_and_non_symlink_leaves ... ok
+test autoloop_engine::tests::worktree_run_keeps_context_loop_id ... ok
+test autoloop_engine::tests::successful_summary_rejects_symlink_store_leaf ... ok
+test autoloop_preset_gen::tests::explicit_preset_forwards_user_set_max_iterations ... ok
+test autoloop_preset_gen::tests::forwards_pi_cli_args ... ok
+test autoloop_preset_gen::tests::generated_preset_writes_effective_default_max_iterations ... ok
+test autoloop_preset_gen::tests::forwards_kiro_cli_args_after_the_acp_provider_default ... ok
+test autoloop_preset_gen::tests::keeps_incompatible_ralph_and_autoloop_task_stores_separate ... ok
+test autoloop_preset_gen::tests::rejects_claude_cli_args_that_the_sdk_cannot_receive ... ok
+test autoloop_preset_gen::tests::rejects_command_argument_containing_a_comma ... ok
+test autoloop_preset_gen::tests::generates_a_single_role_preset_when_no_hats ... ok
+test autoloop_preset_gen::tests::omits_hat_concurrency_at_sequential_default ... ok
+test autoloop_preset_gen::tests::rejects_pi_argument_containing_a_comma ... ok
+test autoloop_preset_gen::tests::rejects_unknown_backend_with_supported_backend_list ... ok
+test autoloop_preset_gen::tests::rejects_roo_with_supported_backend_list ... ok
+test autoloop_preset_gen::tests::removes_copilot_parser_only_output_format_args ... ok
+test autoloop_preset_gen::tests::writes_claude_sdk_backend_without_cli_args ... ok
+test autoloop_preset_gen::tests::writes_gemini_command_backend_from_adapter_template ... ok
+test autoloop_preset_gen::tests::writes_hat_aggregate_with_millisecond_timeout ... ok
+test autoloop_preset_gen::tests::writes_a_valid_preset_shape_from_hats ... ok
+test autoloop_preset_gen::tests::ports_wave_review_preset_to_declarative_autoloop_topology ... ok
+test autoloop_preset_gen::tests::writes_custom_command_args_with_prompt_flag_last ... ok
+test autoloop_preset_gen::tests::writes_pi_backend ... ok
+test autoloop_preset_gen::tests::writes_normalized_v2_budgets_with_autoloop_keys_and_units ... ok
+test autoloop_robot::tests::current_events_guard_points_at_dedicated_human_events_and_restores ... ok
+test autoloop_preset_gen::tests::writes_v1_budget_aliases_after_normalization ... ok
+test autoloop_preset_gen::tests::writes_hat_concurrency_above_sequential_default ... ok
+test autoloop_preset_gen::tests::writes_kiro_backends_as_acp ... ok
+test backend_support::tests::resolve_backend_invalid_flag ... ok
+test backend_support::tests::every_catalog_backend_is_accepted_across_all_consumer_surfaces ... ok
+test backend_support::tests::resolve_backend_from_config ... ok
+test backend_support::tests::valid_backend_label_lists_every_catalog_name ... ok
+test backend_support::tests::validate_known_backend_ok ... ok
+test backend_support::tests::resolve_backend_flag_override ... ok
+test backend_support::tests::validate_unknown_backend_err ... ok
+test bot::tests::test_daemon_config_warnings_omit_inactive_hitl_caveat ... ok
+test bot::tests::test_is_robot_enabled_missing_config_returns_false ... ok
+test bot::tests::test_load_config_bot_token_from_missing_file_returns_none ... ok
+test bot::tests::test_is_robot_enabled_invalid_yaml_returns_false ... ok
+test bot::tests::test_load_config_bot_token_from_reads_lowercase_robot ... ok
+test bot::tests::test_load_config_bot_token_reads_legacy_config ... ok
+test bot::tests::test_normalize_token_trims_and_discards_empty ... ok
+test bot::tests::test_load_config_bot_token_from_reads_token ... ok
+test bot::tests::test_is_robot_enabled_reads_config ... ok
+test bot::tests::test_resolve_chat_id_missing_file_returns_none ... ok
+test bot::tests::test_resolve_token_from_prefers_env_and_trims ... ok
+test bot::tests::test_resolve_token_from_prefers_env_then_keychain_then_config ... ok
+test bot::tests::test_resolve_token_from_returns_none_when_all_empty ... ok
+test bot::tests::test_resolve_chat_id_invalid_json_returns_none ... ok
+test bot::tests::test_resolve_token_from_skips_empty_values ... ok
+test bot::tests::test_resolve_chat_id_reads_state_file ... ok
+test bot::tests::test_robot_config_update_preserves_existing ... ok
+test bot::tests::test_robot_config_yaml_generation ... ok
+test bot::tests::test_run_daemon_errors_on_missing_config_file ... ok
+test bot::tests::test_save_bot_token_config_preserves_existing ... ok
+test bot::tests::test_save_bot_token_config_updates_lowercase_robot_key ... ok
+test bot::tests::test_save_bot_token_config_writes_token ... ok
+test bot::tests::test_run_daemon_rejects_builtin_config ... ok
+test bot::tests::test_save_robot_config_creates_minimal_config_without_token ... ok
+test bot::tests::test_save_robot_config_updates_existing_config ... ok
+test bot::tests::test_save_robot_config_with_token_writes_bot_token ... ok
+test bot::tests::test_telegram_error_response_parsing ... ok
+test bot::tests::test_telegram_get_me_parses_response ... ok
+test bot::tests::test_save_telegram_state_creates_file ... ok
+test bot::tests::test_telegram_send_message_payload ... ok
+test bot::tests::test_telegram_get_updates_parses_message ... ok
+test completion_coord::tests::history_and_review_labels_cover_all_reasons ... ok
+test completion_coord::tests::coordinate_without_context_writes_nothing_and_does_not_panic ... ok
+test completion_coord::tests::merge_run_start_allows_queued_entry_to_be_marked_merged ... ok
+test completion_coord::tests::merge_run_start_allows_queued_entry_to_be_marked_needs_review ... ok
+test completion_coord::tests::merge_run_start_ignores_already_merged_entry ... ok
+test config_resolution::tests::compose_core_label_uses_defaults_suffix_only_for_user_only_resolution ... ok
+test completion_coord::tests::merge_run_start_ignores_missing_entry ... ok
+test config_resolution::tests::user_config_path_uses_ralph_home_convention ... ok
+test display::tests::engine_error_label_sanitizes_inline_detail ... ok
+test display::tests::engine_error_label_caps_detail_at_200_characters ... ok
+test display::tests::engine_error_label_without_detail_is_category_only ... ok
+test display::tests::test_print_events_table_does_not_panic_on_multibyte_payload ... ok
+test display::tests::test_print_events_table_does_not_panic_on_multibyte_ts ... ok
+test config_resolution::tests::merge_yaml_values_recursively_merges_maps_and_replaces_arrays ... ok
+test display::tests::test_resume_hint_present_for_interrupted ... ok
+test display::tests::test_resume_hint_present_for_max_iterations ... ok
+test display::tests::test_resume_hint_skipped_for_cancelled ... ok
+test display::tests::test_resume_hint_skipped_for_completion_promise ... ok
+test display::tests::test_resume_hint_skipped_for_restart_requested ... ok
+test display::tests::test_resume_hint_skipped_for_workspace_gone ... ok
+test doctor::tests::auth_env_vars_returns_none_for_omp ... ok
+test doctor::tests::auth_hint_env_still_wins_over_store_note ... ok
+test doctor::tests::auth_hint_for_omp_is_a_warning_not_a_failure ... ok
+test doctor::tests::auth_hint_passes_when_all_env_present ... ok
+test doctor::tests::auth_hint_passes_with_store_note_when_store_detected_and_env_missing ... ok
+test doctor::tests::auth_hint_warns_when_env_missing ... ok
+test doctor::tests::auth_hint_warns_when_neither_store_nor_env ... ok
+test doctor::tests::backend_check_for_omp_passes_when_command_available ... ok
+test doctor::tests::auto_backend_checks_cover_every_catalog_backend ... ok
+test doctor::tests::backend_checks_fail_required_missing ... ok
+test doctor::tests::backend_checks_include_cli_and_hat_backends ... ok
+test doctor::tests::canonical_backend_name_strips_exe_extension ... ok
+test doctor::tests::backend_checks_map_custom_command_to_known_backend ... ok
+test doctor::tests::canonical_backend_name_strips_extension_for_unknown_command ... ok
+test doctor::tests::canonical_name_maps_each_unique_catalog_command_to_first_id ... ok
+test doctor::tests::credential_store_detected_for_pi_auth_json ... ok
+test doctor::tests::credential_store_rejects_missing_or_empty_pi_store ... ok
+test doctor::tests::credential_store_detected_for_claude_credential_files ... ok
+test doctor::tests::credential_store_unknown_backends_and_missing_home_are_inconclusive ... ok
+test doctor::tests::doctor_excludes_generic_backend_check_and_preserves_other_checks ... ok
+test doctor::tests::doctor_keeps_autoloop_check_for_explicit_display ... ok
+test doctor::tests::orcarouter_api_key_listed_in_auth_env_vars_for_models_dev_backends ... ok
+test doctor::tests::orcarouter_api_key_satisfies_opencode_pi_roo_auth_hints ... ok
+test engine_provision::tests::prompt_acceptance_defaults_to_yes_and_rejects_other_answers ... ok
+test engine_provision::tests::prompt_response_requires_input_before_consenting ... ok
+test engine_provision::tests::auto_install_opt_in_accepts_only_one_or_true ... ok
+test engine_provision::tests::prompts_offer_the_pinned_engine_version ... ok
+test engine_provision::tests::provisioning_decision_respects_interactivity_and_explicit_opt_in ... ok
+test engine_provision::tests::provisioning_need_respects_health_and_skip_preflight ... ok
+test hats::registry::tests::test_empty_config_creates_empty_registry ... ok
+test hats::registry::tests::test_empty_registry_has_no_subscribers ... ok
+test hats::registry::tests::test_custom_hats_from_config ... ok
+test hats::registry::tests::test_get_for_topic ... ok
+test hats::registry::tests::test_get_for_topic_returns_alphabetically_first_hat ... ok
+test hats::registry::tests::test_has_subscriber ... ok
+test hats::tests::test_builtin_discovered_presets_are_prefixed_and_typed ... ok
+test hats::tests::test_build_diagram_prompt ... ok
+test hats::tests::test_discover_in_roots_finds_yaml_presets_alongside_toml ... ok
+test hats::tests::test_discover_in_roots_missing_roots_are_ignored ... ok
+test hats::tests::test_discover_in_roots_finds_presets_and_skips_nonpresets ... ok
+test hats::tests::test_extract_diagram_plain ... ok
+test hats::tests::test_extract_diagram_with_intro ... ok
+test hats::tests::test_extract_diagram_with_markdown_fences ... ok
+test hats::tests::test_extract_instruction_topics ... ok
+test hats::tests::test_generate_mermaid_string ... ok
+test hats::tests::test_graph_hats_ascii ... ignored, requires live AI backend
+test hats::tests::test_graph_hats_compact ... ok
+test hats::tests::test_discover_in_roots_respects_first_wins_across_roots ... ok
+test hats::tests::test_graph_hats_unicode ... ignored, requires live AI backend
+test hats::tests::test_is_topic_like ... ok
+test hats::tests::test_list_hats_empty ... ok
+test hats::tests::test_list_hats_truncates_long_description ... ok
+test hats::tests::test_list_hats_json ... ok
+test hats::tests::test_list_hats_with_entries ... ok
+test hats::tests::test_list_presets_json_is_valid_array ... ok
+test hats::tests::test_list_presets_table_empty_prints_search_paths ... ok
+test hats::tests::test_list_presets_table_shows_builtins_copy_pasteable ... ok
+test hats::tests::test_print_check_colored ... ok
+test hats::tests::test_print_check_error ... ok
+test hats::tests::test_print_check_ok ... ok
+test hats::tests::test_print_check_warn ... ok
+test hats::tests::test_sanitize_id ... ok
+test hats::tests::test_show_hat_found ... ok
+test hats::tests::test_show_hat_not_found ... ok
+test hats::tests::test_validate_hats_empty_registry ... ok
+test hats::tests::test_read_toml_preset_description_falls_back_to_toml_comment ... ok
+test hats::tests::test_validate_hats_orphan ... ok
+test hats::tests::test_validate_hats_valid_topology ... ok
+test hats::tests::test_validate_instructions_consistent ... ok
+test hats::tests::test_validate_instructions_emit_not_in_publishes ... ok
+test hats::tests::test_validate_instructions_foreign_topic_mention ... ok
+test hats::tests::test_validate_instructions_off_by_default ... ok
+test hats::tests::test_validate_instructions_reads_agent_markdown_file ... ok
+test init::tests::init_from_backend_accepts_every_catalogued_backend ... ok
+test init::tests::test_file_exists_message_actionable ... ok
+test init::tests::test_format_preset_list ... ok
+test init::tests::test_generate_template_claude ... ok
+test init::tests::test_generate_template_forge ... ok
+test init::tests::test_generate_template_kiro ... ok
+test init::tests::test_init_from_preset_code_assist_writes_config ... ok
+test hats::tests::test_validate_instructions_missing_instructions ... ok
+test bot::tests::test_run_daemon_rejects_remote_config ... ok
+test init::tests::test_override_backend_inserts_when_missing ... ok
+test init::tests::test_override_backend_preserves_comments ... ok
+test init::tests::test_override_backend_adds_cli_section ... ok
+test init::tests::test_unknown_backend_error ... ok
+test init::tests::test_unknown_backend_message_actionable ... ok
+test init::tests::test_template_is_valid_yaml ... ok
+test loops::tests::test_colorize_status ... ok
+test init::tests::test_override_backend_replaces_existing ... ok
+test loops::tests::test_attach_to_loop_requires_worktree ... ok
+test backend_support::tests::resolve_backend_auto_skips_to_detect ... ok
+error: branch 'main' not found
+test loops::tests::test_default_diff_base_branch_falls_back_to_master ... ok
+test loops::tests::test_default_diff_base_branch_prefers_main_branch ... ok
+test loops::tests::test_discard_loop_marks_discarded_and_deregisters ... ok
+test loops::tests::test_format_age_boundaries ... ok
+test autoloop_robot::tests::ignores_guidance_written_before_the_bridge_starts ... ok
+test loops::tests::test_discard_loop_missing_worktree_runs_fallback_cleanup ... ok
+test loops::tests::test_is_process_alive_current_pid ... ok
+test loops::tests::test_discard_loop_without_worktree_path_runs_fallback_cleanup ... ok
+test loops::tests::test_execute_defaults_to_list_when_no_subcommand ... ok
+test loops::tests::test_get_merge_button_state_active_when_idle ... ok
+test loops::tests::test_get_merge_button_state_blocked_when_merging ... ok
+test autoloop_robot::tests::restart_interrupts_a_pending_ask_from_ralph_dir_without_waiting ... ok
+test loops::tests::test_list_loops_handles_merge_queue_states ... ok
+test loops::tests::test_list_loops_includes_registry_entry_json ... ok
+test loops::tests::test_merge_loop_rejects_already_merged ... ok
+test loops::tests::test_merge_loop_rejects_discarded ... ok
+test loops::tests::test_merge_loop_rejects_merging_without_force ... ok
+test loops::tests::test_resolve_loop_exact_match_registry ... ok
+test loops::tests::test_resolve_loop_from_merge_queue_entry ... ok
+test loops::tests::test_resolve_loop_missing_returns_error ... ok
+test loops::tests::test_resolve_loop_partial_match_merge_queue_suffix ... ok
+test loops::tests::test_resolve_loop_partial_match_registry_suffix ... ok
+test loops::tests::test_shorten_path ... ok
+test loops::tests::test_resume_loop_is_idempotent_when_resume_already_requested ... ok
+test loops::tests::test_resume_loop_noops_for_non_suspended_loop ... ok
+test loops::tests::test_resume_loop_resolves_partial_id_and_targets_worktree ... ok
+test loops::tests::test_resume_loop_writes_resume_signal_for_in_place_loop ... ok
+test loops::tests::test_retry_merge_rejects_non_needs_review_state ... ok
+test mcp::tests::resolve_workspace_root_preserves_absolute_paths ... ok
+test loops::tests::test_show_diff_missing_branch_errors ... ok
+test loops::tests::test_show_history_formats_table ... ok
+test mcp::tests::resolve_workspace_root_returns_none_when_unset ... ok
+test memory::tests::format_memories_as_markdown_groups_by_type ... ok
+test memory::tests::format_memories_as_text_has_plain_fields ... ok
+test memory::tests::format_relative_date_with_today_returns_date_for_old_entries ... ok
+test memory::tests::format_relative_date_with_today_handles_ranges ... ok
+test memory::tests::format_relative_date_with_today_returns_input_on_invalid ... ok
+test memory::tests::truncate_to_budget_falls_back_without_marker ... ok
+test memory::tests::truncate_to_budget_prefers_complete_memory_blocks ... ok
+test merge_processing::tests::merge_ralph_args_include_non_empty_merge_prompt ... ok
+test merge_processing::tests::test_process_pending_merges_handles_missing_preset ... ok
+test loops::tests::test_show_logs_falls_back_to_history ... ok
+test merge_processing::tests::test_process_pending_merges_falls_back_to_null_on_log_creation_failure ... ok
+test merge_processing::tests::test_process_pending_merges_recovers_stale_entry_without_spawning ... ok
+test merge_processing::tests::test_process_pending_merges_missing_command_keeps_queue ... ok
+test merge_processing::tests::test_process_pending_merges_spawns_for_queue_entry ... ok
+test preflight::tests::config_source_label_handles_sources ... ok
+test merge_processing::tests::test_process_pending_merges_with_empty_queue_no_config_written ... ok
+test preflight::tests::load_config_for_preflight_hats_source_takes_precedence_over_core_hats ... ok
+test preflight::tests::merge_hats_overlay_allows_workflow_promises_from_hats_event_loop ... ok
+test preflight::tests::merge_hats_overlay_replaces_hats_and_merges_event_loop ... ok
+test preflight::tests::load_config_for_preflight_resolves_core_and_hats_imports_relative_to_each_file ... ok
+test preflight::tests::normalize_checks_lowercases ... ok
+test preflight::tests::merge_imported_hat_uses_field_level_replacement ... ok
+test preflight::tests::normalize_hats_source_value_extracts_legacy_mixed_preset ... ok
+test preflight::tests::reject_hat_imports_in_unsupported_sources ... ok
+test preflight::tests::resolve_hat_imports_merges_imported_fields ... ok
+test preflight::tests::resolve_hat_imports_rejects_imported_events ... ok
+test preflight::tests::resolve_hat_imports_rejects_invalid_imported_schema_with_path ... ok
+test preflight::tests::resolve_hat_imports_rejects_invalid_yaml ... ok
+test preflight::tests::resolve_hat_imports_rejects_missing_file ... ok
+test preflight::tests::resolve_hat_imports_rejects_non_string_import ... ok
+test preflight::tests::resolve_hat_imports_rejects_transitive_import ... ok
+test preflight::tests::validate_checks_accepts_known ... ok
+test preflight::tests::validate_checks_rejects_unknown ... ok
+test preflight::tests::validate_core_config_shape_allows_single_file_combined_config ... ok
+test preflight::tests::validate_core_config_shape_rejects_project ... ok
+test preflight::tests::validate_hats_config_shape_rejects_core_keys ... ok
+test presets::tests::test_all_presets_have_content ... ok
+test presets::tests::test_all_presets_have_description ... ok
+test preflight::tests::ralph_omp_yml_parses_and_composes_with_builtin_hat_collection ... ok
+test presets::tests::test_code_assist_uses_canonical_artifact_layout_and_builder_workflow ... ok
+test presets::tests::test_debug_uses_staged_adversarial_fix_contract ... ok
+test presets::tests::test_get_preset_by_name ... ok
+test presets::tests::test_get_preset_invalid_name ... ok
+test presets::tests::test_list_presets_returns_all ... ok
+test presets::tests::test_merge_loop_preset_is_embedded ... ok
+test presets::tests::test_pdd_to_code_assist_uses_reviewed_increment_loop ... ok
+test presets::tests::test_embedded_presets_use_canonical_artifact_boundary ... ok
+test presets::tests::test_preset_names_returns_all_names ... ok
+test autoloop_robot::tests::relays_pending_ask_response_and_guidance_through_control_cli_once ... ok
+test presets::tests::test_preset_content_is_valid_yaml ... ok
+test presets::tests::test_presets_have_no_top_level_cli_block ... ok
+test presets::tests::test_research_uses_runtime_tasks_and_memory_discipline ... ok
+test presets::tests::test_review_uses_staged_adversarial_completion_contract ... ok
+test rpc_events::tests::maps_backend_output_and_ask_without_a_second_events_plane ... ok
+test rpc_events::tests::maps_banner_start_progress_and_finish_onto_rpc_events ... ok
+test rpc_events::tests::unknown_autoloop_kinds_do_not_emit_rpc_events ... ok
+test sop_runner::tests::omp_interactive_spawn_argv_carries_no_autonomous_flags ... ok
+test sop_runner::tests::test_build_prompt_no_addendums_unchanged ... ok
+test sop_runner::tests::test_build_prompt_with_addendums ... ok
+test sop_runner::tests::test_build_prompt_with_addendums_and_user_input ... ok
+test sop_runner::tests::test_build_prompt_with_empty_user_input ... ok
+test sop_runner::tests::test_build_prompt_with_multiple_addendums ... ok
+test presets::tests::test_public_presets_have_completion_path ... ok
+test sop_runner::tests::test_build_prompt_without_user_input ... ok
+test sop_runner::tests::test_build_prompt_with_user_input ... ok
+test sop_runner::tests::test_resolve_backend_accepts_kiro_acp_flag ... ok
+test sop_runner::tests::test_resolve_backend_accepts_omp_flag ... ok
+test sop_runner::tests::test_resolve_backend_accepts_kiro_acp_from_config ... ok
+test sop_runner::tests::test_resolve_backend_from_flag ... ok
+test presets::tests::test_public_presets_have_required_events ... ok
+test sop_runner::tests::test_resolve_backend_from_config_file ... ok
+test sop_runner::tests::test_resolve_backend_invalid_flag ... ok
+test sop_runner::tests::test_sop_content_code_task_generator ... ok
+test sop_runner::tests::test_sop_content_pdd ... ok
+test sop_runner::tests::test_sop_content_pdd_team_addendum ... ok
+test sop_runner::tests::test_sop_name ... ok
+test task_cli::tests::test_get_tasks_path_discovers_workspace_root_from_nested_dir ... ok
+test task_cli::tests::test_list_status_filter_accepts_in_progress ... ok
+test task_cli::tests::test_read_current_loop_id_ignores_empty_marker ... ok
+test task_cli::tests::test_ready_filters_by_loop_id_marker ... ok
+test tests::autoloop_run_gate_allows_skip_unknown_and_healthy_versions ... ok
+test tests::autoloop_run_gate_fails_missing_and_old_versions ... ok
+test tests::autoloop_run_gate_selects_vendored_binary_explicitly ... ok
+test tests::test_apply_config_overrides_multiple ... ok
+test tests::test_apply_config_overrides_scratchpad ... ok
+test tests::test_apply_config_overrides_specs_dir ... ok
+test tests::test_apply_config_overrides_unknown_field ... ok
+test tests::test_auto_preflight_dry_run_returns_report ... ok
+test tests::test_auto_preflight_run_fails_on_check_failure ... ok
+test tests::test_auto_preflight_skip_list_can_omit_hooks_check_failures ... ok
+test tests::test_bot_daemon_parses_global_config_flag ... ok
+test tests::test_clear_restart_request_signal_removes_sentinel_file ... ok
+test tests::test_cli_parses_global_hats_flag ... ok
+test tests::test_color_mode_should_use_colors ... ok
+test tests::test_config_source_parse_builtin ... ok
+test tests::test_config_source_parse_core_without_equals ... ok
+test tests::test_config_source_parse_file ... ok
+test tests::test_config_source_parse_file_with_equals ... ok
+test tests::test_config_source_parse_non_core_with_equals_is_file ... ok
+test tests::test_config_source_parse_override_scratchpad ... ok
+test tests::test_config_source_parse_override_specs_dir ... ok
+test tests::test_config_source_parse_remote_http ... ok
+test tests::test_config_source_parse_remote_https ... ok
+test tests::test_config_source_to_cli_string_roundtrips ... ok
+test tests::test_diagnostics_eligible_for_no_subcommand ... ok
+test tests::test_diagnostics_eligible_for_run_command ... ok
+test tests::test_diagnostics_not_eligible_for_emit_command ... ok
+test tests::test_diagnostics_not_eligible_for_events_command ... ok
+test tests::test_doctor_parses_command ... ok
+test tests::test_emit_command_blocks_once_when_urgent_steer_pending ... ok
+test tests::test_emit_command_resolves_marker_relative_to_workspace_root_from_nested_dir ... ok
+test tests::test_ensure_scratchpad_directory_creates_nested ... ok
+test tests::test_ensure_scratchpad_directory_noop_when_exists ... ok
+test tests::test_format_preflight_summary_no_checks ... ok
+test tests::test_format_preflight_summary_with_failures ... ok
+test tests::test_hats_source_label_round_trips_through_parse ... ok
+test tests::test_hats_source_parse_builtin ... ok
+test tests::test_hats_source_parse_file ... ok
+test tests::test_list_directory_contents_handles_nested_paths ... ok
+test tests::test_list_directory_contents_missing_path_returns_error ... ok
+test tests::test_load_config_from_file_with_overrides ... ok
+test merge_processing::tests::test_process_pending_merges_redirects_subprocess_output_to_log_file ... ok
+test hats::registry::tests::bench_get_for_topic_baseline ... ok
+test loops::tests::test_stop_loop_orphan_keeps_registry_when_term_ignored ... ok
+test mcp::tests::resolve_workspace_root_resolves_relative_paths_from_current_dir ... ok
+test loops::tests::test_stop_loop_writes_stop_requested_file ... ok
+test tests::test_partition_config_sources_only_overrides ... ok
+test sop_runner::tests::test_run_sop_custom_args_executes ... ok
+test tests::test_mcp_serve_parses_workspace_root_flag ... ok
+test tests::test_partition_config_sources_separates_overrides ... ok
+test sop_runner::tests::test_run_sop_custom_args_missing_errors ... ok
+test tests::test_print_preflight_summary_handles_failures_and_warnings ... ok
+test tests::test_preflight_failure_detail_strict_includes_warnings ... ok
+test tests::test_prompt_summary_reads_file_content_not_path ... ok
+test tests::test_prompt_summary_returns_no_prompt_for_missing_file ... ok
+test tests::test_prompt_summary_truncates_long_content ... ok
+test tests::test_required_restart_command_matches_contract ... ok
+test tests::test_mcp_serve_parses_command ... ok
+test tests::test_resolve_workspace_root_discovers_ancestor_ralph_dir ... ok
+test tests::test_load_config_with_overrides_applies_override_sources ... ok
+test tests::test_tutorial_steps_cover_core_topics ... ok
+test tests::test_load_config_with_overrides_missing_file_falls_back_to_defaults ... ok
+test tests::test_tutorial_parses_command ... ok
+test web::tests::check_node_rejects_old_version ... ok
+test tests::test_load_config_with_overrides_only_overrides_uses_defaults ... ok
+test web::tests::check_node_accepts_supported_version ... ok
+test web::tests::check_node_reports_missing_binary ... ok
+test web::tests::check_port_available_detects_in_use ... ok
+test web::tests::check_npm_reports_missing_binary ... ok
+test web::tests::check_npm_reads_version ... ok
+test web::tests::check_npm_reports_failed_command ... ok
+test tests::test_r8_removed_run_flags_are_rejected ... ok
+test tests::test_r8_retained_run_mode_flags_are_accepted ... ok
+test web::tests::contains_blocked_tsx_version_detects_supported_formats ... ok
+test web::tests::check_node_reports_failed_command ... ok
+test web::tests::check_tsx_version_blocks_known_bad_release ... ok
+test web::tests::check_tsx_version_blocks_known_bad_release_with_label ... ok
+test web::tests::check_tsx_version_with_missing_binary_is_ok ... ok
+test web::tests::contains_blocked_tsx_version_ignores_other_versions ... ok
+test web::tests::needs_install_detects_missing_node_modules ... ok
+test web::tests::check_tsx_version_blocks_known_bad_release_with_v_prefix ... ok
+test web::tests::execute_invalid_workspace_returns_error ... ok
+test tests::test_r8_removed_resume_flags_are_rejected ... ok
+test web::tests::forward_output_notifies_on_stdout_pattern ... ok
+test web::tests::startup_caveat_discloses_live_state_limitation ... ok
+test web::tests::forward_output_notifies_on_stderr_pattern ... ok
+test web_robot_service::tests::restart_reuses_existing_question_and_accepts_preexisting_response ... ok
+test web::tests::run_npm_install_uses_install_without_lockfile ... ok
+test web_robot_service::tests::send_checkin_writes_checkin_file ... ok
+test web::tests::run_npm_install_uses_ci_with_lockfile ... ok
+test web_robot_service::tests::send_question_extracts_nested_human_interact_context ... ok
+test web::tests::run_npm_install_reports_failure ... ok
+test web_robot_service::tests::send_question_writes_question_file_and_preserves_uncorrelated_response ... ok
+test web::tests::preflight_reports_bad_tsx_version ... ok
+test web_robot_service::tests::wait_for_response_removes_stale_uncorrelated_response ... ok
+test web_robot_service::tests::timeout_zero_still_honors_shutdown ... ok
+test web_robot_service::tests::wait_for_response_consumes_correlated_preexisting_response ... ok
+test web::tests::preflight_skips_install_when_node_modules_present ... ok
+test web::tests::preflight_runs_install_with_fake_tools ... ok
+test web_robot_service::tests::timeout_zero_waits_until_response_without_timing_out ... ok
+test web_robot_service::tests::wait_for_response_retries_valid_incomplete_json_until_response_arrives ... ok
+test web_robot_service::tests::wait_for_response_retries_partial_json_until_correlated_response_arrives ... ok
+test web_robot_service::tests::wait_for_response_times_out_and_cleans_question ... ok
+
+test result: ok. 418 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 6.27s
+
+     Running tests/clean_diagnostics.rs (target/debug/deps/clean_diagnostics-6d3d2cb1d33b2b30)
+
+running 3 tests
+test test_clean_diagnostics_handles_missing_directory ... ok
+test test_clean_diagnostics_preserves_other_ralph_contents ... ok
+test test_clean_diagnostics_removes_directory ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/integration_autoloop_dependency.rs (target/debug/deps/integration_autoloop_dependency-7202721fa7c6db94)
+
+running 5 tests
+test old_autoloop_is_rejected_by_doctor_and_run ... ok
+test missing_autoloop_is_reported_and_run_fails_before_lock ... ok
+test unversionable_autoloop_warns_and_run_gate_allows_it ... ok
+test doctor_names_vendored_then_path_resolution_and_both_missing_remedies ... ok
+test supported_autoloop_versions_pass_doctor_and_run_gate ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/integration_autoloop_failure_reporting.rs (target/debug/deps/integration_autoloop_failure_reporting-c713a56ecc4bd8f3)
+
+running 13 tests
+test missing_preset_error_does_not_expose_its_physical_path ... ok
+test nonzero_engine_exit_keeps_state_owned_and_output_private ... ok
+test status_zero_summary_with_outside_paths_fails_closed_and_private ... ok
+test nonzero_raw_stdout_and_stderr_are_redacted_from_output_and_tracing ... ok
+test malformed_events_keep_state_owned_and_output_private ... ok
+test symlinked_journal_descendant_is_rejected_before_fake_process_mutates_external_file ... ok
+test symlinked_owned_root_is_rejected_before_external_state_is_written ... ok
+test empty_run_id_observation_keeps_state_owned_and_output_private ... ok
+test absent_run_id_observation_keeps_state_owned_and_output_private ... ok
+test status_zero_unknown_stop_reason_is_redacted_and_fails_closed ... ok
+test terminal_error_detail_never_reaches_output_or_tracing ... ok
+test missing_lifecycle_run_id_keeps_state_owned_and_output_private ... ok
+test successful_process_with_malformed_events_fails_closed ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests/integration_autoloop_headless_stream.rs (target/debug/deps/integration_autoloop_headless_stream-5f2f62cffe85b66f)
+
+running 1 test
+test headless_run_streams_iteration_progress_before_autoloop_exits ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+     Running tests/integration_autoloop_headless_voice.rs (target/debug/deps/integration_autoloop_headless_voice-ac60fee6eb7c3d36)
+
+running 1 test
+test headless_run_uses_ralph_voice_and_gates_engine_noise_by_verbosity ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+
+     Running tests/integration_autoloop_prompt.rs (target/debug/deps/integration_autoloop_prompt-0aaa781459510609)
+
+running 12 tests
+test explicit_preset_rejects_cli_backend_without_running_autoloop ... ok
+test parallel_disabled_lock_contention_does_not_reveal_active_prompt ... ok
+test crash_runs_completion_coordination ... ok
+test generated_preset_runs_with_all_runtime_paths_beneath_owned_root ... ok
+test explicit_preset_receives_cli_and_config_budget_overrides_before_prompt ... ok
+test interrupted_loop_lock_not_stuck ... ok
+test run_inline_prompt_overrides_stale_configured_prompt_file ... ok
+test parallel_enabled_lock_contention_does_not_reveal_active_prompt_or_worktree_path ... ok
+test completion_warning_reports_open_ralph_tasks_without_gating_success ... ok
+test run_inline_prompt_reaches_autoloop_as_positional_argument ... ok
+test fresh_run_marker_isolates_open_tasks_from_previous_run ... ok
+test run_prompt_file_contents_reach_autoloop_as_positional_argument ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+
+     Running tests/integration_autoloop_rpc.rs (target/debug/deps/integration_autoloop_rpc-6dbcb0a9249286d7)
+
+running 1 test
+test run_rpc_emits_rpc_events_from_autoloop_events_and_persists_run_id ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests/integration_autoloop_tui_live_stream.rs (target/debug/deps/integration_autoloop_tui_live_stream-c0c14ab257102b47)
+
+running 2 tests
+test tui_quit_clean_exit_and_coordination ... ok
+test tui_shows_incremental_backend_stream_before_iteration_finish_and_reconciles_once ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+     Running tests/integration_clean.rs (target/debug/deps/integration_clean-e75af11a24365657)
+
+running 7 tests
+test test_clean_permission_error ... ok
+test test_clean_with_custom_config ... ok
+test test_clean_basic_success ... ok
+test test_clean_dry_run ... ok
+test test_clean_color_output_always ... ok
+test test_clean_missing_directory ... ok
+test test_clean_color_output_never ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/integration_config_precedence.rs (target/debug/deps/integration_config_precedence-00149e52710fa74a)
+
+running 6 tests
+test test_hats_file_event_loop_completion_promise_overrides_combined_config ... ok
+test test_core_specs_dir_cli_override_applies_last ... ok
+test test_hats_file_does_not_override_runtime_limits_from_combined_config ... ok
+test test_combined_config_dry_run_succeeds ... ok
+test test_hats_file_overrides_combined_config_hats ... ok
+test test_builtin_hats_source_overrides_combined_config_hats ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/integration_continue_resume.rs (target/debug/deps/integration_continue_resume-6829e0ece1a52d36)
+
+running 3 tests
+test resume_without_a_persisted_run_id_fails_without_inspecting_scratchpad ... ok
+test run_continue_without_scratchpad_completes_and_reuses_coordination_loop ... ok
+test resume_invokes_autoloop_resume_for_the_persisted_run_id ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+     Running tests/integration_engine_install.rs (target/debug/deps/integration_engine_install-b0b16ee981dd9f14)
+
+running 7 tests
+test noninteractive_run_without_opt_in_refuses_engine_install ... ok
+test install_engine_reports_missing_artifact_without_installing ... ok
+test run_rejects_corrupted_auto_install_before_progressing_past_gate ... ok
+test install_engine_rejects_checksum_mismatch_without_installing ... ok
+test install_engine_downloads_verifies_installs_and_checks_version ... ok
+test run_auto_installs_missing_engine_and_proceeds_past_gate ... ok
+test run_auto_installs_vendored_engine_that_outranks_old_path_engine ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/integration_gitignore.rs (target/debug/deps/integration_gitignore-00c59dec0af6ae80)
+
+running 1 test
+test ralph_gitignore_tracks_committed_artifacts_not_runtime_state ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/integration_hooks_validate.rs (target/debug/deps/integration_hooks_validate-f7d65b4cc635bb3e)
+
+running 4 tests
+test test_hooks_validate_malformed_config_fails_with_json_diagnostic ... ok
+test test_hooks_validate_unknown_phase_event_fails_with_json_diagnostic ... ok
+test test_hooks_validate_json_success_report_and_exit_code ... ok
+test test_hooks_validate_uses_user_scoped_hooks_when_local_config_missing ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/integration_loops_merge.rs (target/debug/deps/integration_loops_merge-480458f831a5e898)
+
+running 14 tests
+test test_merge_commit_subject_length_limit ... ok
+test test_manual_merge_uses_exclusive_flag ... ok
+test test_merge_commit_format_conventional ... ok
+test test_merge_queue_cannot_skip_merging_state ... ok
+test test_merge_queue_transition_merging_to_merged ... ok
+test test_merge_uses_no_ff_flag ... ok
+test test_spawn_merge_ralph_uses_exclusive_flag ... ok
+test test_merge_queue_transition_merging_to_needs_review ... ok
+test test_loops_list_shows_age_column ... ok
+test test_loops_list_shows_footer_hints ... ok
+test test_loops_list_all_shows_terminal_states ... ok
+test test_loops_list_shows_summary_header ... ok
+test test_loops_list_hides_terminal_states_by_default ... ok
+test test_merge_queue_transition_queued_to_merging ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/integration_loops_remote_review.rs (target/debug/deps/integration_loops_remote_review-878811d99c8bf5aa)
+
+running 8 tests
+test rebase_loop_updates_branch_without_merging_to_main ... ok
+test rebase_branch_without_worktree_preserves_current_checkout ... ok
+test publish_review_pushes_loop_branch_and_writes_summary ... ok
+test rebase_without_loop_id_rebases_queued_worktree_branch ... ok
+test publish_review_explicit_branch_without_queue_does_not_suffix_match_another_worktree ... ok
+test rebase_explicit_branch_without_queue_does_not_suffix_match_another_worktree ... ok
+test rebase_branch_without_worktree_does_not_suffix_match_another_worktree ... ok
+fatal: 'refs/heads/ralph/custom-review-loop-001' - not a valid ref
+test rebase_push_updates_custom_remote_review_branch ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+
+     Running tests/integration_memory.rs (target/debug/deps/integration_memory-53f9030db54f3c23)
+
+running 30 tests
+test test_memory_init_creates_file ... ok
+test test_memory_add_json_format ... ok
+test test_memory_add_creates_file ... ok
+test test_memory_add_with_tags ... ok
+test test_memory_add_with_type ... ok
+test test_memory_add_quiet_format ... ok
+test test_memory_init_fails_without_force ... ok
+test test_memory_init_force_overwrites ... ok
+test test_memory_delete_not_found ... ok
+test test_memory_delete_removes_entry ... ok
+test test_memory_list_empty ... ok
+test test_memory_list_color_never ... ok
+test test_memory_list_json_format ... ok
+test test_memory_prime_empty ... ok
+test test_memory_list_filter_by_type ... ok
+test test_memory_prime_json_format ... ok
+test test_memory_prime_filter_by_type ... ok
+test test_memory_list_shows_all ... ok
+test test_memory_prime_filter_by_tags ... ok
+test test_memory_prime_outputs_markdown ... ok
+test test_memory_list_last_n ... ok
+test test_memory_search_no_results ... ok
+test test_memory_show_by_id ... ok
+test test_memory_search_json_format ... ok
+test test_memory_search_filter_by_type ... ok
+test test_memory_show_json_format ... ok
+test test_memory_search_finds_by_content ... ok
+test test_memory_search_finds_by_tags ... ok
+test test_memory_show_not_found ... ok
+test test_memory_prime_respects_budget ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+
+     Running tests/integration_merge_button.rs (target/debug/deps/integration_merge_button-2eab81176d6a4c8a)
+
+running 15 tests
+test test_merge_button_state_blocked_reason_shows_primary_prompt ... ok
+test test_merge_button_state_blocked_when_merge_already_running ... ok
+test test_merge_button_state_active_when_primary_idle ... ok
+test test_loops_list_shows_blocked_merge_indicator_with_reason ... ok
+test test_loops_list_shows_merge_button_state_column ... ok
+test test_loops_list_shows_active_merge_button_indicator ... ok
+test test_merge_button_state_blocked_when_primary_running ... ok
+test test_merge_execution_summary_describes_merged_content ... ok
+test test_merge_no_steering_for_clean_additions ... ok
+test test_merge_needs_steering_when_conflicting_files ... ok
+test test_smart_merge_summary_single_line ... ok
+test test_merge_steering_provides_helpful_options ... ok
+test test_smart_merge_reads_commits_for_summary ... ok
+test test_merge_execution_summary_includes_stats ... ok
+test test_smart_merge_summary_respects_72_char_limit ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+
+     Running tests/integration_merge_drain_autoloop.rs (target/debug/deps/integration_merge_drain_autoloop-d29b77847a47a53a)
+
+running 1 test
+test process_queue_observes_full_lifecycle_and_does_not_remerge ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.24s
+
+     Running tests/integration_no_tty_no_tui.rs (target/debug/deps/integration_no_tty_no_tui-614469472ddd7be1)
+
+running 1 test
+test no_tty_no_tui ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests/integration_preflight.rs (target/debug/deps/integration_preflight-283cec40bcd7ed4e)
+
+running 4 tests
+test test_preflight_check_config_json ... ok
+test test_preflight_unknown_check_fails ... ok
+test test_preflight_config_resolves_hat_import_from_file ... ok
+test configured_hooks_warning_is_visible_in_run_and_doctor_but_absent_without_hooks ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.04s
+
+     Running tests/integration_preset.rs (target/debug/deps/integration_preset-ae358f509a1c3350)
+
+running 3 tests
+test unresolved_preset_name_fails_with_helpful_error ... ok
+test dry_run_detects_toml_preset_dir_passed_as_path ... ok
+test bare_preset_name_resolves_from_cwd_presets_dir ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/integration_run.rs (target/debug/deps/integration_run-9a0231d6106e6856)
+
+running 5 tests
+test test_run_dry_run_uses_user_scoped_config_defaults ... ok
+test test_run_dry_run_accepts_explicit_combined_config_file ... ok
+test test_run_dry_run_local_config_overrides_user_scoped_defaults ... ok
+test test_run_dry_run_succeeds ... ok
+test test_run_continue_does_not_require_scratchpad ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/integration_run_presets.rs (target/debug/deps/integration_run_presets-ead4b590f6a077b5)
+
+running 3 tests
+test test_run_dry_run_with_unknown_preset_fails ... ok
+test test_run_dry_run_with_overrides_only ... ok
+test test_run_dry_run_with_builtin_preset ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/integration_skill.rs (target/debug/deps/integration_skill-3d955fdb7c7e4cef)
+
+running 7 tests
+test test_skill_load_builtin ... ok
+test test_skill_load_missing_exits_nonzero ... ok
+test test_skill_list_includes_builtins ... ok
+test test_skill_load_finds_parent_skills_dir_when_root_nested ... ok
+test test_skill_list_and_load_user_skill_from_default_dir ... ok
+test test_skill_load_finds_parent_skills_dir_when_configured_root_missing ... ok
+test test_skill_load_finds_nested_skills_dir_when_root_missing ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/integration_subprocess_tui_lock.rs (target/debug/deps/integration_subprocess_tui_lock-505429cdd1afe160)
+
+running 2 tests
+test test_lock_contention_detection ... ok
+test test_subprocess_tui_no_spurious_worktree ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/integration_tasks.rs (target/debug/deps/integration_tasks-7e9887d000e09995)
+
+running 9 tests
+test test_task_add_quiet_outputs_id ... ok
+test test_task_add_and_list_json ... ok
+test test_task_ready_filters_by_loop_id ... ok
+test test_task_ensure_deduplicates_by_key_and_updates_metadata ... ok
+test test_task_ready_all_shows_tasks_from_all_loops ... ok
+test test_task_show_json ... ok
+test test_task_ready_respects_blockers ... ok
+test test_task_close_and_fail_update_status ... ok
+test test_task_start_and_reopen_update_lifecycle_fields ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/integration_web.rs (target/debug/deps/integration_web-978c716ce5f7a8bf)
+
+running 1 test
+test web_integration::test_web_command_with_fake_node_tools ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running tests/trace_layer_integration_test.rs (target/debug/deps/trace_layer_integration_test-894946341fd383c8)
+
+running 2 tests
+test test_trace_layer_can_be_added_to_subscriber ... ok
+test test_trace_layer_captures_log_events ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/ralph_core-810adc51a38bfc78)
+
+running 788 tests
+test autoloop_health::tests::autoloop_health_env_resolution_child ... ok
+test autoloop_health::tests::autoloop_health_treats_unparseable_package_version_as_unknown ... ok
+test autoloop_health::tests::autoloop_health_reads_package_json_adjacent_to_binary ... ok
+test autoloop_health::tests::autoloop_health_rejects_old_version ... ok
+test autoloop_health::tests::autoloop_health_ignores_prerelease_suffix_for_comparison ... ok
+test autoloop_health::tests::autoloop_health_resolves_version_through_bin_shim ... ok
+test autoloop_health::tests::autoloop_health_accepts_minimum_and_newer_versions ... ok
+test backend::tests::auto_and_custom_are_not_catalog_entries ... ok
+test backend::tests::catalog_ids_are_unique ... ok
+test backend::tests::default_priority_matches_catalog_order ... ok
+test backend::tests::catalog_ids_match_expected_order_exactly ... ok
+test backend::tests::every_entry_has_nonempty_metadata ... ok
+test backend::tests::install_url_helper_agrees_with_metadata ... ok
+test backend::tests::is_named_covers_all_catalogued_and_rejects_rest ... ok
+test backend::tests::iter_is_reversible_and_cloneable ... ok
+test backend::tests::kiro_and_kiro_acp_map_to_kiro_cli_command ... ok
+test backend::tests::lookup_returns_known_and_rejects_unknown ... ok
+test backend::tests::named_backends_use_own_command_except_kiro_family ... ok
+test backend::tests::tail_order_is_pi_then_roo_then_omp ... ok
+test backend::tests::omp_is_present_and_last ... ok
+test backend::tests::valid_names_matches_catalog_order ... ok
+test cli_capture::tests::test_capture_multiple_writes ... ok
+test cli_capture::tests::test_ansi_preservation ... ok
+test cli_capture::tests::test_capture_pair ... ok
+test cli_capture::tests::test_capture_stderr ... ok
+test cli_capture::tests::test_capture_write ... ok
+test cli_capture::tests::test_take_captures_clears_buffer ... ok
+test config::tests::core_engine_validation_is_not_suppressed ... ok
+test config::tests::core_engine_accepts_autoloop ... ok
+test config::tests::core_engine_accepts_unset_default ... ok
+test config::tests::core_engine_rejects_removed_ralph_engine ... ok
+test config::tests::max_iterations_tracks_whether_yaml_set_it ... ok
+test config::tests::test_adapter_settings_default_for_unconfigured_backend ... ok
+test config::tests::test_adapter_settings ... ok
+test config::tests::test_adapter_settings_cover_every_catalog_backend ... ok
+test config::tests::test_adapter_settings_override_keys_visible_via_flatten ... ok
+test config::tests::test_agent_priority ... ok
+test config::tests::test_ambiguous_routing_rejected ... ok
+test config::tests::test_auto_default_passes_validation ... ok
+test config::tests::test_auto_default_uses_catalog_priority_with_all_adapters_enabled ... ok
+test config::tests::test_core_config_custom_guardrails ... ok
+test config::tests::test_core_config_defaults ... ok
+test config::tests::test_claude_fallback_migration_warning ... ok
+test config::tests::test_core_config_customizable ... ok
+test config::tests::test_custom_backend_requires_command_message_actionable ... ok
+test config::tests::test_custom_backend_requires_command ... ok
+test config::tests::test_custom_backend_args_explicit_key ... ok
+test config::tests::test_custom_backend_args_shorthand ... ok
+test config::tests::test_custom_backend_with_command_succeeds ... ok
+test autoloop_health::tests::autoloop_health_accepts_unversionable_binary ... ok
+test config::tests::test_default_agent_priority ... ok
+
+running 1 test
+test config::tests::test_custom_backend_with_empty_command_errors ... ok
+test config::tests::test_default_backend_is_auto ... ok
+test config::tests::test_default_config ... ok
+test config::tests::test_default_prompt_file_value ... ok
+test config::tests::test_empty_completion_promise_rejected ... ok
+test config::tests::test_explicit_cli_backend_overrides_auto_default ... ok
+test config::tests::test_extra_instructions_empty_by_default ... ok
+test config::tests::test_extra_instructions_merged_during_normalize ... ok
+test config::tests::test_empty_description_rejected ... ok
+test config::tests::test_features_config_auto_merge_defaults_to_false ... ok
+test config::tests::test_features_config_auto_merge_false_from_yaml ... ok
+test config::tests::test_features_config_auto_merge_from_yaml ... ok
+test config::tests::test_features_config_preserves_parallel_when_adding_auto_merge ... ok
+test config::tests::test_hat_backend_custom ... ok
+test config::tests::test_hat_backend_named ... ok
+test config::tests::test_hat_backend_kiro_agent_with_args ... ok
+test config::tests::test_hat_backend_named_with_args ... ok
+test config::tests::test_hat_backend_kiro_agent ... ok
+test config::tests::test_hat_backend_named_with_args_empty ... ok
+test config::tests::test_hat_backend_settings_name ... ok
+test config::tests::test_hat_config_without_backend ... ok
+test config::tests::test_hat_config_with_backend ... ok
+test config::tests::test_hat_scratchpad_custom_path ... ok
+test config::tests::test_hat_scratchpad_enabled_no_path ... ok
+test config::tests::test_hat_scratchpad_disabled ... ok
+test config::tests::test_hat_scratchpad_inherits_global ... ok
+test config::tests::test_hat_scratchpad_path_no_enabled ... ok
+test autoloop_health::tests::autoloop_health_uses_executable_version_without_package_json ... ok
+test config::tests::test_hat_scratchpad_plain_string ... ok
+test config::tests::test_hooks_parse_rejects_backpressure_phase_event_keys_in_v1 ... ok
+test config::tests::test_hooks_parse_rejects_invalid_on_error_enum_value ... ok
+test config::tests::test_hooks_config_valid_yaml_parses_and_validates ... ok
+test config::tests::test_hooks_validate_rejects_missing_command ... ok
+test config::tests::test_hooks_validate_rejects_missing_name ... ok
+test config::tests::test_hooks_validate_rejects_global_scope_non_v1_field ... ok
+test config::tests::test_hooks_validate_rejects_missing_on_error ... ok
+test config::tests::test_hooks_validate_rejects_parallel_non_v1_field ... ok
+test config::tests::test_migration_warning_suppressed_under_suppress_warnings ... ok
+test config::tests::test_hooks_validate_rejects_zero_max_output_bytes ... ok
+test config::tests::test_missing_description_rejected ... ok
+test config::tests::test_hooks_validate_rejects_zero_timeout_seconds ... ok
+test config::tests::test_multiple_hats_different_scratchpad_configs ... ok
+test config::tests::test_mixed_backends_config ... ok
+test config::tests::test_hooks_parse_rejects_invalid_phase_event_key ... ok
+test config::tests::test_no_migration_warning_when_inheritor_has_override ... ok
+test autoloop_health::tests::standalone_version_output_is_parsed ... ok
+test config::tests::test_parse_yaml_v1_format ... ok
+test config::tests::test_parse_yaml_with_custom_hats ... ok
+test config::tests::test_per_worker_timeout_uses_backend_override_when_hat_timeout_absent ... ok
+test config::tests::test_per_worker_timeout_hat_timeout_wins ... ok
+test config::tests::test_preflight_config_deserialize ... ok
+test config::tests::test_per_worker_timeout_uses_default_then_builtin_300 ... ok
+test config::tests::test_project_key_rejected ... ok
+test config::tests::test_prompt_and_prompt_file_mutually_exclusive ... ok
+test config::tests::test_prompt_with_default_prompt_file_allowed ... ok
+test config::tests::test_prompt_file_with_no_inline_allowed ... ok
+test config::tests::test_reserved_trigger_message_actionable ... ok
+test config::tests::test_resolve_context_window_claude_default ... ok
+test config::tests::test_reserved_trigger_task_resume_rejected ... ok
+test config::tests::test_resolve_context_window_explicit_override_wins ... ok
+test config::tests::test_reserved_trigger_task_start_rejected ... ok
+test config::tests::test_resolve_context_window_override_beats_unknown_backend ... ok
+test config::tests::test_resolve_context_window_pi_default ... ok
+test config::tests::test_resolve_context_window_unknown_backend_is_zero ... ok
+test config::tests::test_resolve_context_window_for_effective_hat_backend ... ok
+test config::tests::test_robot_config_defaults_disabled ... ok
+test config::tests::test_robot_config_enabled_missing_timeout_and_token_fails_on_timeout_first ... ok
+test config::tests::test_robot_config_absent_parses_as_default ... ok
+test config::tests::test_robot_config_disabled_skips_validation ... ok
+test config::tests::test_robot_config_resolve_bot_token_none_without_config ... ok
+test autoloop_health::tests::autoloop_health_env_resolution_child ... ok
+
+test result: oktest config::tests::test_robot_config_resolve_bot_token_from_config ... . 1 passed; 0 failed; 0 ignored; 0 measured; 787 filtered outok
+; finished in 0.00s
+
+test config::tests::test_robot_config_enabled_missing_timeout_fails ... ok
+test config::tests::test_robot_config_validate_empty_bot_token ... ok
+test config::tests::test_robot_config_validate_with_config_token ... ok
+test config::tests::test_robot_config_valid_full ... ok
+test config::tests::test_robot_config_validate_missing_telegram_section ... ok
+test config::tests::test_robot_config_web_mode_does_not_require_telegram ... ok
+test config::tests::test_robot_enabled_does_not_warn_that_autoloop_hitl_is_inactive ... ok
+test config::tests::test_scratchpad_default_config ... ok
+test config::tests::test_robot_disabled_does_not_warn_that_autoloop_hitl_is_inactive ... ok
+test config::tests::test_scratchpad_legacy_plain_string ... ok
+test config::tests::test_scratchpad_missing_defaults ... ok
+test config::tests::test_scratchpad_resolve_global_fallback ... ok
+test config::tests::test_scratchpad_resolve_hat_override ... ok
+test config::tests::test_scratchpad_structured_disabled ... ok
+test config::tests::test_scratchpad_structured_config ... ok
+test config::tests::test_skills_config_defaults_when_absent ... ok
+test config::tests::test_suppress_warnings_does_not_suppress_correctness_errors ... ok
+test config::tests::test_suppress_warnings_still_suppresses_pure_warnings ... ok
+test config::tests::test_tui_config_default ... ok
+test config::tests::test_suppress_warnings ... ok
+test config::tests::test_tui_config_parse_ctrl_b ... ok
+test config::tests::test_tui_config_parse_invalid_format ... ok
+test config::tests::test_tui_config_parse_invalid_key ... ok
+test config::tests::test_tui_config_parse_invalid_modifier ... ok
+test config::tests::test_skills_config_deserializes_all_fields ... ok
+test config::tests::test_skills_config_disabled ... ok
+test config::tests::test_skill_override_partial_fields ... ok
+test config::tests::test_unique_triggers_accepted ... ok
+test config::tests::test_validate_accepts_custom_and_catalogued_overrides ... ok
+test config::tests::test_unknown_fields_ignored ... ok
+test config::tests::test_validate_accepts_selectors_and_named_backends ... ok
+test config::tests::test_validate_dropped_fields ... ok
+test config::tests::test_validate_accepts_valid_hat_backends ... ok
+test config::tests::test_validate_deferred_features ... ok
+test config::tests::test_validate_rejects_hat_custom_with_empty_command ... ok
+test config::tests::test_validate_rejects_unknown_agent_priority ... ok
+test config::tests::test_validate_rejects_unknown_global_backend ... ok
+test config::tests::test_validate_rejects_unknown_adapter_override ... ok
+test config::tests::test_validate_rejects_unknown_kiro_backend_type ... ok
+test config::tests::test_wave_config_aggregate_on_concurrent_hat_rejected ... ok
+test config::tests::test_wave_config_aggregate_on_non_concurrent_hat_valid ... ok
+test config::tests::test_validate_rejects_unknown_hat_backend_named ... ok
+test config::tests::test_wave_config_concurrency_zero_rejected ... ok
+test config::tests::test_validate_rejects_unknown_hat_backend_named_with_args ... ok
+test config::tests::test_wave_config_concurrency_and_aggregate_parse ... ok
+test config::tests::test_wave_config_defaults_without_new_fields ... ok
+test diagnostics::agent_output::tests::test_logger_creates_file ... ok
+test diagnostics::agent_output::tests::test_log_writes_valid_jsonl ... ok
+test diagnostics::agent_output::tests::test_all_content_types_serialize ... ok
+test diagnostics::hook_runs::tests::from_run_result_maps_hook_runtime_fields ... ok
+test diagnostics::agent_output::tests::test_immediate_flush ... ok
+test diagnostics::hook_runs::tests::hook_disposition_serializes_to_snake_case ... ok
+test diagnostics::errors::tests::test_error_logger_creates_file ... ok
+
+running 1 test
+test diagnostics::errors::tests::test_all_error_types_serialize ... ok
+test diagnostics::errors::tests::test_error_logger_integration ... ok
+test diagnostics::hook_runs::tests::telemetry_entry_serializes_required_fields ... ok
+test diagnostics::hook_runs::tests::hook_run_logger_persists_jsonl_entries ... ok
+test diagnostics::integration_tests::tests::test_diagnostics_collector_hook_run_logging_is_noop_when_disabled ... ok
+test diagnostics::hook_runs::tests::hook_run_logger_flushes_on_each_write ... ok
+test diagnostics::integration_tests::tests::test_diagnostics_collector_logs_hook_run_telemetry ... ok
+test diagnostics::log_rotation::tests::test_rotate_at_limit ... ok
+test diagnostics::log_rotation::tests::test_rotate_nonexistent_dir ... ok
+test diagnostics::log_rotation::tests::test_create_log_file_creates_directory ... ok
+test diagnostics::log_rotation::tests::test_rotate_ignores_non_matching_files ... ok
+test diagnostics::log_rotation::tests::test_create_log_file_rotates ... ok
+test diagnostics::log_rotation::tests::test_rotate_empty_dir ... ok
+test diagnostics::orchestration::tests::test_all_event_types_serialize ... ok
+test diagnostics::orchestration::tests::test_immediate_flush ... ok
+test diagnostics::orchestration::tests::test_iteration_and_hat_captured ... ok
+test diagnostics::log_rotation::tests::test_rotate_under_limit ... ok
+test diagnostics::performance::tests::test_all_metric_types_serialize ... ok
+test diagnostics::log_rotation::tests::test_rotate_over_limit ... ok
+test diagnostics::performance::tests::test_performance_logger_creates_file ... ok
+test diagnostics::stream_handler::tests::test_wrapper_calls_inner_handler ... ok
+test diagnostics::stream_handler::tests::test_wrapper_logs_all_events ... ok
+test diagnostics::stream_handler::tests::test_thread_safety ... ok
+test diagnostics::tests::test_diagnostics_enabled_creates_directory ... ok
+test diagnostics::tests::test_session_directory_format ... ok
+test diagnostics::tests::test_error_logger_integration ... ok
+test diagnostics::tests::test_diagnostics_disabled_by_default ... ok
+test diagnostics::tests::test_performance_logger_integration ... ok
+test diagnostics::trace_layer::tests::test_context_included ... ok
+test diagnostics::trace_layer::tests::test_layer_captures_all_levels ... ok
+test engine_state::tests::engine_config_overrides_pin_every_store_beneath_the_root ... ok
+test engine_state::tests::engine_env_pins_every_store_beneath_the_root ... ok
+test engine_state::tests::engine_run_dir_accepts_a_safe_single_component_id ... ok
+test engine_state::tests::engine_run_dir_rejects_empty_or_unsafe_ids ... ok
+test engine_state::tests::engine_state_root_is_under_ralph ... ok
+test diagnostics::trace_layer::tests::test_fields_serialized_correctly ... ok
+test engine_state::tests::engine_stores_never_reference_ralph_agent_stores ... ok
+test engine_state::tests::relative_workspace_keeps_a_relative_root ... ok
+test engine_state::tests::persist_current_run_id_rejects_unsafe_ids_and_round_trips_safe_ones ... ok
+test event_logger::tests::test_empty_history ... ok
+test engine_state::tests::owned_root_rejects_autoloop_symlink_without_touching_its_target ... ok
+test event_logger::tests::test_event_record_backwards_compat_no_wave_fields ... ok
+test engine_state::tests::owned_root_rejects_ralph_symlink_without_touching_its_target ... ok
+test event_logger::tests::test_creates_parent_directory ... ok
+test event_logger::tests::test_event_record_no_wave_metadata ... ok
+test event_logger::tests::test_event_record_propagates_wave_metadata ... ok
+test event_logger::tests::test_event_record_wave_fields_not_serialized_when_none ... ok
+test event_logger::tests::test_agent_written_events_without_iteration ... ok
+test event_logger::tests::test_event_record_wave_roundtrip_through_jsonl ... ok
+test event_logger::tests::test_log_and_read ... ok
+test event_logger::tests::test_object_payload_from_ralph_emit_json ... ok
+test event_logger::tests::test_filter_by_topic ... ok
+test event_logger::tests::test_mixed_event_formats ... ok
+test event_logger::tests::test_payload_truncation ... ok
+test event_logger::tests::test_payload_truncation_with_multibyte_chars ... ok
+test event_parser::tests::test_contains_promise_detects_outside_events ... ok
+test event_parser::tests::test_contains_promise_ignores_event_payloads ... ok
+test event_parser::tests::test_contains_promise_mixed_content ... ok
+test autoloop_health::tests::autoloop_health_env_resolution_child ... test event_parser::tests::test_contains_promise_requires_last_line ... okok
+
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 787 filtered out; finished in 0.01stest event_parser::tests::test_no_events ... 
+
+ok
+test event_parser::tests::test_extract_first_number_quality_line ... ok
+test event_parser::tests::test_parse_backpressure_evidence_missing ... ok
+test event_parser::tests::test_parse_backpressure_evidence_all_pass ... ok
+test event_parser::tests::test_parse_backpressure_evidence_partial ... ok
+test event_parser::tests::test_parse_backpressure_evidence_some_fail ... ok
+test event_parser::tests::test_parse_backpressure_evidence_specs_comma_separated ... ok
+test event_logger::tests::test_read_last ... ok
+test event_parser::tests::test_parse_backpressure_evidence_specs_omitted_does_not_block ... ok
+test event_parser::tests::test_parse_backpressure_evidence_with_ansi_codes ... ok
+test engine_state::tests::owned_root_rejects_direct_and_nested_descendant_symlinks ... ok
+test event_parser::tests::test_parse_backpressure_evidence_with_mutants_warn ... ok
+test event_parser::tests::test_parse_backpressure_evidence_with_performance_regression ... ok
+test event_parser::tests::test_parse_backpressure_evidence_with_mutants_pass ... ok
+test event_parser::tests::test_parse_backpressure_evidence_with_specs_fail ... ok
+test event_parser::tests::test_parse_event_with_target ... ok
+test event_parser::tests::test_parse_backpressure_evidence_with_specs_pass ... ok
+test event_parser::tests::test_parse_multiple_events ... ok
+test event_parser::tests::test_parse_quality_report_fails_thresholds ... ok
+test event_parser::tests::test_parse_quality_report_missing ... ok
+test event_parser::tests::test_parse_quality_report_passes_thresholds ... ok
+test event_parser::tests::test_parse_review_evidence_all_pass ... ok
+test event_parser::tests::test_parse_review_evidence_build_fail ... ok
+test event_parser::tests::test_parse_review_evidence_missing ... ok
+test event_parser::tests::test_parse_review_evidence_partial ... ok
+test event_parser::tests::test_parse_review_evidence_tests_fail ... ok
+test event_parser::tests::test_parse_review_evidence_with_ansi_codes ... ok
+test event_parser::tests::test_parse_single_event ... ok
+test autoloop_health::tests::vendored_engine_precedes_path_and_path_is_fallback ... ok
+test event_parser::tests::test_parse_specs_evidence_only ... ok
+test event_parser::tests::test_parse_with_source ... ok
+test event_parser::tests::test_promise_in_event_tags ... ok
+test event_parser::tests::test_quality_report_specs_omitted_passes ... ok
+test event_parser::tests::test_quality_report_with_specs_fail ... ok
+test event_parser::tests::test_quality_report_with_specs_pass ... ok
+test event_parser::tests::test_strip_ansi_function ... ok
+test event_parser::tests::test_strip_event_tags ... ok
+test event_reader::tests::test_from_event_reader_to_proto_none_payload ... ok
+test event_reader::tests::test_from_event_reader_to_proto_with_wave ... ok
+test event_reader::tests::test_empty_file ... ok
+test event_reader::tests::test_captures_malformed_lines ... ok
+test event_reader::tests::test_crlf_terminated_lines_do_not_drift_position ... ok
+test event_reader::tests::test_event_reader_backwards_compat_no_wave_fields ... ok
+test event_reader::tests::test_missing_file ... ok
+test event_reader::tests::test_event_reader_mixed_wave_and_non_wave ... ok
+test event_reader::tests::test_event_reader_parses_wave_metadata ... ok
+test event_reader::tests::test_from_event_reader_to_proto_without_wave ... ok
+test event_reader::tests::test_mixed_payload_formats ... ok
+test event_reader::tests::test_mixed_valid_invalid_handling ... ok
+test event_reader::tests::test_nested_object_payload ... ok
+test event_reader::tests::test_partial_final_line_is_not_consumed_or_dropped ... ok
+test event_reader::tests::test_peek_new_events_does_not_advance_position ... ok
+test event_reader::tests::test_read_new_events ... ok
+test event_reader::tests::test_reset_position ... ok
+test event_reader::tests::test_tracks_position ... ok
+test event_reader::tests::test_structured_payload_as_object ... ok
+test file_lock::tests::test_lock_file_path_no_extension ... ok
+test file_lock::tests::test_lock_file_path ... ok
+test file_lock::tests::test_exclusive_blocks_shared ... ok
+test file_lock::tests::test_exclusive_lock_acquired ... ok
+test file_lock::tests::test_lock_released_on_drop ... ok
+test file_lock::tests::test_locked_file_read_nonexistent ... ok
+test file_lock::tests::test_multiple_shared_locks ... ok
+test file_lock::tests::test_shared_blocks_exclusive ... ok
+test file_lock::tests::test_locked_file_read_write ... ok
+test file_lock::tests::test_shared_lock_acquired ... ok
+test git_ops::tests::test_auto_commit_no_changes ... ok
+test file_lock::tests::test_concurrent_writes_serialized ... ok
+test git_ops::tests::test_auto_commit_unstaged_modifications ... ok
+test git_ops::tests::test_auto_commit_only_gitignored_files ... ok
+test git_ops::tests::test_auto_commit_staged_changes ... ok
+test git_ops::tests::test_auto_commit_mixed_changes ... ok
+test git_ops::tests::test_auto_commit_returns_correct_sha ... ok
+test git_ops::tests::test_get_commit_summary ... ok
+test file_lock::tests::test_blocking_lock_waits ... ok
+test git_ops::tests::test_clean_stashes_empty ... ok
+test git_ops::tests::test_auto_commit_untracked_files ... ok
+test git_ops::tests::test_get_current_branch ... ok
+test git_ops::tests::test_auto_commit_working_tree_clean_after ... ok
+test git_ops::tests::test_get_current_branch_custom ... ok
+test git_ops::tests::test_has_uncommitted_changes_clean ... ok
+test git_ops::tests::test_has_uncommitted_changes_modified ... ok
+test git_ops::tests::test_has_uncommitted_changes_untracked ... ok
+test git_ops::tests::test_prune_remote_refs_no_origin ... ok
+test git_ops::tests::test_is_working_tree_clean ... ok
+test handoff::tests::test_truncate_prompt_long ... ok
+test handoff::tests::test_truncate_prompt_short ... ok
+test git_ops::tests::test_has_uncommitted_changes_staged ... ok
+test handoff::tests::test_truncate_prompt_with_emoji ... ok
+test handoff::tests::test_truncate_prompt_with_emoji_near_boundary ... ok
+test hooks::engine::tests::build_payload_defaults_optional_context_fields ... ok
+test hooks::engine::tests::build_payload_maps_loop_iteration_and_context_fields ... ok
+test hooks::engine::tests::resolve_phase_event_applies_defaults_and_per_hook_overrides ... ok
+test hooks::engine::tests::resolve_phase_event_preserves_declaration_order ... ok
+test hooks::engine::tests::resolve_phase_event_returns_empty_for_unconfigured_or_unknown_phase ... ok
+test handoff::tests::test_handoff_content_has_sections ... ok
+test git_ops::tests::test_get_recent_files ... ok
+test handoff::tests::test_handoff_with_no_tasks ... ok
+test git_ops::tests::test_clean_stashes_with_stash ... ok
+test hooks::suspend_state::tests::test_clear_suspend_state_is_idempotent ... ok
+test hooks::suspend_state::tests::test_paths_resolve_under_workspace_ralph_dir ... ok
+test hooks::suspend_state::tests::test_read_suspend_state_invalid_json_returns_deserialize_error ... ok
+test hooks::suspend_state::tests::test_resume_signal_is_single_use ... ok
+test handoff::tests::test_handoff_with_tasks ... ok
+test hooks::suspend_state::tests::test_suspend_state_record_serializes_v1_schema_shape ... ok
+test hooks::suspend_state::tests::test_write_and_read_suspend_state_round_trip ... ok
+test instructions::tests::test_custom_guardrails_injected ... ok
+test hooks::suspend_state::tests::test_write_suspend_state_replaces_file_without_leaking_temp_files ... ok
+test instructions::tests::test_derived_behaviors_keep_default_scratchpad_wording ... ok
+test instructions::tests::test_custom_hat_with_rfc2119_patterns ... ok
+test instructions::tests::test_derived_behaviors_name_custom_scratchpad_path ... ok
+test instructions::tests::test_derived_behaviors_omit_scratchpad_when_disabled ... ok
+test instructions::tests::test_derived_behaviors_when_no_explicit_instructions ... ok
+test instructions::tests::test_must_publish_not_injected_when_no_publishes ... ok
+test instructions::tests::test_must_publish_injected_for_explicit_instructions ... ok
+test handoff::tests::test_handoff_writer_creates_file ... ok
+test hooks::executor::tests::run_preserves_non_zero_exit_code_without_timeout ... ok
+test hooks::executor::tests::run_reports_successful_exit_and_stream_content ... ok
+test hooks::executor::tests::run_truncates_stdout_and_stderr_at_max_output_bytes ... ok
+test hooks::executor::tests::run_writes_json_payload_to_hook_stdin ... ok
+test landing::tests::test_landing_config_disables_features ... ok
+test loop_completion::tests::test_default_handler_has_auto_merge_enabled ... ok
+test landing::tests::test_landing_generates_handoff_content ... ok
+test landing::tests::test_landing_with_open_tasks ... ok
+test landing::tests::test_landing_clean_repo ... ok
+test landing::tests::test_landing_with_stashes ... ok
+test landing::tests::test_landing_with_uncommitted_changes ... ok
+test loop_context::tests::test_code_tasks_symlink_worktree ... ok
+test loop_context::tests::test_context_path ... ok
+test loop_completion::tests::test_primary_loop_with_landing ... ok
+test loop_context::tests::test_current_events_marker ... ok
+test loop_context::tests::test_generate_context_file_primary_noop ... ok
+test loop_context::tests::test_ensure_directories ... ok
+test loop_context::tests::test_memory_symlink_primary_noop ... ok
+test loop_context::tests::test_generate_context_file_worktree ... ok
+test loop_context::tests::test_memory_symlink_worktree ... ok
+test loop_context::tests::test_planning_session_paths ... ok
+test loop_context::tests::test_planning_sessions_paths ... ok
+test loop_context::tests::test_primary_context ... ok
+test loop_context::tests::test_planning_session_directory_creation ... ok
+test loop_context::tests::test_primary_path_resolution ... ok
+test loop_context::tests::test_setup_worktree_symlinks ... ok
+test loop_context::tests::test_worktree_context ... ok
+test loop_context::tests::test_worktree_path_resolution ... ok
+test loop_context::tests::test_specs_symlink_worktree ... ok
+test loop_history::tests::test_append_and_read ... ok
+test loop_history::tests::test_empty_file ... ok
+test loop_history::tests::test_get_prompt ... ok
+test loop_history::tests::test_is_completed ... ok
+test loop_history::tests::test_is_completed_terminated ... ok
+test loop_history::tests::test_merge_events ... ok
+test loop_history::tests::test_serialization_format ... ok
+test loop_history::tests::test_last_iteration ... ok
+test loop_history::tests::test_summary ... ok
+test landing::tests::test_worktree_landing ... ok
+test loop_lock::tests::test_acquire_lock_success ... ok
+test loop_lock::tests::test_lock_metadata_serialization ... ok
+test loop_lock::tests::test_is_locked ... ok
+test loop_lock::tests::test_read_existing_no_file ... ok
+test loop_lock::tests::test_creates_ralph_directory ... ok
+test loop_name::tests::test_default_config ... ok
+test loop_name::tests::test_extract_keywords_filters_stop_words ... ok
+test loop_name::tests::test_extract_keywords_limits_to_three ... ok
+test loop_name::tests::test_extract_keywords_prioritizes_verbs ... ok
+test loop_name::tests::test_generate_empty_prompt ... ok
+test loop_name::tests::test_generate_memorable ... ok
+test loop_name::tests::test_generate_memorable_unique ... ok
+test loop_name::tests::test_generate_memorable_unique_falls_back_to_timestamp ... ok
+test loop_name::tests::test_generate_only_stop_words ... ok
+test loop_name::tests::test_generate_produces_valid_name ... ok
+test loop_name::tests::test_generate_respects_max_length ... ok
+test loop_name::tests::test_generate_unique_avoids_collisions ... ok
+test loop_name::tests::test_generate_unique_falls_back_to_timestamp ... ok
+test loop_name::tests::test_sanitize_for_git ... ok
+test loop_name::tests::test_timestamp_format ... ok
+test loop_lock::tests::test_lock_released_on_drop ... ok
+test loop_lock::tests::test_read_existing_with_lock ... ok
+test loop_registry::tests::test_entry_serialization ... ok
+test loop_registry::tests::test_loop_entry_creation ... ok
+test loop_registry::tests::test_loop_entry_id_format ... ok
+test loop_registry::tests::test_loop_entry_is_alive ... ok
+test loop_registry::tests::test_entry_serialization_no_worktree ... ok
+test loop_registry::tests::test_loop_entry_with_id ... ok
+test loop_registry::tests::test_loop_entry_with_worktree ... ok
+test loop_registry::tests::test_no_worktree_entry_unaffected ... ok
+test loop_registry::tests::test_registry_creates_file ... ok
+test loop_registry::tests::test_deregister_current_process ... ok
+test loop_registry::tests::test_registry_deregister ... ok
+test loop_registry::tests::test_registry_deregister_nonexistent ... ok
+test loop_registry::tests::test_registry_get ... ok
+test loop_registry::tests::test_registry_different_pids_coexist ... ok
+test loop_registry::tests::test_registry_persistence ... ok
+test loop_registry::tests::test_registry_register_and_list ... ok
+test loop_registry::tests::test_registry_get_nonexistent ... ok
+test loop_registry::tests::test_registry_same_pid_replaces ... ok
+test loop_registry::tests::test_zombie_worktree_detected_as_dead ... ok
+test loop_registry::tests::test_registry_replaces_same_pid ... ok
+test memory::tests::test_memory_has_any_tag ... ok
+test memory::tests::test_memory_id_format ... ok
+test memory::tests::test_memory_matches_query ... ok
+test memory::tests::test_memory_new ... ok
+test memory::tests::test_memory_serde_roundtrip ... ok
+test memory::tests::test_memory_type_all ... ok
+test memory::tests::test_memory_type_display ... ok
+test memory::tests::test_memory_type_default ... ok
+test loop_registry::tests::test_with_lock_keeps_zombie_until_explicit_cleanup ... ok
+test memory::tests::test_memory_type_emojis ... ok
+test memory::tests::test_memory_type_from_str ... ok
+test memory::tests::test_memory_type_from_section ... ok
+test memory::tests::test_memory_type_section_names ... ok
+test memory::tests::test_memory_type_serde ... ok
+test memory_parser::tests::test_parse_empty_file ... ok
+test loop_completion::tests::test_worktree_loop_auto_merge_enqueues ... ok
+test memory_parser::tests::test_parse_missing_metadata_uses_defaults ... ok
+test memory_parser::tests::test_parse_empty_tags ... ok
+test memory_parser::tests::test_parse_memory_without_content_is_skipped ... ok
+test memory_parser::tests::test_parse_ignores_malformed_blocks ... ok
+test memory_parser::tests::test_parse_multiline_content ... ok
+test memory_parser::tests::test_parse_single_memory ... ok
+test memory_store::tests::test_append_creates_file_if_missing ... ok
+test memory_parser::tests::test_parse_multiple_sections ... ok
+test loop_completion::tests::test_worktree_loop_no_auto_merge_manual ... ok
+test memory_store::tests::test_delete_returns_false_for_nonexistent ... ok
+test memory_store::tests::test_append_to_different_sections ... ok
+test memory_store::tests::test_format_memories_as_markdown_empty ... ok
+test memory_store::tests::test_filter_by_tags ... ok
+test memory_store::tests::test_format_memories_as_markdown_grouped_by_type ... ok
+test memory_store::tests::test_format_memories_as_markdown_single ... ok
+test memory_store::tests::test_filter_by_type ... ok
+test memory_store::tests::test_delete_removes_memory ... ok
+test memory_store::tests::test_append_to_existing_section ... ok
+test memory_store::tests::test_init_creates_file ... ok
+test memory_store::tests::test_get_finds_memory ... ok
+test memory_store::tests::test_get_returns_none_for_nonexistent ... ok
+test memory_store::tests::test_init_fails_if_exists_without_force ... ok
+test memory_store::tests::test_load_empty_file ... ok
+test memory_store::tests::test_multiline_content_roundtrip ... ok
+test memory_store::tests::test_search_matches_content ... ok
+test memory_store::tests::test_search_matches_tags ... ok
+test memory_store::tests::test_truncate_to_budget_adds_notice ... ok
+test memory_store::tests::test_truncate_to_budget_no_truncation_needed ... ok
+test memory_store::tests::test_truncate_to_budget_zero_means_unlimited ... ok
+test merge_queue::tests::test_empty_queue ... ok
+test memory_store::tests::test_init_with_force_overwrites ... ok
+test merge_queue::tests::test_creates_ralph_directory ... ok
+test merge_queue::tests::test_enqueue ... ok
+test merge_queue::tests::test_discard_from_queued ... ok
+test merge_queue::tests::test_event_serialization ... ok
+test merge_queue::tests::test_discard_from_needs_review ... ok
+test merge_queue::tests::test_invalid_transition_queued_to_merged ... ok
+test merge_queue::tests::test_full_merge_lifecycle ... ok
+test merge_queue::tests::test_not_found ... ok
+test merge_queue::tests::test_invalid_transition_merged_to_needs_review ... ok
+test merge_queue::tests::test_persistence ... ok
+test loop_completion::tests::test_worktree_loop_auto_commits_uncommitted_changes ... ok
+test merge_queue::tests::test_merge_needs_review ... ok
+test merge_queue::tests::test_recover_stale_merges_leaves_live_pid_merging ... ok
+test merge_queue::tests::test_list_by_state ... ok
+test merge_queue::tests::test_recover_stale_merges_marks_dead_pid_needs_review ... ok
+test planning_session::tests::test_append_prompt_and_response ... ok
+test planning_session::tests::test_artifacts_directory_created ... ok
+test planning_session::tests::test_create_new_session ... ok
+test planning_session::tests::test_generate_session_id ... ok
+test merge_queue::tests::test_recover_stale_merges_leaves_non_merging_entries_untouched ... ok
+test planning_session::tests::test_find_response ... ok
+test planning_session::tests::test_load_nonexistent_session ... ok
+test planning_session::tests::test_load_existing_session ... ok
+test preflight::tests::autoloop_check_result_maps_all_health_states ... ok
+test preflight::tests::autoloop_check_result_names_source_and_both_install_routes ... ok
+test planning_session::tests::test_increment_iterations ... ok
+test preflight::tests::backend_command_resolves_every_catalog_backend ... ok
+test preflight::tests::default_checks_include_hooks_failure_budget_and_autoloop_check_names ... ok
+test preflight::tests::config_check_emits_warning_details ... ok
+test preflight::tests::extract_criteria_bold_format ... ok
+test merge_queue::tests::test_retry_from_needs_review ... ok
+test loop_completion::tests::test_worktree_loop_no_auto_commit_when_clean ... ok
+test preflight::tests::extract_criteria_empty_content ... ok
+test planning_session::tests::test_set_status ... ok
+test preflight::tests::extract_criteria_given_then_without_when ... ok
+test preflight::tests::extract_criteria_incomplete_given_without_then_is_dropped ... ok
+test preflight::tests::extract_all_criteria_collects_from_directory ... ok
+test preflight::tests::extract_criteria_from_file_returns_criteria ... ok
+test preflight::tests::extract_criteria_from_file_skips_implemented ... ok
+test preflight::tests::extract_criteria_list_format ... ok
+test preflight::tests::extract_criteria_multiple_triples ... ok
+test preflight::tests::extract_criteria_no_criteria ... ok
+test preflight::tests::extract_criteria_plain_text_format ... ok
+test preflight::tests::has_acceptance_criteria_detects_bold_format ... ok
+test preflight::tests::failure_budget_check_warns_for_the_default_value ... ok
+test merge_queue::tests::test_recovered_stale_merge_can_be_retried ... ok
+test preflight::tests::failure_budget_check_warns_with_configured_value_and_engine_limitation ... ok
+test preflight::tests::has_acceptance_criteria_detects_bold_list_format ... ok
+test preflight::tests::has_acceptance_criteria_detects_list_format ... ok
+test preflight::tests::git_check_skips_outside_repo ... ok
+test preflight::tests::has_acceptance_criteria_rejects_content_without_criteria ... ok
+test preflight::tests::has_acceptance_criteria_requires_given_and_then ... ok
+test preflight::tests::hooks_check_does_not_warn_when_enabled_but_empty ... ok
+test preflight::tests::match_clause_extracts_text ... ok
+test preflight::tests::hooks_check_skips_when_hooks_are_disabled ... ok
+test preflight::tests::report_counts_statuses ... ok
+test preflight::tests::hooks_check_fails_with_actionable_duplicate_and_command_diagnostics ... ok
+test preflight::tests::run_selected_can_skip_hooks_check_failures ... ok
+test preflight::tests::paths_check_creates_missing_dirs ... ok
+test preflight::tests::hooks_check_warns_that_resolvable_configured_hooks_are_inert ... ok
+test preflight::tests::specs_check_finds_specs_in_subdirectories ... ok
+test preflight::tests::specs_check_passes_with_complete_spec ... ok
+test preflight::tests::specs_check_skips_implemented_specs ... ok
+test preflight::tests::specs_check_skips_when_no_directory ... ok
+test preflight::tests::telegram_check_skips_in_web_mode ... ok
+test preflight::tests::telegram_check_skips_when_disabled ... ok
+test preflight::tests::specs_check_skips_when_empty_directory ... ok
+test preflight::tests::tools_check_skips_outside_repo ... ok
+test preflight::tests::specs_check_warns_on_missing_acceptance_criteria ... ok
+test preflight::tests::tools_check_warns_on_missing_optional_tools ... ok
+test preflight::tests::tools_check_reports_missing_tools ... ok
+test preset_source::tests::autoloop_source_detects_valid_preset_dir ... ok
+test preset_source::tests::autoloop_source_rejects_dir_missing_topology ... ok
+test preset_source::tests::autoloop_source_rejects_files ... ok
+test preset_source::tests::handoff_inversion_preserves_event_order_per_role ... ok
+test preset_source::tests::autoloop_completion_falls_back_to_event_loop_config ... ok
+test preset_source::tests::registry_reports_unsupported_for_unknown_shape ... ok
+test preset_source::tests::autoloop_source_populates_event_loop ... ok
+test preset_source::tests::yaml_source_rejects_directories ... ok
+test preset_source::tests::autoloop_source_loads_preset_with_inverted_handoffs ... ok
+test session_player::tests::test_collect_ansi_escaped ... ok
+test session_player::tests::test_collect_text_output ... ok
+test preset_source::tests::yaml_source_detects_yml_files ... ok
+test session_player::tests::test_empty_input ... ok
+test session_player::tests::test_collect_terminal_output ... ok
+test preset_source::tests::registry_default_picks_autoloop_for_preset_dirs_and_yaml_for_files ... ok
+test session_player::tests::test_escape_ansi ... ok
+test session_player::tests::test_player_config_builder ... ok
+test session_player::tests::test_filter_by_event ... ok
+test session_player::tests::test_player_from_reader ... ok
+test session_player::tests::test_replay_terminal ... ok
+test session_player::tests::test_replay_text_mode ... ok
+test session_player::tests::test_whitespace_lines_skipped ... ok
+test session_recorder::tests::test_record_bus_event ... ok
+test session_recorder::tests::test_jsonl_format ... ok
+test session_recorder::tests::test_record_bus_event_flushes_buffered_writer_immediately ... ok
+test session_recorder::tests::test_record_metadata ... ok
+test session_recorder::tests::test_record_roundtrip ... ok
+test session_recorder::tests::test_record_ux_event ... ok
+test session_recorder::tests::test_ux_write_count ... ok
+test skill::tests::test_content_body_strips_frontmatter_delimiters ... ok
+test skill::tests::test_empty_frontmatter ... ok
+test skill::tests::test_parse_no_closing_delimiter ... ok
+test skill::tests::test_parse_invalid_yaml_frontmatter ... ok
+test skill::tests::test_parse_frontmatter_name_and_description_only ... ok
+test skill::tests::test_parse_no_frontmatter ... ok
+test skill_registry::tests::test_build_index_empty_registry ... ok
+test skill_registry::tests::test_backend_filtering ... ok
+test skill_registry::tests::test_build_index_hat_filtering ... ok
+test skill_registry::tests::test_auto_inject_skills_only_returns_auto_inject ... ok
+test skill_registry::tests::test_build_index_generates_table ... ok
+test skill::tests::test_parse_valid_frontmatter_all_fields ... ok
+test skill_registry::tests::test_get_returns_none_for_unknown ... ok
+test skill_registry::tests::test_load_skill_unknown ... ok
+test skill_registry::tests::test_hat_filtering ... ok
+test skill_registry::tests::test_missing_directory_warns_but_no_error ... ok
+test skill_registry::tests::test_load_skill_xml_wrapping ... ok
+test skill_registry::tests::test_override_adds_hat_restriction ... ok
+test skill_registry::tests::test_from_config_full_pipeline ... ok
+test skill_registry::tests::test_override_disables_skill ... ok
+test skill_registry::tests::test_override_sets_auto_inject ... ok
+test skill_registry::tests::test_register_builtin_skill ... ok
+test skill_registry::tests::test_register_builtins ... ok
+test skill_registry::tests::test_from_config_resolves_parent_skills_dir_for_relative_path ... ok
+test skill_registry::tests::test_scan_directory_discovers_md_files ... ok
+test summary_writer::tests::test_extract_tasks ... ok
+test skill_registry::tests::test_skill_name_from_frontmatter_takes_precedence ... ok
+test skill_registry::tests::test_scan_directory_discovers_skill_md_subdirs ... ok
+test summary_writer::tests::test_generate_content_basic ... ok
+test skill_registry::tests::test_user_skill_overrides_builtin ... ok
+test task::tests::task_status_display_matches_serde ... ok
+test task::tests::test_is_not_ready_when_not_open ... ok
+test task::tests::test_is_ready_open_no_blockers ... ok
+test summary_writer::tests::test_write_creates_directory ... ok
+test task::tests::test_is_ready_with_closed_blocker ... ok
+test summary_writer::tests::test_write_with_landing ... ok
+test summary_writer::tests::test_status_text ... ok
+test task::tests::test_is_ready_with_open_blocker ... ok
+test task::tests::test_is_terminal ... ok
+test task::tests::test_priority_clamping ... ok
+test task::tests::test_reopen_resets_terminal_state ... ok
+test task::tests::test_start_marks_task_in_progress ... ok
+test task::tests::test_task_creation ... ok
+test task::tests::test_task_id_format ... ok
+test task::tests::test_with_key_sets_stable_key ... ok
+test task_definition::tests::test_filter_by_complexity ... ok
+test task_definition::tests::test_filter_by_tag ... ok
+test task_definition::tests::test_iteration_delta ... ok
+test task_definition::tests::test_iteration_delta_no_expected ... ok
+test task_definition::tests::test_task_definition_builder ... ok
+test task_definition::tests::test_task_definition_defaults ... ok
+test task_definition::tests::test_setup_has_setup ... ok
+test task_definition::tests::test_task_suite_parse ... ok
+test task_definition::tests::test_task_suite_validation_empty ... ok
+test task_definition::tests::test_task_validation_empty_prompt ... ok
+test task_definition::tests::test_task_validation_invalid_complexity ... ok
+test task_definition::tests::test_task_validation_invalid_name ... ok
+test task_definition::tests::test_task_validation_valid ... ok
+test task_definition::tests::test_task_suite_validation_duplicates ... ok
+test task_definition::tests::test_task_validation_empty_verification ... ok
+test task_definition::tests::test_verification_expect_failure ... ok
+test task_definition::tests::test_verification_new ... ok
+test task_store::tests::test_close_task ... ok
+test task_store::tests::test_get_task ... ok
+test task_store::tests::test_ensure_deduplicates_by_key ... ok
+test task_store::tests::test_get_task_by_key ... ok
+test task_store::tests::test_add_and_save ... ok
+test task_store::tests::test_load_nonexistent_file ... ok
+test task_store::tests::test_has_open_tasks ... ok
+test task_store::tests::test_has_pending_tasks_failed_is_terminal ... ok
+test task_store::tests::test_has_pending_tasks_excludes_failed ... ok
+test task_store::tests::test_concurrent_writes_with_lock ... ok
+test task_store::tests::test_open_tasks ... ok
+test task_store::tests::test_ready_tasks ... ok
+test task_store::tests::test_load_skips_malformed_lines ... ok
+test termination::tests::display_completion_promise ... ok
+test task_store::tests::test_reopen_task ... ok
+test termination::tests::engine_error_has_failure_contract ... ok
+test termination::tests::display_matches_review_description ... ok
+test task_store::tests::test_start_task ... ok
+test termination::tests::intentional_non_completion_states_exit_cleanly_but_are_not_success ... ok
+test task_store::tests::test_with_exclusive_lock ... ok
+test termination::tests::manually_stopped_is_a_clean_exit ... ok
+test task_store::tests::test_reload ... ok
+test merge_queue::tests::test_next_pending_fifo ... ok
+test testing::fake_autoloop::tests::dispatcher_reads_the_invocation_script_instead_of_exec_ing_it ... ok
+test testing::fake_autoloop::tests::barrier_is_skipped_when_ready_environment_is_unset ... ok
+test testing::fake_autoloop::tests::emits_ordered_stdout_and_stderr_around_parseable_summary ... ok
+test testing::fake_autoloop::tests::missing_events_argument_fails_loudly ... ok
+test testing::fake_autoloop::tests::journal_honors_state_dir_env_when_journal_out_is_unset ... ok
+test testing::fake_autoloop::tests::records_argv_and_writes_events ... ok
+test testing::fake_autoloop::tests::state_dir_env_relocates_tokenized_stream_paths ... ok
+test testing::fake_autoloop::tests::barrier_touches_ready_and_waits_for_release ... ok
+test testing::fake_autoloop::tests::summary_paths_expand_the_runtime_state_root ... ok
+test testing::fake_autoloop::tests::journal_uses_default_path_and_override ... ok
+test testing::mock_backend::tests::test_mock_backend_returns_scripted_responses ... ok
+test testing::mock_backend::tests::test_mock_backend_tracks_executions ... ok
+test testing::replay_backend::tests::test_collect_all_concatenates_output ... ok
+test testing::replay_backend::tests::test_filters_non_terminal_write_events ... ok
+test testing::replay_backend::tests::test_from_file_error_on_missing_file ... ok
+test testing::replay_backend::tests::test_from_reader_empty_input ... ok
+test testing::replay_backend::tests::test_from_reader_loads_valid_jsonl ... ok
+test testing::fake_autoloop::tests::summary_has_canonical_shape_and_optional_cost ... ok
+test testing::replay_backend::tests::test_handles_whitespace_lines ... ok
+test testing::replay_backend::tests::test_instant_mode_serves_all_immediately ... ok
+test testing::replay_backend::tests::test_is_exhausted_true_after_all_output ... ok
+test testing::replay_backend::tests::test_malformed_json_returns_error ... ok
+test testing::replay_backend::tests::test_iterator_yields_all_chunks ... ok
+test testing::replay_backend::tests::test_next_output_returns_bytes_in_order ... ok
+test testing::replay_backend::tests::test_reset_allows_replay ... ok
+test testing::scenario::tests::test_mock_backend_simulates_hat_execution ... ok
+test testing::scenario::tests::test_scenario_creation ... ok
+test testing::scenario::tests::test_scenario_runner_executes ... ok
+test testing::smoke_runner::tests::test_captures_completion_termination ... ok
+test testing::smoke_runner::tests::test_captures_fixture_exhausted_termination ... ok
+test testing::smoke_runner::tests::test_config_builder_pattern ... ok
+test testing::smoke_runner::tests::test_empty_fixture_completes ... ok
+test testing::smoke_runner::tests::test_event_counting ... ok
+test testing::smoke_runner::tests::test_fixture_not_found_returns_error ... ok
+test testing::smoke_runner::tests::test_list_fixtures_empty_directory ... ok
+test testing::smoke_runner::tests::test_list_fixtures_nonexistent_directory ... ok
+test testing::smoke_runner::tests::test_list_fixtures_finds_jsonl_files ... ok
+test testing::smoke_runner::tests::test_result_accessors ... ok
+test testing::smoke_runner::tests::test_run_fixture_through_event_loop ... ok
+test testing::smoke_runner::tests::test_timeout_handling ... ok
+test text::tests::sanitize_block_borrows_clean_text ... ok
+test text::tests::sanitize_block_normalizes_crlf ... ok
+test text::tests::sanitize_block_strips_control_chars ... ok
+test text::tests::sanitize_inline_replaces_newlines_with_spaces ... ok
+test text::tests::sanitize_inline_strips_control_chars ... ok
+test text::tests::test_long_string_truncated ... ok
+test text::tests::test_short_string_unchanged ... ok
+test text::tests::test_single_char_truncation ... ok
+test text::tests::test_utf8_boundaries_arrows ... ok
+test text::tests::test_utf8_boundaries_emoji ... ok
+test text::tests::test_utf8_boundaries_mixed ... ok
+test text::tests::test_utf8_complex_emoji ... ok
+test text::tests::test_zero_max_chars ... ok
+test urgent_steer::tests::append_message_creates_and_reloads_record ... ok
+test urgent_steer::tests::take_returns_record_and_clears_file ... ok
+test utils::tests::format_duration_hours_minutes_seconds ... ok
+test utils::tests::format_duration_minutes_and_seconds ... ok
+test utils::tests::format_duration_seconds_only ... ok
+test utils::tests::format_duration_zero ... ok
+test utils::tests::format_elapsed_ignores_subsecond ... ok
+test utils::tests::format_elapsed_large_value ... ok
+test utils::tests::format_elapsed_mixed ... ok
+test utils::tests::format_elapsed_one_minute ... ok
+test testing::fake_autoloop::tests::writes_backend_stream_lines_relative_to_the_workspace ... ok
+test testing::fake_autoloop::tests::tokenized_stream_paths_default_to_standalone_state_dir ... ok
+test utils::tests::format_elapsed_pads_single_digits ... ok
+test utils::tests::format_elapsed_seconds_only ... ok
+test utils::tests::format_elapsed_zero ... ok
+test utils::tests::generate_prefixed_id_format ... ok
+test utils::tests::is_process_alive_bogus_pid ... ok
+test utils::tests::is_process_alive_self ... ok
+test utils::tests::parse_jsonl_lenient_basic ... ok
+test utils::tests::parse_jsonl_lenient_empty_input ... ok
+test utils::tests::parse_jsonl_lenient_skips_bad_lines ... ok
+test utils::tests::read_jsonl_lenient_missing_file ... ok
+test utils::tests::strip_ansi_bytes_removes_csi ... ok
+test utils::tests::strip_ansi_bytes_removes_multiple_csi ... ok
+test utils::tests::strip_ansi_str_wrapper ... ok
+test workspace::tests::test_cleanup_policy_from_str ... ok
+test workspace::tests::test_extract_timestamp ... ok
+test workspace::tests::test_extract_task_name ... ok
+test workspace::tests::test_copy_dir_recursive ... ok
+test testing::fake_autoloop::tests::supports_nonzero_exit_and_replays_last_invocation ... ok
+test workspace::tests::test_run_verification_empty_command ... ok
+test workspace::tests::test_verification_result_summary ... ok
+test workspace::tests::test_run_verification_custom_exit_code ... ok
+test workspace::tests::test_run_verification_captures_output ... ok
+test workspace::tests::test_run_verification_failure ... ok
+test workspace::tests::test_run_verification_success ... ok
+test workspace::tests::test_workspace_manager_apply_cleanup_always ... ok
+test workspace::tests::test_workspace_create ... ok
+test workspace::tests::test_workspace_cleanup ... ok
+test workspace::tests::test_workspace_setup_missing_prompt ... ok
+test testing::fake_autoloop::tests::fixture_exec_retries_a_transient_executable_busy ... ok
+test workspace::tests::test_workspace_manager_apply_cleanup_on_success ... ok
+test workspace::tests::test_workspace_setup_with_files ... ok
+test worktree::tests::test_ensure_gitignore_already_present ... ok
+test worktree::tests::test_ensure_gitignore_existing_file ... ok
+test worktree::tests::test_ensure_gitignore_new_file ... ok
+test worktree::tests::test_ensure_gitignore_without_trailing_slash ... ok
+test workspace::tests::test_workspace_manager_list_workspaces ... ok
+test workspace::tests::test_workspace_setup_with_prompt ... ok
+test testing::fake_autoloop::tests::fixture_exec_reports_a_persistent_executable_busy ... ok
+test worktree::tests::test_get_unstaged_modified_files ... ok
+test worktree::tests::test_not_a_repo ... ok
+test worktree::tests::test_parse_worktree_list ... ok
+test worktree::tests::test_get_untracked_files ... ok
+test workspace::tests::test_workspace_manager_rotate ... ok
+test worktree::tests::test_create_worktree_already_exists ... ok
+test worktree::tests::test_create_and_remove_worktree ... ok
+test worktree::tests::test_remove_nonexistent_worktree ... ok
+test worktree::tests::test_sync_handles_binary_files ... ok
+test worktree::tests::test_list_worktrees ... ok
+test worktree::tests::test_sync_excludes_worktrees_directory ... ok
+test worktree::tests::test_sync_handles_nested_directories ... ok
+test worktree::tests::test_list_ralph_worktrees ... ok
+test worktree::tests::test_worktree_config_default ... ok
+test worktree::tests::test_worktree_config_path ... ok
+test worktree::tests::test_sync_preserves_symlinks ... ok
+test worktree::tests::test_sync_stats_returned ... ok
+test worktree::tests::test_sync_respects_gitignore ... ok
+test worktree::tests::test_sync_unstaged_changes_to_worktree ... ok
+test worktree::tests::test_sync_untracked_files_to_worktree ... ok
+test worktree::tests::test_worktree_exists ... ok
+test hooks::executor::tests::run_marks_timed_out_when_command_exceeds_timeout ... ok
+
+test result: ok. 788 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.10s
+
+     Running tests/diagnostics_e2e.rs (target/debug/deps/diagnostics_e2e-921b5bd9504272db)
+
+running 3 tests
+test test_diagnostics_disabled_when_env_not_set ... ok
+test test_diagnostics_creates_log_files ... ok
+test test_diagnostics_files_contain_valid_jsonl ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/hooks_config_boundary.rs (target/debug/deps/hooks_config_boundary-570289613bce1718)
+
+running 5 tests
+test test_hooks_config_boundary_rejects_invalid_phase_event_key ... ok
+test test_hooks_config_boundary_preserves_backwards_compat_without_hooks ... ok
+test test_hooks_config_boundary_rejects_mutation_non_json_format ... ok
+test test_hooks_config_boundary_accepts_valid_file ... ok
+test test_hooks_config_boundary_rejects_non_v1_scope_field ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/rpc_v1_contract_conformance.rs (target/debug/deps/rpc_v1_contract_conformance-9f01c1a916612388)
+
+running 1 test
+test rpc_v1_fixture_conformance ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/scenarios.rs (target/debug/deps/scenarios-0363763749094e6b)
+
+running 5 tests
+test test_default_publishes ... ok
+test test_multi_hat ... ok
+test test_orphaned_events ... ok
+test test_solo_mode ... ok
+test test_mixed_backends ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/shipped_artifacts.rs (target/debug/deps/shipped_artifacts-6fce94ebedf6bdc0)
+
+running 2 tests
+test shipped_artifacts_do_not_reference_deleted_wave_cli ... ok
+test no_sibling_repo_paths_in_rust_sources ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+   Doc-tests ralph_cli
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests ralph_core
+
+running 20 tests
+test crates/ralph-core/src/file_lock.rs - file_lock (line 17) - compile ... ok
+test crates/ralph-core/src/loop_completion.rs - loop_completion (line 15) - compile ... ok
+test crates/ralph-core/src/loop_lock.rs - loop_lock (line 9) - compile ... ok
+test crates/ralph-core/src/loop_registry.rs - loop_registry (line 14) - compile ... ok
+test crates/ralph-core/src/merge_queue.rs - merge_queue (line 15) - compile ... ok
+test crates/ralph-core/src/session_recorder.rs - session_recorder::SessionRecorder<W>::make_observer (line 213) ... ignored
+test crates/ralph-core/src/task_store.rs - task_store::TaskStore::with_exclusive_lock (line 104) ... ignored
+test crates/ralph-core/src/testing/smoke_runner.rs - testing::smoke_runner (line 8) ... ignored
+test crates/ralph-core/src/cli_capture.rs - cli_capture::CliCapture (line 19) ... ok
+test crates/ralph-core/src/loop_context.rs - loop_context (line 38) ... ok
+test crates/ralph-core/src/session_recorder.rs - session_recorder::SessionRecorder (line 110) ... ok
+test crates/ralph-core/src/text.rs - text::truncate_with_ellipsis (line 29) ... ok
+test crates/ralph-core/src/session_player.rs - session_player::SessionPlayer (line 100) ... ok
+test crates/ralph-core/src/task_definition.rs - task_definition (line 9) ... ok
+test crates/ralph-core/src/workspace.rs - workspace (line 9) - compile ... ok
+test crates/ralph-core/src/worktree.rs - worktree (line 9) - compile ... ok
+test crates/ralph-core/src/testing/replay_backend.rs - testing::replay_backend (line 9) ... ok
+test crates/ralph-core/src/utils.rs - utils::format_elapsed (line 86) ... ok
+test crates/ralph-core/src/utils.rs - utils::format_duration (line 108) ... ok
+test crates/ralph-core/src/memory_parser.rs - memory_parser::parse_memories (line 40) ... ok
+
+test result: ok. 17 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+all doctests ran in 1.03s; merged doctests compilation took 1.00s

@@ -1,0 +1,18 @@
+=== sample 38 rc=101
+failures:
+
+---- autoloop_health::tests::autoloop_health_uses_executable_version_without_package_json stdout ----
+
+thread 'autoloop_health::tests::autoloop_health_uses_executable_version_without_package_json' (2514474) panicked at crates/ralph-core/src/autoloop_health.rs:327:9:
+assertion `left == right` failed
+  left: VersionUnknown { path: "/var/tmp/.tmpiLBW0Y/autoloop", source: Vendored }
+ right: Ok { path: "/var/tmp/.tmpiLBW0Y/autoloop", version: "0.10.1", source: Vendored }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    autoloop_health::tests::autoloop_health_uses_executable_version_without_package_json
+
+test result: FAILED. 739 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.04s
+
+error: test failed, to rerun pass `-p ralph-core --lib`

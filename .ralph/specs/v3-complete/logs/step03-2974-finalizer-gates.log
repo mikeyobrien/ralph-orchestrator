@@ -1,0 +1,11 @@
+== cargo test -p ralph-proto
+test result: ok. 55 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+== cargo fmt --all -- --check
+fmt_exit=0
+== clippy
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.43s
+clippy_exit=0
+== check workspace
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.41s
+check_exit=0

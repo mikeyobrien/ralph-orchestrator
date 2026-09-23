@@ -1,0 +1,7 @@
+=== sample 3 rc=101
+    autoloop_health::tests::autoloop_health_uses_executable_version_without_package_json
+test result: FAILED. 739 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.11s
+=== sample 15 rc=101
+    autoloop_health::tests::autoloop_health_uses_executable_version_without_package_json
+test result: FAILED. 739 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.11s
+samples=30 default-threads fails=2

@@ -1,0 +1,17 @@
+== git diff --name-only 4878882 (pre-commit) ==
+.ralph/agent/decisions.md
+.ralph/specs/v3-reconciliation.md
+== cargo fmt ==
+fmt exit 0
+== python smoke matrix ==
+OK
+
+claude    claude-sdk   yes             yes                 yes       PASS
+codex     command      yes             yes                 yes       PASS
+opencode  command      yes             yes                 yes       PASS
+pi        pi           yes             yes                 yes       PASS
+hermes    acp          yes             yes                 yes       PASS
+kiro      acp          yes             yes                 yes       PASS
+
+== python smoke matrix ==
+Ran 10 tests in 5.322s, OK, six-row PASS

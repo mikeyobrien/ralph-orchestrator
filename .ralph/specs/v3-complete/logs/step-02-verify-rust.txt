@@ -1,0 +1,22 @@
+### render under load (lib target)
+test autoloop_source::tests::render_under_load_keeps_one_truthful_status_and_newest_lines ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 273 filtered out; finished in 1.22s
+
+### engine_state (lib target)
+test engine_state::tests::engine_env_pins_every_store_beneath_the_root ... ok
+test engine_state::tests::engine_config_overrides_pin_every_store_beneath_the_root ... ok
+test engine_state::tests::engine_state_root_is_under_ralph ... ok
+test engine_state::tests::engine_run_dir_accepts_a_safe_single_component_id ... ok
+test engine_state::tests::engine_run_dir_rejects_empty_or_unsafe_ids ... ok
+test engine_state::tests::engine_stores_never_reference_ralph_agent_stores ... ok
+test engine_state::tests::relative_workspace_keeps_a_relative_root ... ok
+test engine_state::tests::persist_current_run_id_rejects_unsafe_ids_and_round_trips_safe_ones ... ok
+test engine_state::tests::owned_root_rejects_ralph_symlink_without_touching_its_target ... ok
+test engine_state::tests::owned_root_rejects_autoloop_symlink_without_touching_its_target ... ok
+test engine_state::tests::owned_root_rejects_direct_and_nested_descendant_symlinks ... ok
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 740 filtered out; finished in 0.00s
+
+### tui live stream harness
+test tui_quit_clean_exit_and_coordination ... ok
+test tui_shows_incremental_backend_stream_before_iteration_finish_and_reconciles_once ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s

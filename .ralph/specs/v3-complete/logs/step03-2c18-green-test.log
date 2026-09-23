@@ -1,0 +1,69 @@
+    Blocking waiting for file lock on build directory
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 17.59s
+     Running unittests src/lib.rs (target/debug/deps/ralph_proto-75aeeb99bc3a9158)
+
+running 55 tests
+test event::tests::test_event_without_wave_fields_deserializes ... ok
+test event::tests::test_new_event_has_no_wave_metadata ... ok
+test event::tests::test_wave_metadata_roundtrips_through_serde ... ok
+test event::tests::test_with_wave_sets_metadata ... ok
+test event::tests::test_event_without_wave_serializes_without_wave_fields ... ok
+test hat::tests::test_default_builder_hat ... ok
+test hat::tests::test_default_planner_hat ... ok
+test hat::tests::test_default_single_hat ... ok
+test hat::tests::test_subscription_matching ... ok
+test json_rpc::tests::test_command_id ... ok
+test json_rpc::tests::test_abort_command_roundtrip ... ok
+test json_rpc::tests::test_command_type ... ok
+test json_rpc::tests::test_emit_event ... ok
+test json_rpc::tests::test_emit_event_line ... ok
+test json_rpc::tests::test_error_event_roundtrip ... ok
+test json_rpc::tests::test_error_response ... ok
+test json_rpc::tests::test_follow_up_command_roundtrip ... ok
+test json_rpc::tests::test_guidance_command_roundtrip ... ok
+test json_rpc::tests::test_hat_changed_event_roundtrip ... ok
+test json_rpc::tests::test_extension_ui_response_command_roundtrip ... ok
+test json_rpc::tests::test_iteration_end_event_roundtrip ... ok
+test json_rpc::tests::test_get_state_command_roundtrip ... ok
+test json_rpc::tests::test_iteration_start_event_roundtrip ... ok
+test json_rpc::tests::test_loop_started_event_roundtrip ... ok
+test json_rpc::tests::test_get_iterations_command_roundtrip ... ok
+test json_rpc::tests::test_guidance_ack_event_roundtrip ... ok
+test json_rpc::tests::test_parse_command_invalid_json ... ok
+test json_rpc::tests::test_loop_terminated_event_roundtrip ... ok
+test json_rpc::tests::test_parse_command_empty ... ok
+test json_rpc::tests::test_parse_command_valid ... ok
+test json_rpc::tests::test_pi_aligned_naming ... ok
+test json_rpc::tests::test_prompt_command_roundtrip ... ok
+test json_rpc::tests::test_response_event_success_roundtrip ... ok
+test json_rpc::tests::test_rpc_iteration_info_roundtrip ... ok
+test json_rpc::tests::test_parse_command_unknown_type ... ok
+test json_rpc::tests::test_response_event_error_roundtrip ... ok
+test json_rpc::tests::test_set_hat_command_roundtrip ... ok
+test json_rpc::tests::test_success_response ... ok
+test json_rpc::tests::test_steer_command_roundtrip ... ok
+test json_rpc::tests::test_rpc_state_roundtrip ... ok
+test json_rpc::tests::test_task_counts_updated_event_roundtrip ... ok
+test json_rpc::tests::test_task_status_changed_event_roundtrip ... ok
+test json_rpc::tests::test_termination_reason_variants ... ok
+test json_rpc::tests::test_text_delta_event_roundtrip ... ok
+test json_rpc::tests::test_tool_call_end_event_roundtrip ... ok
+test topic::tests::test_exact_match ... ok
+test json_rpc::tests::test_tool_call_start_event_roundtrip ... ok
+test topic::tests::test_global_wildcard ... ok
+test topic::tests::test_length_mismatch ... ok
+test topic::tests::test_no_match ... ok
+test topic::tests::test_wildcard_prefix ... ok
+test topic::tests::test_wildcard_suffix ... ok
+test ux_event::tests::test_terminal_resize_serialization ... ok
+test ux_event::tests::test_terminal_write_roundtrip ... ok
+test ux_event::tests::test_ux_event_serialization ... ok
+
+test result: ok. 55 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests ralph_proto
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

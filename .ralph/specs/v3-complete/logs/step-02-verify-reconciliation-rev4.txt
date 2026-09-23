@@ -1,0 +1,228 @@
+HEAD=56690c07511bc036392b17fb4df14305f5825ddb
+ROLLUP=6e2545d63e21c0fe34dc6bd48ad0c7b2929145c0
+BRANCH=v3/complete
+
+=== 1. presence checks at HEAD (cat-file -e, exit code printed) ===
+PRESENT presets/live-harness-smoke
+PRESENT presets/live-harness-smoke/scripts/require_smoke_handoff.py
+PRESENT tools/smoke_process_group.py
+PRESENT tools/smoke_live_harness_results.py
+PRESENT tools/smoke-live-harnesses.sh
+PRESENT tools/tests/test_smoke_live_harnesses.py
+PRESENT .ralph/specs/manual-live-harness-smoke.spec.md
+PRESENT .ralph/tasks/manual-live-harness-smoke.code-task.md
+PRESENT .ralph/tasks/tui-stream-history-backpressure.code-task.md
+
+=== 2. same paths at the pre-port classification commit 80309dc ===
+ABSENT  presets/live-harness-smoke
+ABSENT  tools/smoke_process_group.py
+ABSENT  .ralph/tasks/tui-stream-history-backpressure.code-task.md
+
+=== 3. line counts at HEAD vs rollup ===
+HEAD=881 ROLLUP=881  crates/ralph-adapters/src/backend_stream_tailer.rs
+HEAD=2242 ROLLUP=2053  crates/ralph-tui/src/autoloop_source.rs
+HEAD=419 ROLLUP=377  crates/ralph-core/src/engine_state.rs
+HEAD=1032 ROLLUP=896  crates/ralph-adapters/src/autoloop_runner.rs
+HEAD=83 ROLLUP=83  .ralph/tasks/tui-stream-history-backpressure.code-task.md
+
+=== 4. line counts at 80309dc (pre-port classification) ===
+80309dc=514  crates/ralph-adapters/src/backend_stream_tailer.rs
+80309dc=1331  crates/ralph-tui/src/autoloop_source.rs
+
+=== 5. TUI numstat HEAD vs rollup ===
+0	189	crates/ralph-tui/src/autoloop_source.rs
+--- reader_engine_root counts ---
+HEAD=14
+ROLLUP=12
+
+=== 6. already-covered paths, numstat must be empty ===
+(empty above means byte-identical)
+
+=== 7. sha2 wiring at HEAD ===
+19:sha2.workspace = true
+17:2766:  "sha2",
+
+=== 8. docs-only proof: 635cb8c -> 56690c0 ===
+.ralph/specs/v3-reconciliation.md
+--- stat ---
+ .ralph/specs/v3-reconciliation.md | 168 +++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 166 insertions(+), 2 deletions(-)
+
+=== 9. role contracts present at HEAD ===
+presets/live-harness-smoke/roles/claude.md
+presets/live-harness-smoke/roles/codex.md
+presets/live-harness-smoke/roles/hermes.md
+presets/live-harness-smoke/roles/kiro.md
+presets/live-harness-smoke/roles/opencode.md
+presets/live-harness-smoke/roles/pi.md
+count=6
+live-harness-smoke files at HEAD=12
+live-harness-smoke files at rollup=12
+
+=== 10. port commits since 80309dc ===
+56690c0 docs(specs): verify the v3 rollup reconciliation at 635cb8c
+635cb8c test(cli): remove the startup race in the RObot relay test
+e837317 test(cli): isolate CLI tests from the operator's global config
+0f603ef fix(cli): write the run summary from the loop context
+e9af61f fix(cli): repair the pre-existing fmt and clippy gate breaks
+b062e52 feat(presets): port the live harness smoke cluster
+5fd8828 fix(tui): port bounded stream history and backpressure
+8c2a15e docs(specs): correct the Cargo.lock claim in the reconciliation record
+f4daacb docs(specs): correct the v3 reconciliation port mechanism
+44afa19 docs(specs): add v3 branch reconciliation decision record
+
+=== 11. merge-base facts (structural, still valid?) ===
+2e1fc52 ancestor of HEAD
+2e1fc52 ancestor of rollup tip
+--- 2e1fc52 line count of autoloop_source.rs ---
+2e1fc52=1331
+80309dc=1331
+aff233d=1258
+
+=== 12. two TUI files vs merge base at HEAD (was '(no output)') ===
+ crates/ralph-adapters/src/backend_stream_tailer.rs |  451 +++++++-
+ crates/ralph-tui/src/autoloop_source.rs            | 1113 ++++++++++++++++++--
+ 2 files changed, 1421 insertions(+), 143 deletions(-)
+--- same command at 80309dc (the classification commit) ---
+(empty = byte-identical to merge base)
+
+=== 13. files changed on both sides after 2e1fc52 ===
+Cargo.lock
+crates/ralph-adapters/Cargo.toml
+crates/ralph-adapters/src/backend_stream_tailer.rs
+crates/ralph-tui/src/autoloop_source.rs
+.github/workflows/ci.yml
+presets/live-harness-smoke/autoloops.toml
+presets/live-harness-smoke/DOGFOOD.md
+presets/live-harness-smoke/harness.md
+presets/live-harness-smoke/README.md
+presets/live-harness-smoke/roles/claude.md
+presets/live-harness-smoke/roles/codex.md
+presets/live-harness-smoke/roles/hermes.md
+presets/live-harness-smoke/roles/kiro.md
+presets/live-harness-smoke/roles/opencode.md
+presets/live-harness-smoke/roles/pi.md
+presets/live-harness-smoke/scripts/require_smoke_handoff.py
+presets/live-harness-smoke/topology.toml
+presets/README.md
+.ralph/specs/manual-live-harness-smoke.spec.md
+.ralph/tasks/manual-live-harness-smoke.code-task.md
+.ralph/tasks/tui-stream-history-backpressure.code-task.md
+tools/smoke-live-harnesses.sh
+tools/smoke_live_harness_results.py
+tools/smoke_process_group.py
+tools/tests/test_smoke_live_harnesses.py
+
+=== 14. sha2 at HEAD: package line and ralph-adapters edge ===
+3658:name = "sha2"
+11:name = "ralph-adapters"
+27: "sha2",
+--- ralph-adapters block bounds ---
+start=2750
+
+=== 15. reader_engine_root counts at 80309dc vs rollup ===
+80309dc=8
+44afa19=8
+HEAD=14
+ROLLUP=12
+
+=== 16. sha2 package line at 80309dc ===
+3657:name = "sha2"
+--- ralph-adapters sha2 edge at 80309dc (expect none) ---
+(no output above = no edge at 80309dc)
+
+=== 17. where the 2 extra reader_engine_root sites come from ===
+2
+190
++        let reader_engine_root = ralph_core::engine_state::engine_state_root(&workspace);
++                reader_engine_root,
+
+=== 18. numstat exact bytes ===
+0^I189^Icrates/ralph-tui/src/autoloop_source.rs$
+
+=== 19. swept doc line count both trees ===
+HEAD=83 ROLLUP=83
+
+=== 20. which port commit carries which paths ===
+--- 5fd8828 ---
+5fd8828 fix(tui): port bounded stream history and backpressure
+ .../tui-stream-history-backpressure.code-task.md   |   83 ++
+ Cargo.lock                                         |    1 +
+ crates/ralph-adapters/Cargo.toml                   |    1 +
+ crates/ralph-adapters/src/backend_stream_tailer.rs |  451 +++++++-
+ crates/ralph-tui/src/autoloop_source.rs            | 1113 ++++++++++++++++++--
+ 5 files changed, 1506 insertions(+), 143 deletions(-)
+--- b062e52 ---
+ .ralph/specs/manual-live-harness-smoke.spec.md     | 225 +++++++
+ .../tasks/manual-live-harness-smoke.code-task.md   |  55 ++
+ presets/README.md                                  |   7 +
+ presets/live-harness-smoke/DOGFOOD.md              |  34 ++
+ presets/live-harness-smoke/README.md               | 152 +++++
+ presets/live-harness-smoke/autoloops.toml          |  29 +
+ presets/live-harness-smoke/harness.md              |  48 ++
+ presets/live-harness-smoke/roles/claude.md         |   3 +
+ presets/live-harness-smoke/roles/codex.md          |   3 +
+ presets/live-harness-smoke/roles/hermes.md         |   3 +
+ presets/live-harness-smoke/roles/kiro.md           |   3 +
+ presets/live-harness-smoke/roles/opencode.md       |   3 +
+ presets/live-harness-smoke/roles/pi.md             |   3 +
+ .../scripts/require_smoke_handoff.py               | 102 ++++
+ presets/live-harness-smoke/topology.toml           |  71 +++
+ tools/smoke-live-harnesses.sh                      | 254 ++++++++
+ tools/smoke_live_harness_results.py                | 314 ++++++++++
+ tools/smoke_process_group.py                       |  71 +++
+ tools/tests/test_smoke_live_harnesses.py           | 678 +++++++++++++++++++++
+ 20 files changed, 2066 insertions(+)
+
+=== 21. TUI render-under-load at HEAD ===
+
+running 1 test
+test autoloop_source::tests::render_under_load_keeps_one_truthful_status_and_newest_lines ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 273 filtered out; finished in 1.22s
+
+exit=0
+
+=== 22. integration_autoloop_tui_live_stream at HEAD ===
+running 2 tests
+test tui_quit_clean_exit_and_coordination ... ok
+test tui_shows_incremental_backend_stream_before_iteration_finish_and_reconciles_once ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+
+=== 23. engine_state at HEAD ===
+test engine_state::tests::owned_root_rejects_direct_and_nested_descendant_symlinks ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 740 filtered out; finished in 0.00s
+
+
+=== 24. python smoke matrix at HEAD ===
+OK
+
+claude    claude-sdk   yes             yes                 yes       PASS
+codex     command      yes             yes                 yes       PASS
+opencode  command      yes             yes                 yes       PASS
+pi        pi           yes             yes                 yes       PASS
+hermes    acp          yes             yes                 yes       PASS
+kiro      acp          yes             yes                 yes       PASS
+
+=== 25. the 8 base-only commits are ancestors of HEAD, re-checked ===
+checked=8 missing=0
+
+=== 26. already-covered paths still byte-identical at HEAD ===
+(empty = identical)
+
+=== 27. inventory re-check ===
+rollup-only=22
+table rows=0
+
+=== 28. remaining unlabelled state claims (should be none outside revision-3/4 blocks) ===
+46:- `port`: the change is wanted and is absent from `v3/complete`.
+79:Each row's Evidence states what the commit contains and what `HEAD` held when
+275:it is present, ported by `5fd8828`, and 83 lines in both trees.
+382:`49434db`'s dead-code removal is present, `push_lines` appearing 0 times at
+396:### The smoke cluster is present and green
+398:All 12 files under `presets/live-harness-smoke/` exist at `HEAD`, as do the four
+476:the row describes is present through `c90001e`, which the state-root section
+(end)
