@@ -234,12 +234,16 @@ impl Harness {
             expected,
         );
         let argv = self.recorded_argv();
+        // Autoloop joins `core.*` store paths onto its work dir, so the
+        // overrides are workspace-relative while the env exports stay absolute.
         for override_arg in [
-            format!("core.state_dir={}", root.display()),
-            format!("core.journal_file={}", root.join("journal.jsonl").display()),
-            format!("core.memory_file={}", root.join("memory.jsonl").display()),
-            format!("core.tasks_file={}", root.join("tasks.jsonl").display()),
-        ] {
+            "core.state_dir=.ralph/autoloop",
+            "core.journal_file=.ralph/autoloop/journal.jsonl",
+            "core.memory_file=.ralph/autoloop/memory.jsonl",
+            "core.tasks_file=.ralph/autoloop/tasks.jsonl",
+        ]
+        .map(String::from)
+        {
             assert!(
                 argv.contains(&override_arg),
                 "missing engine ownership override {override_arg:?} in {argv:?}"

@@ -230,16 +230,19 @@ pub fn engine_env(engine_root: &Path) -> [(&'static str, String); 4] {
 /// Autoloop's nested tools consume the environment exports above, while its
 /// top-level `buildLoopContext` currently resolves stores from layered config.
 /// Supplying both surfaces keeps all runtime state under the same owned root.
-pub fn engine_config_overrides(engine_root: &Path) -> [(&'static str, String); 4] {
+///
+/// These values are workspace-relative, unlike [`engine_env`]: autoloop 0.11.0
+/// resolves every `core.*` store path with `path.join(workDir, value)`, which
+/// re-anchors an absolute path to `<work>/<absolute path>`. A relative value
+/// joins to exactly `<work>/.ralph/autoloop/...`.
+pub fn engine_config_overrides() -> [(&'static str, String); 4] {
+    let root = engine_state_root(Path::new(""));
     let string = |path: PathBuf| path.to_string_lossy().into_owned();
     [
-        ("core.state_dir", engine_root.to_string_lossy().into_owned()),
-        (
-            "core.journal_file",
-            string(engine_journal_path(engine_root)),
-        ),
-        ("core.memory_file", string(engine_memory_path(engine_root))),
-        ("core.tasks_file", string(engine_tasks_path(engine_root))),
+        ("core.state_dir", string(root.clone())),
+        ("core.journal_file", string(engine_journal_path(&root))),
+        ("core.memory_file", string(engine_memory_path(&root))),
+        ("core.tasks_file", string(engine_tasks_path(&root))),
     ]
 }
 
@@ -317,25 +320,28 @@ mod tests {
     }
 
     #[test]
-    fn engine_config_overrides_pin_every_store_beneath_the_root() {
+    fn engine_config_overrides_are_workspace_relative() {
+        let overrides = engine_config_overrides();
         assert_eq!(
-            engine_config_overrides(Path::new("/work/.ralph/autoloop")),
+            overrides,
             [
-                ("core.state_dir", "/work/.ralph/autoloop".to_string()),
+                ("core.state_dir", ".ralph/autoloop".to_string()),
                 (
                     "core.journal_file",
-                    "/work/.ralph/autoloop/journal.jsonl".to_string()
+                    ".ralph/autoloop/journal.jsonl".to_string()
                 ),
                 (
                     "core.memory_file",
-                    "/work/.ralph/autoloop/memory.jsonl".to_string()
+                    ".ralph/autoloop/memory.jsonl".to_string()
                 ),
-                (
-                    "core.tasks_file",
-                    "/work/.ralph/autoloop/tasks.jsonl".to_string()
-                ),
+                ("core.tasks_file", ".ralph/autoloop/tasks.jsonl".to_string()),
             ]
         );
+        // Autoloop joins each value onto its work dir, so an absolute value
+        // would be re-anchored beneath the workspace instead of used as-is.
+        for (key, value) in overrides {
+            assert!(Path::new(&value).is_relative(), "{key} must be relative");
+        }
     }
 
     #[test]
@@ -343,7 +349,7 @@ mod tests {
         let root = engine_state_root(Path::new("/work"));
         for (_, value) in engine_env(&root)
             .into_iter()
-            .chain(engine_config_overrides(&root))
+            .chain(engine_config_overrides())
         {
             assert!(
                 !value.contains(".ralph/agent"),

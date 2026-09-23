@@ -396,10 +396,11 @@ pub async fn run_autoloop_engine(
     tracing::debug!("engine=autoloop: driving the autoloop runtime as a subprocess");
 
     // Ralph owns the engine's runtime state beneath .ralph/. State-root and
-    // exact-store environment overrides are both required: the root wins over
-    // preset core.state_dir, while exact overrides win over a preset's explicit
-    // journal/memory/tasks paths. Export absolute paths so child cwd handling
-    // cannot re-anchor them.
+    // exact-store overrides are both required: the root wins over preset
+    // core.state_dir, while exact overrides win over a preset's explicit
+    // journal/memory/tasks paths. Environment exports are absolute so child cwd
+    // handling cannot re-anchor them; `--set` overrides are workspace-relative
+    // because autoloop joins them onto its work dir.
     let mut runner = AutoloopRunner::new(preset, prompt.clone(), workspace.clone())
         .bin(autoloop_bin)
         .events_path(events_path.clone());
@@ -416,7 +417,7 @@ pub async fn run_autoloop_engine(
     for (key, value) in engine_env(&engine_state_root) {
         runner = runner.env(key, value);
     }
-    for (key, value) in engine_config_overrides(&engine_state_root) {
+    for (key, value) in engine_config_overrides() {
         runner = runner.set_override(key, &value);
     }
     if explicit_preset {
