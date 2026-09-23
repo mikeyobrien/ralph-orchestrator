@@ -2,34 +2,12 @@
 
 ## Current Step
 
-Step 3 is in progress. Delete the last in-house remnant (`a7e.10`): relocate
-`HatRegistry` to its real owner and delete `hat_registry.rs`, delete the dead
-`event_bus.rs`, and re-verify the v3 engine rejection. Step 2 is closed: all
-five of its runtime rows are closed, and its own gate `daa7` passed review.
-
-Routing this pass: `fix:autoloop-health-probe-etxtbsy`
-(`task-1790119597-6a5c`, P3) advances now. The fake-autoloop fixture row
-`fix:fake-autoloop-etxtbsy-flake` (`task-1790110404-2974`, P3) closed at 23:24
-at `c390411` after the Finalizer re-ran the fixtures, the whole-suite gate, and
-its own 30-sample full-suite falsification. That fix removed the class from the
-generated dispatcher, but the Finalizer measured the same errno at a second site
-in the same suite: `crates/ralph-core/src/autoloop_health.rs:156` execs the
-script the health test just wrote, so `probe_version` maps `ExecutableFileBusy`
-to `None` and
-`autoloop_health::tests::autoloop_health_uses_executable_version_without_package_json`
-fails with `VersionUnknown` (1 in 40 samples at `--test-threads=64`, 2 in 30 at
-default threads, also at the parent `c86e413`). I re-measured the premise at
-source rather than copying it: `write_binary` writes then chmods `0o755` at
-`:197-207`, the test at `:322` writes a script with no `package.json`, and the
-only version source left is the exec at `:156`. The step gate
-`verify-remnant-and-engine-rejection` (`task-1790109144-5333`, P3) is next behind
-this row, because its own acceptance clause `(c) cargo test -p ralph-core
--p ralph-cli` runs the suite that flakes at roughly one sample in ten, and any
-commit landing after the gate would invalidate the evidence it must paste. I
-added `6a5c` to `5333`'s blocked-by list, so the gate is publishable only once
-it closes; both earlier blockers `0d0c` and `2c18` stay closed.
-`task-1790101592-f09a` (P1) stays parked for plan Step 12; the Builder must not
-work ahead of the queue.
+Steps 3, 4, and 7 are closed (2026-09-23). Step 4 certified autoloop waves live
+and deleted the in-house wave surface. The TUI part of that deletion also closed
+Step 7's stale help section. `f09a` (engine store path drift) moved forward and
+closed, because Step 4's live run needed it. Step 5
+(`ga3-c4-dashboard-dead-svf`, dashboard data source) is next and has no
+runtime wave yet. Step 6 (`landing-untracked-sweep-yxv`) follows.
 
 ## Active Wave
 
@@ -4086,3 +4064,147 @@ Bead `a7e.10` is closed in `.beads/issues.jsonl` in the same commit.
 Step 3 is closed. Step 4 (`a7e.8`, certify or delete the wave surface) is the
 current step. Its wave is not yet materialized. It also owns DEC-039's three
 dead `SessionRecorder` bus methods. `f09a` stays parked for Step 12.
+
+## 2026-09-23, f09a pulled forward: workspace-relative engine store overrides (resumed session)
+
+Step 4 must certify a wave live, and every live `ralph run` was broken by
+`f09a`: `engine_config_overrides` passed absolute `core.*` store paths, and
+autoloop 0.11.0 re-anchors them with `path.join(workDir, value)`. So `f09a`
+moved ahead of Step 12 as its own commit (`03e9e01`). The four `--set` overrides
+are now workspace-relative (`.ralph/autoloop`, `.ralph/autoloop/journal.jsonl`,
+`memory.jsonl`, `tasks.jsonl`). The `AUTOLOOP_*` env exports stay absolute.
+
+Live check against autoloop 0.11.0 in a scratch repo: after
+`ralph run -H presets/wave-review.yml -a`, the journal, registry, events, and
+run dir all sit under `<work>/.ralph/autoloop/`, with no `<work>/.autoloop` and
+no re-anchored `<work>/tmp/...` tree. Unit test
+`engine_config_overrides_are_workspace_relative` and the argv assertion in
+`crates/ralph-cli/tests/integration_autoloop_prompt.rs` pin the relative shape.
+
+`ralph resume` passes no `--set` overrides, so it is unaffected. Step 12 still
+owns the resume, TUI-root, diagnostics, and parallel-worktree live checks
+listed in the `f09a` description.
+
+## 2026-09-23, Step 4 closed: waves certified under autoloop, in-house wave surface deleted
+
+### The wave did not fan out before this step
+
+The first live run of `presets/wave-review.yml` (claude backend) ran the
+reviewer as one ordinary iteration, with no `wave.*` records in the journal. It
+still ended in `review.complete`, a false pass. Cause, read from
+`@mobrienv/autoloop-harness/dist/iteration.js:457-472`: declarative concurrency
+fires only `if (loop.parallel.enabled)`, and Ralph never wrote
+`parallel.enabled`. Two more mapping gaps, from `wave.js:executeDeclarativeWave`:
+
+- `count = min(role.concurrency, parallel.max_branches)`, and `max_branches`
+  defaults to 3, so `concurrency: 4` would silently run 3 branches.
+- The wave aggregate is `role.aggregate ?? loop.parallel.aggregate` on the
+  concurrent role. Ralph wrote `aggregate` on the aggregator role, where
+  autoloop never reads it.
+
+### Mapping fix (`crates/ralph-cli/src/autoloop_preset_gen.rs`)
+
+- When any hat has `concurrency > 1`: write `parallel.enabled = true` and
+  `parallel.max_branches = <largest concurrency>`. If the concurrent hats set
+  `timeout`, write `parallel.branch_timeout_ms` from the largest one.
+- An aggregator hat's `aggregate` goes on each concurrent role whose
+  `publishes` meet its `triggers`. An aggregator with no concurrent producer
+  fails generation with `InvalidInput`, naming the hat.
+- Tests: `enables_autoloop_parallel_waves_for_concurrent_hats`,
+  `leaves_autoloop_parallel_off_without_concurrent_hats`,
+  `moves_hat_aggregate_onto_the_concurrent_producer_in_milliseconds`,
+  `rejects_an_aggregate_hat_with_no_concurrent_producer`, and the extended
+  `ports_wave_review_preset_to_declarative_autoloop_topology`.
+
+### Live certification (autoloop 0.11.0, claude backend)
+
+After the fix, the generated `autoloops.toml` carries `parallel.enabled = true`,
+`parallel.max_branches = 3`, and `parallel.branch_timeout_ms = 600000`. The
+journal (`.ralph/autoloop/journal.jsonl`) shows the wave:
+
+```
+03:10:04 1 wave.start        wave-mudiyy6h-e906 role_id=reviewer
+03:10:04 1 wave.branch.start branch-1
+03:10:04 1 wave.branch.start branch-2
+03:10:04 1 wave.branch.start branch-3
+03:10:18 1 wave.branch.finish branch-2 stop_reason=max_iterations elapsed_ms=14242
+03:10:29 1 wave.branch.finish branch-3 stop_reason=max_iterations elapsed_ms=24421
+03:10:37 1 wave.branch.finish branch-1 stop_reason=max_iterations elapsed_ms=32460
+03:10:37 1 wave.aggregate    mode=wait_for_all
+03:10:37 1 wave.join.finish  joined_topic=review.perspective.parallel.joined resume_roles=reviewer
+03:11:14 3 iteration.start   suggested_roles=synthesizer
+03:11:33 3 review.complete
+03:11:59 4 loop.complete     reason=verdict_exit
+```
+
+All three branches started in the same millisecond window and overlapped:
+the fastest finished at 14 s while the slowest ran to 32 s. The run exited `0`
+after 4 iterations and cost about $0.54.
+
+### Upstream defect found (not fixed here)
+
+autoloop's metareview journals `review.verdict`, but `review.verdict` is missing
+from both `routingTopic`'s non-routing set (`autoloop-harness/dist/emit.js:412`)
+and `CORE_SYSTEM_TOPICS` (`emit.js:32`), while `review.start` and
+`review.finish` are in both. So after every metareview the routing position
+becomes `review.verdict`, which has no handoff, and the next iteration gets
+all-roles freedom. In the certified run this overwrote the post-join
+`resume_roles=reviewer` at iteration 2 (`suggested_roles=coordinator,reviewer,synthesizer`).
+In the first, pre-fix run it let the coordinator emit `review.done` itself.
+This affects every Ralph preset, not only waves. It is recorded for an upstream
+issue and not yet filed.
+
+### Dead in-house wave surface deleted
+
+autoloop's `--events` contract has no wave or branch event types. The
+harness's `type:` literals are `progress`, `failure.diagnostic`, `loop.*`,
+`iteration.*`, `backend.output`, `review.banner`, `summary`, `log`, `ask.*`,
+and `wait.*`. A wave surfaces only as a `progress` outcome `parallel:joined`.
+Nothing in the tree constructed `RpcEvent::Wave*`, so the TUI drill-down could
+never be fed. Deleted:
+
+- `RpcEvent::{WaveStarted, WaveWorkerDone, WaveWorkerTextDelta, WaveCompleted}`
+  (`ralph-proto/src/json_rpc.rs`) and their handlers in `ralph-tui/src/rpc_source.rs`
+- `WaveInfo`, `wave_active*`, `wave_view_*`, `IterationBuffer::wave_info`, and
+  the wave-view methods and tests (`ralph-tui/src/state.rs`); the wave branches in
+  `app.rs`; `[worker N/M]`, `[wave N/M]`, and `[WAVE]` in `widgets/header.rs`;
+  `Action::EnterWaveView` and the `w` key (`input.rs`); the "Wave Workers"
+  help section (`widgets/help.rs`), which also closes Step 7
+- `wave_id`/`wave_index`/`wave_total`, `with_wave`, and `is_wave_event` on
+  `ralph_proto::Event`, `event_reader::Event`, and `EventRecord`, plus their
+  tests and the `None` initializers in `display.rs` and `ralph-api/src/event_watcher.rs`
+- `OrchestrationEvent::Wave*` (`diagnostics/orchestration.rs`)
+- the `RALPH_WAVE_ID` guard around the urgent-steer check in `emit_command_with_root`
+- `RalphConfig::per_worker_timeout_secs` and its three tests (no production caller)
+- DEC-039's `Record::from_bus_event`, `SessionRecorder::record_bus_event`, and
+  `SessionRecorder::make_observer`; the recorder tests now use `record_meta`
+
+`ralph wave …` now parses to a hidden command that exits `1` with a migration
+message naming hat `concurrency`/`aggregate` and `presets/wave-review.yml`
+(test `removed_wave_command_parses_and_names_the_replacement`). The help and
+input tests `help_overlay_has_no_wave_section` and
+`w_no_longer_opens_a_wave_view` pin the TUI removal.
+
+The remaining `wave` strings in `crates/` are autoloop's own contract
+(`parallel_wave_*` stop reasons, "declarative wave" in the preset generator),
+the shipped-artifact guard, and the new removal tests.
+
+### Queue
+
+Steps 4 and 7 closed. Beads `a7e.8` and `tui-help-wave-stale-5hu` closed.
+`f09a` closed. Step 5 (`ga3-c4-dashboard-dead-svf`) is next.
+
+Commits: `03e9e01` (f09a), `96ef580` (parallel mapping), `5bc1be6` (wave
+surface deletion and the `ralph wave` migration message), and `acdda0d`, a
+harness fix found on the way. The workspace gate ran `ralph-e2e`, and its
+hooks BDD timeout test hung for 30 minutes because procps-ng 4
+`kill -KILL -<pgid>` exits 0 without signalling the group. With `--` before
+the pgid, `cargo test -p ralph-e2e` finishes in 15 s (434 + 38 passed). One gap
+remains: that test still orphans the fixture's `sleep 3600` backend, which
+autoloop runs in its own process group.
+
+Gates at `5bc1be6`: `cargo test --workspace` exited 0 with every
+`test result` line at `0 failed`. `cargo test -p ralph-core --features recording`
+passed 6 unit tests and 1 doc test for `session_recorder`.
+`cargo clippy --workspace --all-targets -- -D warnings` and
+`cargo fmt --all -- --check` were clean.

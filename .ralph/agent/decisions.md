@@ -525,3 +525,27 @@ Use this template for new entries:
 - Reversibility: High. Reopen the bead and the tasks if a later step finds a defect.
 - Evidence: `.ralph/specs/v3-complete/logs/step03-5333-gate-suite.log`; `crates/ralph-core/src/config.rs:2689`; `crates/ralph-cli/src/hats.rs:11`.
 - Timestamp: 2026-09-23T02:31:47Z
+
+## DEC-057 (2026-09-23)
+- Decision: Pull `f09a` (engine store path drift) forward from Step 12 into Step 4.
+- Confidence: 95
+- Alternatives Considered: (A) Certify waves through `autoloop run` directly, which bypasses Ralph and so does not certify Ralph's preset generation. (B) Leave Step 4 blocked until Step 12.
+- Reasoning: Step 4's demo requires a live Ralph run, and every live Ralph run stopped at iteration 1 because the absolute `core.*` overrides were re-anchored under the workspace. The fix is small and self-contained: workspace-relative `--set` values, with the env exports left absolute.
+- Reversibility: High; one function and two tests (`03e9e01`).
+- Evidence: `logs/step-02-engine-state-drift.log`; the live run records in `progress.md`.
+
+## DEC-058 (2026-09-23)
+- Decision: Delete the TUI wave drill-down instead of porting it onto autoloop.
+- Confidence: 85
+- Alternatives Considered: (A) Map autoloop `progress` `parallel:joined` onto `RpcEvent::WaveCompleted`. Rejected because it yields no per-branch output, so the drill-down would still be empty. (B) Tail branch journals under `.ralph/autoloop/waves/`. Rejected because it re-implements engine observation outside the `--events` contract, against the thin-orchestrator charter.
+- Reasoning: The `--events` `type` set has no wave or branch events, and nothing produced `RpcEvent::Wave*`. Branch records stay in the journal as `wave.*` topics. If autoloop adds branch events to `--events`, a view can be rebuilt on that contract.
+- Reversibility: Medium; the deleted code is in git at `acdda0d`.
+- Evidence: the `type:` literal census in `progress.md`, Step 4 section.
+
+## DEC-059 (2026-09-23)
+- Decision: Move an aggregator hat's `aggregate` onto its concurrent producer, and fail generation when it has none.
+- Confidence: 90
+- Alternatives Considered: (A) Keep `aggregate` on the aggregator, where autoloop never reads it. (B) Drop an orphan `aggregate` silently.
+- Reasoning: autoloop reads the wave aggregate from the concurrent role (`role.aggregate ?? loop.parallel.aggregate`), and the join happens before the aggregator runs. A silent drop would hide a misconfigured topology, and the prompt forbids silent drops.
+- Reversibility: High.
+- Evidence: `autoloop-harness/dist/wave.js` `executeDeclarativeWave`; tests in `autoloop_preset_gen.rs`.
