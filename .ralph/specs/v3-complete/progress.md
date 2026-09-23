@@ -2,12 +2,9 @@
 
 ## Current Step
 
-Steps 3, 4, and 7 are closed (2026-09-23). Step 4 certified autoloop waves live
-and deleted the in-house wave surface. The TUI part of that deletion also closed
-Step 7's stale help section. `f09a` (engine store path drift) moved forward and
-closed, because Step 4's live run needed it. Step 5
-(`ga3-c4-dashboard-dead-svf`, dashboard data source) is next and has no
-runtime wave yet. Step 6 (`landing-untracked-sweep-yxv`) follows.
+Steps 3, 4, 5, and 7 are closed (2026-09-23). Step 5 retired the dashboard's
+live loop view on the operator's decision. Step 6 (`landing-untracked-sweep-yxv`,
+scope the landing auto-commit) is next and has no runtime wave yet.
 
 ## Active Wave
 
@@ -4208,3 +4205,56 @@ Gates at `5bc1be6`: `cargo test --workspace` exited 0 with every
 passed 6 unit tests and 1 doc test for `session_recorder`.
 `cargo clippy --workspace --all-targets -- -D warnings` and
 `cargo fmt --all -- --check` were clean.
+
+## 2026-09-23, Step 5 closed: dashboard live loop view retired (operator decision)
+
+The operator chose to retire the dashboard rather than port a parser. The
+acceptance allows two outcomes, and this is the second: mark the dashboard
+non-functional for v3 in the README and delete the dead readers. Commit `efaadbd`.
+
+### What was dead
+
+- `crates/ralph-api/src/event_watcher.rs` tailed `.ralph/events-*.jsonl` through
+  `.ralph/current-events`, and the autoloop engine never writes those files. It
+  published `loop.orchestration` stream events, and it was their only producer.
+- `backend/ralph-web-server/src/runner/RalphEventParser.ts` parsed a stdout
+  JSONL event format that v3 no longer prints. Its only sink was
+  `LogBroadcaster.broadcastEvent`, and no frontend code consumed `type: "event"`
+  messages.
+- The frontend Builder's observation mode (`hooks/useLoopObservation.ts`,
+  `stores/observationStore.ts`, the overlay in `CollectionBuilder.tsx`, the node
+  rings in `HatNode.tsx`, and the fired-edge glow in `OffsetEdge.tsx`) subscribed
+  to `loop.orchestration`, so it silently showed nothing. That is the end state
+  the acceptance rules out, so it was deleted too.
+
+### What stays
+
+Collections, the hat builder, tasks, and Run/Stop from the Builder still work.
+After Run, the Builder shows a notice to follow the loop with `ralph loops` or
+the TUI. `backend/.../services/PlanningService.ts` still reads `user.prompt`
+from the current events file, because that is planning sessions fed by
+`ralph emit`, not the live loop view. `ralph_core::EventRecord` and
+`EventHistory` stay, because they back `ralph events` and the summary writer.
+
+README, `docs/guide/cli-reference.md`, and the `ralph web` startup warning
+(`DASHBOARD_LIVE_STATE_CAVEAT`, asserted by
+`startup_caveat_discloses_live_state_limitation`) now say the live view is
+retired and point to `ralph loops` and the TUI.
+
+### Gates at `efaadbd`
+
+- `cargo test -p ralph-api -p ralph-cli`: 43 `test result: ok` lines, 0 failed.
+  `cargo clippy -p ralph-api -p ralph-cli --all-targets -- -D warnings` and
+  `cargo fmt --all -- --check` are clean.
+- Frontend: `npx tsc -p tsconfig.json --noEmit` exits 0 (`include: ["src"]` with
+  `noUnusedLocals`), and `npx vitest run` passed 13 files and 154 tests.
+- Backend: `npx tsc --noEmit` exits 0. `npm test` cannot run on this machine:
+  `better-sqlite3` 12.6.2 has no native build for Node 26 (`node-gyp` fails in
+  `npm install`, so dependencies were installed with `--ignore-scripts`), and
+  every DB-backed test fails to load the binding. This is an environment limit,
+  not a regression from this change. `npm install` churn in
+  `package-lock.json` was reverted.
+
+### Queue
+
+Step 5 closed. Bead `ga3-c4-dashboard-dead-svf` closed. Step 6 is next.

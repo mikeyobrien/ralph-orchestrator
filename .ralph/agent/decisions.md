@@ -549,3 +549,11 @@ Use this template for new entries:
 - Reasoning: autoloop reads the wave aggregate from the concurrent role (`role.aggregate ?? loop.parallel.aggregate`), and the join happens before the aggregator runs. A silent drop would hide a misconfigured topology, and the prompt forbids silent drops.
 - Reversibility: High.
 - Evidence: `autoloop-harness/dist/wave.js` `executeDeclarativeWave`; tests in `autoloop_preset_gen.rs`.
+
+## DEC-060 (2026-09-23)
+- Decision: Retire the dashboard's live loop view and delete its readers, including the Builder observation mode.
+- Confidence: 95
+- Alternatives Considered: (A) Port a reader for `.ralph/autoloop/events.ndjson`. The operator declined. (B) Delete only the two readers named in the bead. Rejected because the Builder observation would then subscribe to a topic with no producer, the silent-empty state the acceptance forbids.
+- Reasoning: Operator decision ("retired the dashboard"). Retiring a view means removing every surface that would silently show nothing, and telling users where to look instead.
+- Reversibility: Medium; the deleted UI is in git before `efaadbd`.
+- Evidence: `efaadbd`; the Step 5 section in `progress.md`.
