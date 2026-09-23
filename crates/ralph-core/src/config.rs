@@ -673,7 +673,7 @@ impl RalphConfig {
             }
         }
 
-        // Check wave config validity
+        // Check hat concurrency/aggregate validity
         for (hat_id, hat_config) in &self.hats {
             if hat_config.concurrency == 0 {
                 return Err(ConfigError::InvalidConcurrency {
@@ -936,20 +936,6 @@ impl RalphConfig {
             .overrides
             .get(backend)
             .unwrap_or(&self.adapters.default)
-    }
-
-    /// R13 per-worker execution timeout in seconds.
-    ///
-    /// Precedence: an active `hat.timeout`, else the resolved adapter settings
-    /// timeout for `backend_name` (per-backend override → shared `default` →
-    /// built-in 300s). `hat.aggregate.timeout` is deliberately **excluded**:
-    /// it governs the separate aggregator-wait budget (see Step 4), not each
-    /// worker's own deadline. Both the ordinary iteration path and wave workers
-    /// resolve their deadline through this single chain.
-    pub fn per_worker_timeout_secs(&self, hat_timeout: Option<u32>, backend_name: &str) -> u64 {
-        hat_timeout
-            .map(u64::from)
-            .unwrap_or_else(|| self.adapter_settings(backend_name).timeout)
     }
 }
 
@@ -2125,23 +2111,25 @@ pub struct HatConfig {
 
     /// Execution timeout in seconds for this hat.
     ///
-    /// For wave workers, this controls how long each parallel worker can run.
-    /// Defaults to the adapter-level timeout (typically 300s) if not set.
+    /// On a hat with `concurrency > 1` this becomes autoloop's
+    /// `parallel.branch_timeout_ms`, the deadline for each concurrent branch.
     #[serde(default)]
     pub timeout: Option<u32>,
 
-    /// Maximum concurrent wave instances for this hat.
+    /// Number of concurrent branches autoloop launches for this hat.
     ///
-    /// When > 1, the loop runner spawns multiple backend instances in parallel
-    /// for wave events targeting this hat. Default is 1 (sequential execution).
+    /// When > 1, an event routed to this hat starts that many autoloop
+    /// declarative branches, joined before the next iteration. Default is 1
+    /// (sequential execution).
     #[serde(default = "default_concurrency")]
     pub concurrency: u32,
 
     /// Aggregation configuration for this hat.
     ///
-    /// When set, this hat acts as an aggregator — it buffers wave results and
-    /// activates only when all correlated results have arrived (or timeout).
-    /// Cannot be set on a hat with `concurrency > 1`.
+    /// When set, this hat consumes the results of a concurrent hat's branches.
+    /// The settings govern how autoloop joins that concurrent hat's branches,
+    /// so a concurrent hat must publish one of this hat's triggers. Cannot be
+    /// set on a hat with `concurrency > 1`.
     #[serde(default)]
     pub aggregate: Option<AggregateConfig>,
 }
@@ -2150,22 +2138,21 @@ fn default_concurrency() -> u32 {
     1
 }
 
-/// Configuration for wave result aggregation.
+/// How autoloop joins a concurrent hat's branches.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AggregateConfig {
     /// Aggregation mode.
     pub mode: AggregateMode,
 
-    /// Timeout in seconds for waiting on all wave results.
-    /// After this timeout, the aggregator activates with whatever results are available.
+    /// Timeout in seconds for joining all branch results.
     pub timeout: u32,
 }
 
-/// Aggregation mode for wave results.
+/// Aggregation mode for concurrent branch results.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AggregateMode {
-    /// Wait for all wave instances to complete before activating the aggregator.
+    /// Wait for every branch to finish before the aggregator runs.
     WaitForAll,
 }
 
@@ -2890,54 +2877,6 @@ adapters:
                 metadata.id
             );
         }
-    }
-
-    // ---- Step 1 TR5: R13 per-worker timeout resolution ----
-
-    #[test]
-    fn test_per_worker_timeout_hat_timeout_wins() {
-        // Active hat.timeout overrides the backend's own override (999s) and the
-        // default (300s).
-        let yaml = r"
-adapters:
-  claude:
-    timeout: 999
-";
-        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(config.per_worker_timeout_secs(Some(50), "claude"), 50);
-    }
-
-    #[test]
-    fn test_per_worker_timeout_uses_backend_override_when_hat_timeout_absent() {
-        // No hat.timeout → the backend's own override (claude=999), not default.
-        let yaml = r"
-adapters:
-  claude:
-    timeout: 999
-";
-        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(config.per_worker_timeout_secs(None, "claude"), 999);
-    }
-
-    #[test]
-    fn test_per_worker_timeout_uses_default_then_builtin_300() {
-        // pi has no override → adapters.default, which itself defaults to 300s.
-        let yaml = r"
-adapters:
-  claude:
-    timeout: 999
-";
-        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(config.per_worker_timeout_secs(None, "pi"), 300);
-
-        // A non-default `adapters.default.timeout` is honored for unconfigured backends.
-        let yaml_with_default = r"
-adapters:
-  default:
-    timeout: 450
-";
-        let config_default: RalphConfig = serde_yaml::from_str(yaml_with_default).unwrap();
-        assert_eq!(config_default.per_worker_timeout_secs(None, "pi"), 450);
     }
 
     #[test]
@@ -4919,10 +4858,10 @@ hats:
         assert_eq!(sc.path, ".ralph/agent/worker.md");
     }
 
-    // ── Wave config tests (Step 2: HatConfig extensions) ──
+    // ── Hat concurrency/aggregate config tests ──
 
     #[test]
-    fn test_wave_config_concurrency_and_aggregate_parse() {
+    fn test_hat_concurrency_and_aggregate_parse() {
         let yaml = r#"
 hats:
   reviewer:
@@ -4956,7 +4895,7 @@ hats:
     }
 
     #[test]
-    fn test_wave_config_defaults_without_new_fields() {
+    fn test_hat_concurrency_defaults_without_new_fields() {
         // Existing YAML without concurrency/aggregate should parse with defaults
         let yaml = r#"
 hats:
@@ -4974,7 +4913,7 @@ hats:
     }
 
     #[test]
-    fn test_wave_config_concurrency_zero_rejected() {
+    fn test_hat_concurrency_zero_rejected() {
         let yaml = r#"
 hats:
   worker:
@@ -4998,7 +4937,7 @@ hats:
     }
 
     #[test]
-    fn test_wave_config_aggregate_on_concurrent_hat_rejected() {
+    fn test_hat_aggregate_on_concurrent_hat_rejected() {
         // A hat cannot be both concurrent (concurrency > 1) and an aggregator
         let yaml = r#"
 hats:
@@ -5026,7 +4965,7 @@ hats:
     }
 
     #[test]
-    fn test_wave_config_aggregate_on_non_concurrent_hat_valid() {
+    fn test_hat_aggregate_on_non_concurrent_hat_valid() {
         // Aggregate on a hat with concurrency=1 (default) is valid
         let yaml = r#"
 hats:

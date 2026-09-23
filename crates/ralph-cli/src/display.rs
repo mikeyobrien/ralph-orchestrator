@@ -329,9 +329,6 @@ mod tests {
             triggered: None,
             payload,
             blocked_count: None,
-            wave_id: None,
-            wave_index: None,
-            wave_total: None,
         };
 
         print_events_table(&[record], false);
@@ -349,9 +346,6 @@ mod tests {
             triggered: None,
             payload: "ok".to_string(),
             blocked_count: None,
-            wave_id: None,
-            wave_index: None,
-            wave_total: None,
         };
 
         print_events_table(&[record], false);

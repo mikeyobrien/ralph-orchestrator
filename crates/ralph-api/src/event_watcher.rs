@@ -201,9 +201,6 @@ mod tests {
             triggered: Some("reviewer".to_string()),
             payload: String::new(),
             blocked_count: None,
-            wave_id: None,
-            wave_index: None,
-            wave_total: None,
         }
     }
 

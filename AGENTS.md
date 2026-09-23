@@ -166,11 +166,18 @@ hats:
       timeout: 300               # Seconds
 ```
 
-- `concurrency > 1` maps to autoloop per-role `concurrency`; routing one event to the role
-  launches that many declarative branches, each prefixed with `[branch i/N]`.
-- `aggregate` maps to autoloop role aggregation; Ralph's timeout seconds are converted to
-  `timeout_ms` in the generated topology.
+- `concurrency > 1` maps to autoloop per-role `concurrency` and turns on
+  `parallel.enabled` with `parallel.max_branches` set to the largest concurrency; routing one
+  event to the role launches that many declarative branches, each prefixed with `[branch i/N]`,
+  joined inside the same iteration. A concurrent hat's `timeout` becomes
+  `parallel.branch_timeout_ms`.
+- `aggregate` moves onto the concurrent role whose `publishes` feed the aggregator's
+  `triggers`, because autoloop reads a wave's aggregate from the concurrent role. Timeout
+  seconds become `timeout_ms`. An aggregator with no concurrent producer fails preset
+  generation.
 - A hat cannot have both `concurrency > 1` and `aggregate`.
+- Branch activity is journaled as `wave.*` topics in `.ralph/autoloop/journal.jsonl`; the
+  `--events` stream carries no per-branch output, so the TUI has no wave view.
 - Agents publish normal handoff events through the live autoloop harness event tool; autoloop
   owns parallel dispatch and result aggregation.
 

@@ -27,7 +27,7 @@ runtime state: Ralph launches autoloop with a Ralph-owned state root at
 
 | v2 | v3 |
 |----|----|
-| `ralph wave …` (wave system) | Removed. Use hat `concurrency:`/`aggregate:` — they map to autoloop's declarative per-role concurrency. `presets/wave-review.yml` is ported. |
+| `ralph wave …` (wave system) | Removed; the command now exits with a migration message. Use hat `concurrency:`/`aggregate:`. Ralph turns on autoloop's `parallel.enabled`, sets `parallel.max_branches` to the largest `concurrency`, maps a concurrent hat's `timeout` to `parallel.branch_timeout_ms`, and moves an aggregator hat's `aggregate` onto the concurrent hat that feeds it. `presets/wave-review.yml` is ported and verified live. The TUI wave drill-down (`w`, `[WAVE]`) is gone because autoloop's `--events` stream has no per-branch output; branch records live in the journal (`wave.*` topics). |
 | `ralph run --rpc` (JSON-lines protocol) | Restored. Autoloop `--events` is mapped onto the existing `RpcEvent` contract on stdout. |
 | `ralph run --record-session` (smoke fixtures) | Removed. Replay tests use the fake-autoloop fixture substrate (`tests/fixtures/autoloop/`). |
 | `core.engine` config field | Autoloop is the only engine. `autoloop` remains valid; any other value is rejected because the in-house engine was removed in v3. Remove the field or set it to `autoloop`. |

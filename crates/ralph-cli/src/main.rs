@@ -571,6 +571,13 @@ enum Commands {
     #[command(hide = true)]
     Task(CodeTaskArgs),
 
+    /// Removed in v3; prints the migration to hat `concurrency`/`aggregate`.
+    #[command(hide = true, disable_help_flag = true)]
+    Wave {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, hide = true)]
+        args: Vec<String>,
+    },
+
     /// Ralph's runtime tools (agent-facing)
     Tools(tools::ToolsArgs),
 
@@ -1107,6 +1114,7 @@ async fn main() -> Result<()> {
         Some(Commands::Task(args)) => {
             code_task_command(&config_sources, hats_source.as_ref(), cli.color, args).await
         }
+        Some(Commands::Wave { .. }) => Err(wave_removed_error()),
         Some(Commands::Tools(args)) => tools::execute(args, cli.color.should_use_colors()).await,
         Some(Commands::Loops(args)) => loops::execute(args, cli.color.should_use_colors()),
         Some(Commands::Hats(args)) => {
@@ -2038,6 +2046,21 @@ fn emit_command(color_mode: ColorMode, args: EmitArgs) -> Result<()> {
     emit_command_with_root(color_mode, args, None, events_override)
 }
 
+/// The in-house wave CLI was removed in v3; autoloop owns concurrent branches.
+fn wave_removed_error() -> anyhow::Error {
+    anyhow::anyhow!(
+        "`ralph wave` was removed in v3: autoloop now runs concurrent branches.\n\n\
+         Declare them on a hat instead of emitting wave events:\n\
+         \x20 hats:\n\
+         \x20   reviewer:\n\
+         \x20     concurrency: 3        # branches per routed event\n\
+         \x20   synthesizer:\n\
+         \x20     aggregate: {{ mode: wait_for_all, timeout: 300 }}\n\n\
+         Publish the concurrent hat's trigger event once; autoloop launches and joins\n\
+         the branches. See presets/wave-review.yml."
+    )
+}
+
 fn emit_command_with_root(
     color_mode: ColorMode,
     args: EmitArgs,
@@ -2048,27 +2071,25 @@ fn emit_command_with_root(
     let workspace_root = resolve_workspace_root(root);
     let current_events_marker = workspace_root.join(".ralph/current-events");
 
-    if std::env::var("RALPH_WAVE_ID").is_err() {
-        let urgent_steer_store = UrgentSteerStore::new(urgent_steer_path_from_workspace(root));
-        if let Some(record) = urgent_steer_store
-            .take()
-            .context("Failed to read urgent-steer marker")?
-        {
-            let guidance = record
-                .messages
-                .iter()
-                .enumerate()
-                .map(|(idx, message)| format!("{}. {}", idx + 1, message))
-                .collect::<Vec<_>>()
-                .join("\n");
+    let urgent_steer_store = UrgentSteerStore::new(urgent_steer_path_from_workspace(root));
+    if let Some(record) = urgent_steer_store
+        .take()
+        .context("Failed to read urgent-steer marker")?
+    {
+        let guidance = record
+            .messages
+            .iter()
+            .enumerate()
+            .map(|(idx, message)| format!("{}. {}", idx + 1, message))
+            .collect::<Vec<_>>()
+            .join("\n");
 
-            anyhow::bail!(
-                "Urgent steer is pending. Do not hand off yet.\n\n\
-                 Human feedback:\n{guidance}\n\n\
-                 You have now seen the steer. Address it in this turn, then rerun `ralph emit` \
-                 once you are ready to hand off."
-            );
-        }
+        anyhow::bail!(
+            "Urgent steer is pending. Do not hand off yet.\n\n\
+             Human feedback:\n{guidance}\n\n\
+             You have now seen the steer. Address it in this turn, then rerun `ralph emit` \
+             once you are ready to hand off."
+        );
     }
 
     // Generate timestamp if not provided
@@ -2783,6 +2804,19 @@ mod tests {
                 command: crate::bot::BotCommands::Daemon(_),
             }))
         ));
+    }
+
+    #[test]
+    fn removed_wave_command_parses_and_names_the_replacement() {
+        let cli = Cli::try_parse_from(["ralph", "wave", "emit", "review.file", "--payloads", "a"])
+            .expect("the removed wave command should still parse");
+        assert!(matches!(cli.command, Some(Commands::Wave { .. })));
+
+        let message = wave_removed_error().to_string();
+        assert!(message.contains("removed in v3"), "{message}");
+        assert!(message.contains("concurrency: 3"), "{message}");
+        assert!(message.contains("aggregate:"), "{message}");
+        assert!(message.contains("presets/wave-review.yml"), "{message}");
     }
 
     #[test]

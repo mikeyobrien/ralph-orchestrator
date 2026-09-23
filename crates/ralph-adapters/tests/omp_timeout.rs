@@ -6,11 +6,8 @@
 //!
 //! Validates OMP step-4 focused filter `omp_timeout` (AC3/AC6): the adapter-
 //! level enforcement of the per-worker deadline on the ordinary `CliExecutor`
-//! path. The R13 precedence-chain *resolution* (`hat.timeout` → override →
-//! default → 300 s) is unit-tested in `ralph-core::config`
-//! (`per_worker_timeout_secs`); GAP3 aggregator-wait in
-//! `ralph-core::wave_detection` (`resolve_aggregate_wait`). These tests prove
-//! the resolved `Duration` is actually enforced for an `OmpStreamJson` backend.
+//! path. These tests prove a resolved `Duration` is actually enforced for an
+//! `OmpStreamJson` backend.
 //!
 //! Run with: cargo test -p ralph-adapters --test omp_timeout
 

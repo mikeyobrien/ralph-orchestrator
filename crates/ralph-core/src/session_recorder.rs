@@ -3,7 +3,7 @@
 //! `SessionRecorder` captures routing events and UX captures (terminal
 //! output) into a unified JSONL format for replay and analysis.
 
-use ralph_proto::{Event, UxEvent};
+use ralph_proto::UxEvent;
 use serde::{Deserialize, Serialize};
 use std::io::{self, Write};
 use std::sync::Mutex;
@@ -18,7 +18,7 @@ pub struct Record {
     /// Unix timestamp in milliseconds when the event was recorded.
     pub ts: u64,
 
-    /// The event type discriminator (e.g., "bus.publish", "ux.terminal.write").
+    /// The event type discriminator (e.g., "_meta.iteration", "ux.terminal.write").
     pub event: String,
 
     /// The event data, serialized based on event type.
@@ -38,11 +38,6 @@ impl Record {
             event: event.into(),
             data: serde_json::to_value(data).unwrap_or(serde_json::Value::Null),
         }
-    }
-
-    /// Creates a record for a routing (`bus.publish`) event.
-    pub fn from_bus_event(event: &Event) -> Self {
-        Self::new("bus.publish", event)
     }
 
     /// Creates a record for a UX event.
@@ -102,26 +97,23 @@ impl Record {
 
 /// Records session events to a JSONL output.
 ///
-/// The recorder is thread-safe and can be used as a routing-event observer.
-/// It writes each event as a JSON line immediately for crash resilience.
+/// The recorder is thread-safe. It writes each record as a JSON line
+/// immediately for crash resilience.
 ///
 /// # Example
 ///
 /// ```
-/// use ralph_core::SessionRecorder;
-/// use ralph_proto::Event;
+/// use ralph_core::{Record, SessionRecorder};
 ///
 /// let mut output = Vec::new();
 /// let recorder = SessionRecorder::new(&mut output);
 ///
-/// // Record a bus event
-/// let event = Event::new("task.start", "Begin implementation");
-/// recorder.record_bus_event(&event);
+/// recorder.record_meta(Record::meta_iteration(1, 5000, "builder"));
 ///
 /// // Flush and check output
 /// drop(recorder);
 /// let output_str = String::from_utf8_lossy(&output);
-/// assert!(output_str.contains("bus.publish"));
+/// assert!(output_str.contains("_meta.iteration"));
 /// ```
 pub struct SessionRecorder<W> {
     /// The output writer, wrapped in a mutex for thread-safe access.
@@ -142,12 +134,6 @@ impl<W: Write> SessionRecorder<W> {
             start_time: Instant::now(),
             ux_write_count: Mutex::new(0),
         }
-    }
-
-    /// Records a routing (`bus.publish`) event.
-    pub fn record_bus_event(&self, event: &Event) {
-        let record = Record::from_bus_event(event);
-        self.write_record(&record);
     }
 
     /// Records a UX event.
@@ -202,43 +188,9 @@ impl<W: Write> SessionRecorder<W> {
     }
 }
 
-impl<W: Write + Send + 'static> SessionRecorder<W> {
-    /// Creates an observer closure that records routing events.
-    ///
-    /// The returned closure holds a reference to this recorder and calls
-    /// `record_bus_event` for each event received.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let recorder = Arc::new(SessionRecorder::new(file));
-    /// let observer = SessionRecorder::make_observer(Arc::clone(&recorder));
-    /// ```
-    pub fn make_observer(recorder: std::sync::Arc<Self>) -> impl Fn(&Event) + Send + 'static {
-        move |event| {
-            recorder.record_bus_event(event);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_record_bus_event() {
-        let mut output = Vec::new();
-        {
-            let recorder = SessionRecorder::new(&mut output);
-            let event = Event::new("task.start", "Begin work");
-            recorder.record_bus_event(&event);
-        }
-
-        let output_str = String::from_utf8_lossy(&output);
-        assert!(output_str.contains("bus.publish"));
-        assert!(output_str.contains("task.start"));
-        assert!(output_str.contains("Begin work"));
-    }
 
     #[test]
     fn test_record_ux_event() {
@@ -279,8 +231,8 @@ mod tests {
         let mut output = Vec::new();
         {
             let recorder = SessionRecorder::new(&mut output);
-            recorder.record_bus_event(&Event::new("test.1", "First"));
-            recorder.record_bus_event(&Event::new("test.2", "Second"));
+            recorder.record_meta(Record::meta_iteration(1, 10, "first"));
+            recorder.record_meta(Record::meta_iteration(2, 20, "second"));
         }
 
         let output_str = String::from_utf8_lossy(&output);
@@ -314,19 +266,18 @@ mod tests {
 
     #[test]
     fn test_record_roundtrip() {
-        let event = Event::new("task.done", "Finished");
-        let record = Record::from_bus_event(&event);
+        let record = Record::meta_iteration(3, 1500, "builder");
 
         // Serialize and deserialize
         let json = serde_json::to_string(&record).unwrap();
         let parsed: Record = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(parsed.event, "bus.publish");
+        assert_eq!(parsed.event, "_meta.iteration");
         assert!(parsed.ts > 0);
     }
 
     #[test]
-    fn test_record_bus_event_flushes_buffered_writer_immediately() {
+    fn test_record_flushes_buffered_writer_immediately() {
         use std::io::{BufWriter, Write};
         use std::sync::{Arc, Mutex};
 
@@ -351,7 +302,7 @@ mod tests {
         let writer = BufWriter::new(SharedWriter(Arc::clone(&shared)));
         let recorder = SessionRecorder::new(writer);
 
-        recorder.record_bus_event(&Event::new("task.start", "Begin work"));
+        recorder.record_meta(Record::meta_iteration(1, 0, "task.start"));
 
         let output = shared.lock().expect("shared bytes lock").clone();
         let output_str = String::from_utf8(output).expect("utf8 output");

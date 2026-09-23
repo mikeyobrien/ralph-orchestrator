@@ -40,8 +40,6 @@ pub enum Action {
     GuidanceNext,
     /// Open urgent steer input for the active iteration
     GuidanceNow,
-    /// Enter wave worker drill-down view
-    EnterWaveView,
     /// Toggle mouse capture for wheel scrolling vs native text selection
     ToggleMouseMode,
     /// Export the currently viewed iteration buffer to disk
@@ -93,9 +91,6 @@ pub fn map_key(key: KeyEvent) -> Action {
         // Guidance
         KeyCode::Char(':') => Action::GuidanceNext,
         KeyCode::Char('!') => Action::GuidanceNow,
-
-        // Wave view
-        KeyCode::Char('w') => Action::EnterWaveView,
 
         // Mouse mode
         KeyCode::Char('m') => Action::ToggleMouseMode,
@@ -269,5 +264,11 @@ mod tests {
     fn up_arrow_returns_scroll_up() {
         let key = KeyEvent::new(KeyCode::Up, KeyModifiers::NONE);
         assert_eq!(map_key(key), Action::ScrollUp);
+    }
+
+    #[test]
+    fn w_no_longer_opens_a_wave_view() {
+        let key = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::NONE);
+        assert_eq!(map_key(key), Action::None);
     }
 }

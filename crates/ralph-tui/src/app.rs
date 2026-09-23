@@ -40,65 +40,37 @@ pub fn dispatch_action(action: Action, state: &mut TuiState, viewport_height: us
     match action {
         Action::Quit => return true,
         Action::ScrollDown => {
-            if state.wave_view_active {
-                if let Some(buffer) = state.current_wave_worker_buffer_mut() {
-                    buffer.scroll_down(viewport_height);
-                }
-            } else if let Some(buffer) = state.current_iteration_mut() {
+            if let Some(buffer) = state.current_iteration_mut() {
                 buffer.scroll_down(viewport_height);
             }
         }
         Action::ScrollUp => {
-            if state.wave_view_active {
-                if let Some(buffer) = state.current_wave_worker_buffer_mut() {
-                    buffer.scroll_up();
-                }
-            } else if let Some(buffer) = state.current_iteration_mut() {
+            if let Some(buffer) = state.current_iteration_mut() {
                 buffer.scroll_up();
             }
         }
         Action::ScrollTop => {
-            if state.wave_view_active {
-                if let Some(buffer) = state.current_wave_worker_buffer_mut() {
-                    buffer.scroll_top();
-                }
-            } else if let Some(buffer) = state.current_iteration_mut() {
+            if let Some(buffer) = state.current_iteration_mut() {
                 buffer.scroll_top();
             }
         }
         Action::ScrollBottom => {
-            if state.wave_view_active {
-                if let Some(buffer) = state.current_wave_worker_buffer_mut() {
-                    buffer.scroll_bottom(viewport_height);
-                }
-            } else if let Some(buffer) = state.current_iteration_mut() {
+            if let Some(buffer) = state.current_iteration_mut() {
                 buffer.scroll_bottom(viewport_height);
             }
         }
         Action::NextIteration => {
-            if state.wave_view_active {
-                state.wave_view_next();
-            } else {
-                state.navigate_next();
-            }
+            state.navigate_next();
         }
         Action::PrevIteration => {
-            if state.wave_view_active {
-                state.wave_view_prev();
-            } else {
-                state.navigate_prev();
-            }
+            state.navigate_prev();
         }
         Action::ShowHelp => {
             state.show_help = true;
         }
         Action::DismissHelp => {
-            if state.wave_view_active {
-                state.exit_wave_view();
-            } else {
-                state.show_help = false;
-                state.clear_search();
-            }
+            state.show_help = false;
+            state.clear_search();
         }
         Action::StartSearch => {
             // Enter input mode with an empty query so the footer shows the
@@ -127,9 +99,6 @@ pub fn dispatch_action(action: Action, state: &mut TuiState, viewport_height: us
             if !state.autoloop_source {
                 state.start_guidance(crate::state::GuidanceMode::Now);
             }
-        }
-        Action::EnterWaveView => {
-            state.enter_wave_view();
         }
         Action::ToggleMouseMode => {
             state.mouse_capture_enabled = !state.mouse_capture_enabled;
@@ -329,12 +298,7 @@ impl<W: AsyncWrite + Unpin + Send + 'static> App<W> {
                                     match mouse.kind {
                                         MouseEventKind::ScrollUp => {
                                             let mut state = self.state.lock().unwrap();
-                                            let buffer = if state.wave_view_active {
-                                                state.current_wave_worker_buffer_mut()
-                                            } else {
-                                                state.current_iteration_mut()
-                                            };
-                                            if let Some(buffer) = buffer {
+                                            if let Some(buffer) = state.current_iteration_mut() {
                                                 for _ in 0..3 {
                                                     buffer.scroll_up();
                                                 }
@@ -342,12 +306,7 @@ impl<W: AsyncWrite + Unpin + Send + 'static> App<W> {
                                         }
                                         MouseEventKind::ScrollDown => {
                                             let mut state = self.state.lock().unwrap();
-                                            let buffer = if state.wave_view_active {
-                                                state.current_wave_worker_buffer_mut()
-                                            } else {
-                                                state.current_iteration_mut()
-                                            };
-                                            if let Some(buffer) = buffer {
+                                            if let Some(buffer) = state.current_iteration_mut() {
                                                 for _ in 0..3 {
                                                     buffer.scroll_down(viewport_height);
                                                 }
@@ -476,14 +435,7 @@ impl<W: AsyncWrite + Unpin + Send + 'static> App<W> {
 
                     // Autoscroll: if user hasn't scrolled away, keep them at the bottom
                     // as new content arrives. This mimics standard terminal behavior.
-                    if state.wave_view_active {
-                        if let Some(buffer) = state.current_wave_worker_buffer_mut()
-                            && buffer.following_bottom
-                        {
-                            let max_scroll = buffer.line_count().saturating_sub(viewport_height);
-                            buffer.scroll_offset = max_scroll;
-                        }
-                    } else if let Some(buffer) = state.current_iteration_mut()
+                    if let Some(buffer) = state.current_iteration_mut()
                         && buffer.following_bottom
                     {
                         let max_scroll = buffer.line_count().saturating_sub(viewport_height);
@@ -495,13 +447,8 @@ impl<W: AsyncWrite + Unpin + Send + 'static> App<W> {
                         // Render header
                         f.render_widget(header::render(&state, chunks[0].width), chunks[0]);
 
-                        // Render content: wave worker buffer when in wave view, else iteration
-                        let content_buffer = if state.wave_view_active {
-                            state.current_wave_worker_buffer()
-                        } else {
-                            state.current_iteration()
-                        };
-                        if let Some(buffer) = content_buffer {
+                        // Render content
+                        if let Some(buffer) = state.current_iteration() {
                             let mut content_widget = ContentPane::new(buffer);
                             if let Some(query) = &state.search_state.query {
                                 content_widget = content_widget.with_search(query);

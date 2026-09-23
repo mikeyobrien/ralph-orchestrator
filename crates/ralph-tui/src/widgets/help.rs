@@ -110,23 +110,6 @@ pub fn render(f: &mut Frame, area: Rect, autoloop_source: bool) {
             ),
         ]),
         Line::from(""),
-        Line::from(Span::styled(
-            "Wave Workers:",
-            Style::default().fg(Color::Yellow),
-        )),
-        Line::from(vec![
-            Span::styled("  w", Style::default().fg(Color::Cyan)),
-            Span::raw("      Enter wave worker view"),
-        ]),
-        Line::from(vec![
-            Span::styled("  h/l", Style::default().fg(Color::Cyan)),
-            Span::raw("    Cycle through workers"),
-        ]),
-        Line::from(vec![
-            Span::styled("  Esc", Style::default().fg(Color::Cyan)),
-            Span::raw("    Exit wave view"),
-        ]),
-        Line::from(""),
         Line::from(Span::styled("Other:", Style::default().fg(Color::Yellow))),
         Line::from(vec![
             Span::styled("  q", Style::default().fg(Color::Cyan)),
@@ -222,5 +205,23 @@ mod tests {
             text.contains("unavailable in this mode"),
             "autoloop source should mark guidance unavailable, got: {text}"
         );
+    }
+
+    #[test]
+    fn help_overlay_has_no_wave_section() {
+        // autoloop runs declarative waves inside one iteration and exposes no
+        // per-branch stream, so the TUI has no wave view to document.
+        for autoloop_source in [false, true] {
+            let text = render_to_string(autoloop_source);
+            assert!(text.contains("Other:"), "help should render, got: {text}");
+            assert!(
+                !text.contains("Wave"),
+                "help must not list waves, got: {text}"
+            );
+            assert!(
+                !text.contains("  w "),
+                "help must not list a w keybinding, got: {text}"
+            );
+        }
     }
 }
