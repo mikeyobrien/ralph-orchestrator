@@ -4031,3 +4031,58 @@ untracked. DEC-055 records the repair and DEC-053's `45` is annotated with the
 anchor script, and no markdown-lint claim. The step gate
 `task-1790109144-5333` stays blocked by `6a5c`, and `f09a` stays parked for
 Step 12.
+
+## 2026-09-23, Step 3 wave, operator review of 6a5c and step gate 5333 (PASSED, step closed)
+
+Resumed on a fresh machine at `38aa148`. The runtime task store, the events
+files, and the top-level `logs/` directory did not transfer, so this pass
+re-measures everything it relies on and cites nothing from the old machine.
+The operator reviewed `6a5c` directly and ran the step gate in the same pass.
+
+### Environment
+
+`git rev-parse --is-shallow-repository` prints `false`. `cargo 1.98.1`,
+`rustc 1.98.1`, and `clippy 0.1.98` are on `PATH` for non-interactive shells
+through mise. `autoloop --version` prints `0.11.0`, installed with
+`--allow-scripts=@homebridge/node-pty-prebuilt-multiarch`, and the node-pty
+module loads.
+
+### 6a5c, `fix:v3-complete:autoloop-health-probe-etxtbsy` (review.passed)
+
+The code increment is `df7fa1d`, and `git diff --stat df7fa1d -- crates/` is
+empty at `38aa148`. The diff moves the bounded `ETXTBSY` retry from
+`testing/fake_autoloop.rs` into `utils.rs` without changing its behavior, and it
+routes the health probe's `--version` exec through `output_with_busy_retry`.
+That helper matches `Command::output`: stdin is null, and stdout and stderr are
+piped. The new test holds a real write descriptor, so it forces the busy path
+on every run. `cargo test -p ralph-core --lib autoloop_health` prints
+`12 passed; 0 failed`.
+
+The last four rejections of this row were about citations in the record, not
+the code. This review closes the row on the code and the suite. The record
+defects those rounds charged are fixed, and no source defect is open.
+
+### Step gate 5333, `verify-remnant-and-engine-rejection` (passed)
+
+- The remnant is gone. `crates/ralph-core/src/hat_registry.rs` does not exist,
+  and `grep -rn hat_registry crates/ --include=*.rs` prints nothing.
+  `HatRegistry` lives in `crates/ralph-cli/src/hats.rs`, its one owner (`96b7bb1`).
+- The workspace builds. `cargo build --workspace` exits `0`.
+- The engine is still rejected. `core_engine_rejects_removed_ralph_engine`
+  passes, and the real binary run in a scratch repo with `core.engine: ralph`
+  exits `1` and prints "Invalid core.engine 'ralph': the in-house engine was
+  removed in v3; remove the field or set autoloop."
+- Suites. `cargo test -p ralph-cli -p ralph-core --no-fail-fast` prints 41
+  result lines, `1418 passed`, and `1 failed`. The failure is the baseline
+  `test_auto_preflight_skip_list_can_omit_hooks_check_failures`. It prints
+  `0` `Text file busy` lines. The log is at
+  `.ralph/specs/v3-complete/logs/step03-5333-gate-suite.log`.
+- `cargo clippy -p ralph-core -p ralph-cli --all-targets -- -D warnings` is clean.
+
+Bead `a7e.10` is closed in `.beads/issues.jsonl` in the same commit.
+
+### Queue
+
+Step 3 is closed. Step 4 (`a7e.8`, certify or delete the wave surface) is the
+current step. Its wave is not yet materialized. It also owns DEC-039's three
+dead `SessionRecorder` bus methods. `f09a` stays parked for Step 12.

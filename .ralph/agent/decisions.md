@@ -515,3 +515,13 @@ Use this template for new entries:
 - Reversibility: High; four record edits and two script lines, no source file, and the next Critic re-runs the same commands.
 - Evidence: `.ralph/specs/v3-complete/progress.md:3785-3793`, `:3802-3806`, `:3829-3834`; `.ralph/events-20260922-170542.jsonl:154`; `crates/ralph-cli/tests/integration_web.rs:88`; `crates/ralph-cli/src/web.rs:53`, `:64`; `logs/step03-6a5c-anchor-check.sh`; `git diff --stat df7fa1d -- crates/`; `md5sum` on the three blobs.
 - Timestamp: 2026-09-23T00:10:41Z
+
+## DEC-056 (2026-09-23T02:31:47Z)
+- Decision: Pass `task-1790119597-6a5c` on its code increment `df7fa1d`, pass the Step 3 gate `task-1790109144-5333`, and close bead `a7e.10`.
+- Chosen Option: Operator review and gate in one pass on a fresh machine. Judge the row on the code, its test, and the suite.
+- Confidence: 92
+- Alternatives Considered: (A) Relaunch and let the Critic re-review the fifth record repair. Rejected because four reviews confirmed the code sound and every recent rejection targeted record citations, so another round would spend time without changing the code or the gate result. (B) Rebuild the anchor-check script. Rejected because it checked line citations in the record, not behavior, and the gate measures behavior directly.
+- Reasoning: `git diff --stat df7fa1d -- crates/` is empty at `38aa148`. `autoloop_health` prints `12 passed`. The full `ralph-core`/`ralph-cli` suite prints `1418 passed` and one baseline failure, with `0` `Text file busy`. `hat_registry.rs` is absent, `cargo build --workspace` exits `0`, clippy is clean, and `core.engine: ralph` exits `1` with the v3 message from the real binary.
+- Reversibility: High. Reopen the bead and the tasks if a later step finds a defect.
+- Evidence: `.ralph/specs/v3-complete/logs/step03-5333-gate-suite.log`; `crates/ralph-core/src/config.rs:2689`; `crates/ralph-cli/src/hats.rs:11`.
+- Timestamp: 2026-09-23T02:31:47Z
