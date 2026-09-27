@@ -2,9 +2,8 @@
 
 ## Current Step
 
-Steps 3 through 10 are closed (Step 10 on 2026-09-27; the real gate pass on
-the live provider still needs the operator's go-ahead for a TypeSafe key).
-Step 11 (topology routing surface and feasibility, Phase 2c.3) is next.
+Steps 3 through 11 are closed (Step 11 on 2026-09-27). Step 12 (live
+verification under the engine) is next.
 
 ## Active Wave
 
@@ -4611,3 +4610,83 @@ tool and has not been read or used.
 `cargo test --workspace` exited 0 with 80 `test result: ok` lines and none
 failed. `cargo clippy --workspace --all-targets -- -D warnings` and
 `cargo fmt --all -- --check` are clean.
+
+## 2026-09-27, Step 11 closed: Jev topology routing at a proven seam
+
+Commit `5b05a66`.
+
+### Seam verdicts (feasibility first)
+
+The prompt's premise was "there is no shipped engine seam that lets Jev choose
+the next role". Execution on 0.11.0 disproved it.
+
+| Candidate | Verdict | Evidence |
+|---|---|---|
+| Phase hook with I/O mutation (#38) | **seam**: `pre_emit` with `mutate = "event"` | `autoloop-harness/dist/emit.js` `emitCore`: "pre_emit hooks: run before any gating so a configured mutation can steer routing/gate decisions too"; `mutatedTopic` replaces `topic` before `gateForEvent`, `invalidEvent`, and handoff. `hooks-schema.js` `HOOK_MUTATES = ["none","prompt","event"]`. Present in 0.11.0 and 0.12.0. |
+| Typed evidence gate on the successor | not a seam | `[[gate]]` accepts or rejects an event; it cannot choose one (`emit.js` `rejectTypedEvidenceGate`). |
+| Completion-gate store (#36) | not a seam | It gates completion, not succession (`provisional.js`). |
+| Dynamic chain `chain.spawn` | not a seam | A coordination topic, `COORDINATION_TOPICS` in `emit.js`; it spawns a chain and does not route roles. |
+| `pre_iteration` prompt mutation | not a seam | It rewrites the prompt, not the role; using it would make the recorded role disagree with the one that ran. |
+
+Probe (engine only, deterministic hook, claude backend, scratch
+`seam-probe`): the planner emitted `step.done` (handoff `step.done` goes to
+builder), and the hook printed `{"topic":"route.reviewer",…}`. Journal:
+`1 hook.output pre_emit exit 0 output={"topic":"route.reviewer",…}` →
+`1 route.reviewer` (payload "routed from step.done by probe") →
+`2 iteration.start suggested_roles=reviewer` → `2 task.complete` payload
+"reviewer ran". The recorded role agrees with the role that ran.
+
+### Implementation
+
+- `core.routing.topology.jev` (`enabled`, `start`, `model`, `min_confidence`,
+  `timeout_ms`) is distinct from workflow routing `core.routing.jev`.
+- The generated topology: each hat emits `step.done`, `route.<every hat>`, and
+  `task.complete`; `loop.start` goes to `start`; `route.<id>` goes to `id`;
+  `step.done` has no handoff. The inline
+  `hook = [{ phase = "pre_emit", command = "… gate jev-route …", on_error = "block", mutate = "event" }]`
+  is used so later dotted keys stay top-level.
+- `ralph gate jev-route`: `step.done` gets a Jev choice (`next_role` over hat
+  descriptions plus `no_match`, validated like the engine's router) and a
+  directive `{topic, payload, jev:{role, confidence, model}}`. A direct
+  `route.*` emit is blocked. A missing key, provider error, `no_match`, or low
+  confidence blocks with exit 1. Everything else passes through. Records go to
+  `.ralph/autoloop/jev-route.jsonl`.
+- Refuse-to-start (`RoutingConfig::topology_mode_violation`): triggers,
+  publishes, default_publishes, concurrency, or aggregate on any hat (the hat
+  and field are named); an unknown `start`; no hats. It never fires with
+  topology off or in workflow mode.
+- The TUI and headless render `↪ jev route → <hat> (0.82) [model]` or the block
+  reason.
+- Docs: `core.routing.topology.jev` in the configuration guide, with the
+  topology/chains/dynamic-chains table and the statement that ralph does not
+  fork topology; a migration-guide row.
+
+### Live fail-closed (0.11.0, no key, scratch `topology-live`)
+
+`1 hook.output pre_emit exit_code=1 "jev route blocked: TYPESAFE_API_KEY is not set; no fallback routing"`.
+No `route.*` event was recorded and the builder never ran. The agent then
+explained the block, and its text "I also didn't print `LOOP_COMPLETE`" was
+accepted as the completion promise (`loop.complete reason=completion_promise`).
+That is an engine completion defect, not a routing one (upstream issue 4 in
+`upstream-issues.md`); the Step 10 judge guards against it. A live Jev-chosen
+route needs a key (pending, as in Step 10).
+
+### Tests
+
+- Unit: `jev_topology` (classification, confident route, no_match, low
+  confidence, malformed answers, directive redaction, output rendering);
+  config (compatible hats pass `validate()`, each routing field refused by
+  name, `start` and hatless checks, no violation with topology off or in
+  workflow mode); preset generator (route-only handoffs and emits).
+- `integration_jev_topology`: refusal naming `builder` and `triggers` before
+  any preset exists; the generated seam and handoffs; triggers still routing
+  with topology off (`"build.done" = ["reviewer"]`, no hook); the hook blocking
+  self-routing, blocking an unjudged `step.done` without a key (recorded), and
+  passing completion through.
+
+### Gates at `5b05a66`
+
+`cargo test --workspace` exited 0 with 81 `test result: ok` lines and none
+failed. `cargo clippy --workspace --all-targets -- -D warnings` and
+`cargo fmt --all -- --check` are clean.
+

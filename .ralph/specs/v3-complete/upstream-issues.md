@@ -41,3 +41,18 @@ against 0.12.0. File them at mikeyobrien/autoloop after review.
 - Expected: notify reads the same layered config as the run, or rejects
   `--set notify.*`.
 - Ralph mitigation: writes `notify.*` into the generated preset.
+
+## 4. The stdout completion promise matches a quoted or negated mention
+
+- Version: 0.11.0 (observed 2026-09-27, Ralph scratch repo `topology-live`).
+- Repro: a `pre_emit` hook blocks the agent's only emit (exit 1,
+  `on_error = "block"`). The agent explains the block and writes "I also didn't
+  print `LOOP_COMPLETE`". The engine journals
+  `completion.provisional reason=completion_promise`, `completion.accepted`,
+  and `loop.complete reason=completion_promise`.
+- Two causes: (a) `completedViaPromise` is a substring match, so a quoted or
+  negated mention counts; (b) a hook-blocked emit does not mark the turn as
+  having an invalid event, so `resolveOutcome` does not veto the promise.
+- Expected: the promise should be an exact line or marker, and a blocked emit
+  should count as an invalid event for that turn.
+

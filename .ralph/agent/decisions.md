@@ -606,3 +606,12 @@ Use this template for new entries:
 - Reasoning: The acceptance gate is harness-executed and cannot be faked by a prompt, and the engine holds on failure. The metareview's EXIT bypass is an engine defect, and disabling the reviewer is configuration of the engine rather than a second decision.
 - Reversibility: High.
 - Evidence: `5e11112`; the Step 10 section in `progress.md`; `upstream-issues.md`.
+
+## DEC-067 (2026-09-27)
+- Decision: Implement Jev topology routing at the `pre_emit` event-mutation hook instead of filing an upstream RFC.
+- Confidence: 80
+- Alternatives Considered: (A) Declare no seam and file the RFC, as the prompt expected. Rejected because the probe showed the engine itself provides and journals this mutation. (B) `pre_iteration` prompt mutation. Rejected because it would make the recorded role disagree with the executed role.
+- Reasoning: The engine keeps the decision point (routing and handoff of the rewritten event), Jev supplies the judgment, and the journal records the hook's decision, the routed event, and the role that ran.
+- Reversibility: High; the mode is opt-in.
+- Evidence: `5b05a66`; the seam table and probe journal in `progress.md`.
+
