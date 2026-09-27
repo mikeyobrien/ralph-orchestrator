@@ -2,9 +2,9 @@
 
 ## Current Step
 
-Steps 3 through 8 are closed (Step 8 on 2026-09-27). Step 8b (hook parity under
-the engine), which was missing from the plan and has now been added, is next.
-Step 9 follows it.
+Steps 3 through 8b are closed (Step 8b on 2026-09-27). Step 9 (Jev routing
+parity, no silent drop, plus the carried `cli.backend`/`cli.args` layer defect)
+is next.
 
 ## Active Wave
 
@@ -4395,3 +4395,69 @@ failed. `cargo clippy --workspace --all-targets -- -D warnings` and
 
 The prompt's Phase 2 "Hook parity under the engine" item had no plan step. It
 is added as Step 8b, before Step 9.
+
+## 2026-09-27, Step 8b closed: hook parity under the engine
+
+Commit `f067c35`.
+
+### Design (DEC-063)
+
+The engine's only hook seam is its finish notification. Ralph writes
+`notify.command`, `notify.on`, and `notify.timeout_ms` into the generated
+`autoloops.toml`. `notify.command` is a hidden `ralph hooks notify --snapshot
+<.ralph/autoloop/notify-hooks.json>`, which reads the engine's finish payload
+and runs the configured hooks through Ralph's existing `HookExecutor` with
+Ralph's own payload. The snapshot is written at run start. Mapping:
+`post.loop.complete` goes to `completed`, and `post.loop.error` goes to `failed`
+and `stopped` (any run that did not complete). Unsupported events,
+`mutate.enabled`, and `on_error: block|suspend` refuse before anything starts
+(`validate_engine_hooks`, first thing in `run_autoloop_engine`).
+
+### Engine facts found on the way (autoloop 0.11.0)
+
+- `runFinishNotification` re-reads `notify.*` from the preset's files via
+  `config.loadProject(projectDir)`, so `--set notify.*` is silently ignored. The
+  first live attempt with `--set` wrote the snapshot but journaled no
+  `notify.*` record. Ralph therefore writes the keys into the generated preset,
+  and for an explicit preset it prints the exact lines to add.
+- The notify child inherits `AUTOLOOP_RUN_ID` and related variables. The
+  operator's Pushover script keys its engine-payload branch on
+  `AUTOLOOP_RUN_ID`, so the second live run rendered
+  `robust-editor · autoloop-preset` instead of Ralph's fields. The dispatcher now
+  strips every inherited `AUTOLOOP_*` variable (`HookRunRequest::env_remove`,
+  tested by `env_remove_drops_inherited_variables_before_overrides_apply`).
+
+### Live verification (autoloop 0.11.0, the operator's `~/.ralph/config.yml` Pushover hooks)
+
+- Completed run (claude backend): the journal has `notify.sent` with
+  `stop_reason=completion_event`. `~/.ralph/logs/pushover-hook.log`:
+  `delivered phase_event=post.loop.complete message="primary-20260927-044230-385960673 · hooks-live · iter 1/2 · ralph · completion_event"`.
+- Failed run (local `pi`/`spark` backend): `loop.stop reason=review_unknown`
+  (a `failed` class), `notify.on = "completed,failed,stopped"`, and the journal
+  has `notify.sent`. Log:
+  `delivered phase_event=post.loop.error message="primary-20260927-044237-102580845 · hooks-live · iter 2/2 · ralph · review_unknown"`.
+
+### Tests
+
+- Unit tests in `ralph_core::hooks::engine_notify`: class mapping, no notify
+  block without hooks, each of the ten unsupported events refusing with its
+  name, mutating and blocking hooks naming the hook, stop-reason mapping,
+  dispatch sending Ralph's payload for the mapped event, and the timeout budget.
+- Integration test `integration_engine_hooks` drives a real `ralph run` with the
+  fake engine. It asserts that `notify.command` dispatches through ralph, that
+  `notify.on` is `completed,failed,stopped` with both hooks or `completed` with
+  only the complete hook, that there is no `notify.` line without hooks, and
+  that `pre.loop.start` refuses before a preset is generated, naming the event.
+- Docs: a hooks row in the "What breaks" table of
+  `docs/migration/v3-autoloop-engine.md`, and a v3 note in
+  `docs/guide/configuration.md`.
+
+Also fixed: `generate_preset` errors of kind `InvalidInput` (for example
+Step 4's orphan-aggregate rejection) were masked by the generic
+writable-directory message. They now surface as written.
+
+### Gates at `f067c35`
+
+`cargo test --workspace` exited 0 with 77 `test result: ok` lines and none
+failed. `cargo clippy --workspace --all-targets -- -D warnings` and
+`cargo fmt --all -- --check` are clean.

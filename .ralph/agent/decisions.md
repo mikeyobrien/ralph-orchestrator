@@ -573,3 +573,11 @@ Use this template for new entries:
 - Reasoning: pi-tidy asks for item forms chosen by the real width, with warnings replacing lower-priority content. A greedy upgrade in priority order is the smallest mechanism that does this. The journal's `backend.start` is the one engine record that names the harness kind per iteration.
 - Reversibility: High.
 - Evidence: `3e812db`; the Step 8 section in `progress.md`.
+
+## DEC-063 (2026-09-27)
+- Decision: Run post.loop hooks from the engine's finish notification through a Ralph dispatcher that preserves Ralph's payload, map `post.loop.error` to both the `failed` and `stopped` classes, and write the notify keys into the generated preset.
+- Confidence: 85
+- Alternatives Considered: (A) Point `notify.command` straight at the user's hook command. Rejected because hooks would receive the engine payload, silently changing their contract. (B) Fire hooks from Ralph's `coordinate_completion`. Rejected because the prompt requires the engine seam, and `notify.sent` in the journal is the acceptance evidence. (C) Map `post.loop.error` to `failed` only. Rejected because a max-iterations or runtime stop is a loop that did not complete, which is what `post.loop.error` means to an operator. (D) Refuse explicit presets that have hooks. Rejected because user-scope hooks such as the Pushover one would block every explicit-preset run; a loud warning with the exact lines is used instead.
+- Reasoning: This reuses Ralph's hook executor and guardrails. The payload and environment are what existing scripts expect, and the engine journals delivery.
+- Reversibility: High.
+- Evidence: `f067c35`; the Step 8b section in `progress.md`; `~/.ralph/logs/pushover-hook.log` lines at 2026-09-27T04:42:36Z and 04:42:51Z.
