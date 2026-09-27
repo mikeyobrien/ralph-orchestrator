@@ -14,7 +14,7 @@ use std::time::Instant;
 use anyhow::{Context, Result, bail};
 use ralph_adapters::{
     AutoloopBin, AutoloopEvent, AutoloopEventTailer, AutoloopRunError, AutoloopRunSummary,
-    AutoloopRunner, parse_events, parse_events_strict,
+    AutoloopRunner, DroppedEventLines, parse_events, parse_events_strict,
 };
 use ralph_core::{
     EventLoopConfig, LoopContext, RalphConfig, RunStats, TaskStore, TerminationReason,
@@ -23,6 +23,7 @@ use ralph_core::{
         persist_current_run_id, prepare_engine_state_root, read_current_run_id,
     },
     sanitize_tui_inline_text,
+    utils::format_bytes,
 };
 
 use crate::rpc_events::RpcEventMapper;
@@ -618,6 +619,7 @@ struct HeadlessPrintCtx {
     role_display_names: HashMap<String, String>,
     cumulative_cost_usd: Option<f64>,
     palette: Palette,
+    dropped_events_seen: DroppedEventLines,
 }
 
 impl HeadlessPrintCtx {
@@ -629,6 +631,7 @@ impl HeadlessPrintCtx {
             role_display_names,
             cumulative_cost_usd: None,
             palette: Palette::new(use_colors),
+            dropped_events_seen: DroppedEventLines::default(),
         }
     }
 
@@ -752,10 +755,56 @@ fn format_headless_event(event: &AutoloopEvent, ctx: &mut HeadlessPrintCtx) -> O
     }
 }
 
-fn print_headless_event(event: &AutoloopEvent, ctx: &mut HeadlessPrintCtx) {
-    let Some(line) = format_headless_event(event, ctx) else {
-        return;
-    };
+/// Report `--events` lines the tailer skipped since the last report, so a
+/// drop is never silent in headless output.
+fn format_dropped_events(total: DroppedEventLines, ctx: &mut HeadlessPrintCtx) -> Option<String> {
+    if total.lines <= ctx.dropped_events_seen.lines {
+        return None;
+    }
+    let lines = total.lines - ctx.dropped_events_seen.lines;
+    let bytes = total.bytes - ctx.dropped_events_seen.bytes;
+    ctx.dropped_events_seen = total;
+    let noun = if lines == 1 { "event" } else { "events" };
+    let p = ctx.palette;
+    Some(format!(
+        "{}\u{26A0} {lines} unreadable engine {noun} skipped ({}){}: progress above may be incomplete, journal intact",
+        p.yellow,
+        format_bytes(bytes),
+        p.reset
+    ))
+}
+
+/// Report an event line the engine never finished writing.
+fn format_cut_off_event(unterminated_bytes: usize, ctx: &HeadlessPrintCtx) -> Option<String> {
+    if unterminated_bytes == 0 {
+        return None;
+    }
+    let p = ctx.palette;
+    Some(format!(
+        "{}\u{26A0} last engine event cut off ({}){}: its progress is missing here, journal intact",
+        p.yellow,
+        format_bytes(unterminated_bytes as u64),
+        p.reset
+    ))
+}
+
+/// Print the headless lines for one poll: its events, then any new drops.
+fn print_headless_poll(
+    events: &[AutoloopEvent],
+    tailer: &AutoloopEventTailer,
+    ctx: &mut HeadlessPrintCtx,
+) {
+    for event in events {
+        if let Some(line) = format_headless_event(event, ctx) {
+            print_headless_line(&line);
+        }
+    }
+    if let Some(line) = format_dropped_events(tailer.dropped(), ctx) {
+        print_headless_line(&line);
+    }
+}
+
+fn print_headless_line(line: &str) {
     println!("{line}");
     // A pipe is block-buffered; explicitly flush so bot daemons and callers
     // consuming stdout observe each progress line before the child exits.
@@ -800,11 +849,7 @@ async fn run_autoloop_headless(
                 }
                 _ = ticker.tick() => {
                     match tailer.poll() {
-                        Ok(events) => {
-                            for event in &events {
-                                print_headless_event(event, &mut ctx);
-                            }
-                        }
+                        Ok(events) => print_headless_poll(&events, &tailer, &mut ctx),
                         Err(error) => {
                             tracing::debug!(%error, "headless autoloop event reader poll failed");
                         }
@@ -816,14 +861,13 @@ async fn run_autoloop_headless(
         // autoloop writes terminal events immediately before exit. Drain once
         // after cancellation so those final structured facts are not lost.
         match tailer.poll() {
-            Ok(events) => {
-                for event in &events {
-                    print_headless_event(event, &mut ctx);
-                }
-            }
+            Ok(events) => print_headless_poll(&events, &tailer, &mut ctx),
             Err(error) => {
                 tracing::debug!(%error, "headless autoloop event reader final drain failed");
             }
+        }
+        if let Some(line) = format_cut_off_event(tailer.unterminated_bytes(), &ctx) {
+            print_headless_line(&line);
         }
     });
 
@@ -994,11 +1038,7 @@ async fn run_autoloop_with_robot(
                 }
                 _ = ticker.tick() => {
                     match tailer.poll() {
-                        Ok(events) => {
-                            for event in &events {
-                                print_headless_event(event, &mut ctx);
-                            }
-                        }
+                        Ok(events) => print_headless_poll(&events, &tailer, &mut ctx),
                         Err(error) => {
                             tracing::debug!(%error, "RObot autoloop event reader poll failed");
                         }
@@ -1008,14 +1048,13 @@ async fn run_autoloop_with_robot(
         }
 
         match tailer.poll() {
-            Ok(events) => {
-                for event in &events {
-                    print_headless_event(event, &mut ctx);
-                }
-            }
+            Ok(events) => print_headless_poll(&events, &tailer, &mut ctx),
             Err(error) => {
                 tracing::debug!(%error, "RObot autoloop event reader final drain failed");
             }
+        }
+        if let Some(line) = format_cut_off_event(tailer.unterminated_bytes(), &ctx) {
+            print_headless_line(&line);
         }
     });
 
@@ -1422,6 +1461,46 @@ mod tests {
             ]
         );
         assert!(lines.iter().all(|line| !line.contains("unknown")));
+    }
+
+    #[test]
+    fn headless_drop_reports_only_new_skips_and_names_what_survives() {
+        let mut ctx = HeadlessPrintCtx::new(HashMap::new(), false);
+        assert_eq!(
+            format_dropped_events(DroppedEventLines::default(), &mut ctx),
+            None
+        );
+        assert_eq!(
+            format_dropped_events(DroppedEventLines { lines: 1, bytes: 8 }, &mut ctx).as_deref(),
+            Some(
+                "\u{26A0} 1 unreadable engine event skipped (8 B): progress above may be incomplete, journal intact"
+            )
+        );
+        // The same cumulative total is not reported twice.
+        assert_eq!(
+            format_dropped_events(DroppedEventLines { lines: 1, bytes: 8 }, &mut ctx),
+            None
+        );
+        assert_eq!(
+            format_dropped_events(
+                DroppedEventLines {
+                    lines: 4,
+                    bytes: 2056,
+                },
+                &mut ctx
+            )
+            .as_deref(),
+            Some(
+                "\u{26A0} 3 unreadable engine events skipped (2.0 KiB): progress above may be incomplete, journal intact"
+            )
+        );
+        assert_eq!(format_cut_off_event(0, &ctx), None);
+        assert_eq!(
+            format_cut_off_event(17, &ctx).as_deref(),
+            Some(
+                "\u{26A0} last engine event cut off (17 B): its progress is missing here, journal intact"
+            )
+        );
     }
 
     #[test]

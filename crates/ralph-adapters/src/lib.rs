@@ -55,7 +55,7 @@ pub use acp_executor::AcpExecutor;
 pub use auto_detect::{
     NoBackendError, default_priority, detect_backend, detect_backend_default, is_backend_available,
 };
-pub use autoloop_event_tailer::AutoloopEventTailer;
+pub use autoloop_event_tailer::{AutoloopEventTailer, DroppedEventLines};
 pub use autoloop_events::{
     AutoloopEvent, MalformedEventRecord, PendingAsk, RunResult, first_pending_ask, parse_events,
     parse_events_strict, run_result as events_run_result,

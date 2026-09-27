@@ -13,6 +13,18 @@ use std::path::{Path, PathBuf};
 
 use crate::autoloop_events::AutoloopEvent;
 
+/// Complete `--events` lines the tailer could not decode and therefore skipped.
+///
+/// Skipping keeps the tailer forward-compatible, but a skip is never silent:
+/// callers surface these counts so the operator knows progress was lost.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct DroppedEventLines {
+    /// Complete lines that were not valid `AutoloopEvent` JSON.
+    pub lines: u64,
+    /// Total bytes in those lines.
+    pub bytes: u64,
+}
+
 /// A file-backed, incremental NDJSON tailer over autoloop's `--events` stream.
 #[derive(Debug)]
 pub struct AutoloopEventTailer {
@@ -22,6 +34,8 @@ pub struct AutoloopEventTailer {
     pending_bytes: Vec<u8>,
     /// Decoded text after the last newline — a JSON line not yet terminated.
     pending_line: String,
+    /// Malformed complete lines skipped so far.
+    dropped: DroppedEventLines,
 }
 
 impl AutoloopEventTailer {
@@ -32,7 +46,20 @@ impl AutoloopEventTailer {
             position: 0,
             pending_bytes: Vec::new(),
             pending_line: String::new(),
+            dropped: DroppedEventLines::default(),
         }
+    }
+
+    /// Malformed complete lines skipped since the tailer was created.
+    pub fn dropped(&self) -> DroppedEventLines {
+        self.dropped
+    }
+
+    /// Bytes of an unterminated trailing line still waiting for its newline.
+    ///
+    /// Non-zero after the writer has exited means the last event was cut off.
+    pub fn unterminated_bytes(&self) -> usize {
+        self.pending_line.trim().len() + self.pending_bytes.len()
     }
 
     /// The events file being tailed.
@@ -49,7 +76,7 @@ impl AutoloopEventTailer {
     /// Read newly-appended bytes and return the events decoded since the last
     /// poll. Empty when nothing new is available. A partial trailing line / torn
     /// multibyte char is buffered and surfaces on a later poll once completed;
-    /// malformed complete lines are skipped (parity with `parse_events`).
+    /// malformed complete lines are skipped and counted in [`Self::dropped`].
     pub fn poll(&mut self) -> std::io::Result<Vec<AutoloopEvent>> {
         if !self.path.exists() {
             return Ok(Vec::new());
@@ -127,9 +154,14 @@ impl AutoloopEventTailer {
             if trimmed.is_empty() {
                 continue;
             }
-            // A corrupt/partial line is skipped, not fatal (forward-compatible).
-            if let Ok(ev) = serde_json::from_str::<AutoloopEvent>(trimmed) {
-                events.push(ev);
+            // A corrupt line is skipped, not fatal (forward-compatible), and
+            // counted so callers can tell the operator progress was lost.
+            match serde_json::from_str::<AutoloopEvent>(trimmed) {
+                Ok(ev) => events.push(ev),
+                Err(_) => {
+                    self.dropped.lines += 1;
+                    self.dropped.bytes += trimmed.len() as u64;
+                }
             }
         }
         Ok(events)
@@ -221,6 +253,36 @@ mod tests {
         assert_eq!(got.len(), 2, "two malformed lines skipped");
         assert_eq!(got[0].kind, "iteration.start");
         assert_eq!(got[1].kind, "loop.finish");
+        assert_eq!(
+            tailer.dropped(),
+            DroppedEventLines {
+                lines: 2,
+                bytes: ("not json at all".len() + "{partial".len()) as u64,
+            },
+            "skipped lines must be counted, never silent"
+        );
+    }
+
+    #[test]
+    fn reports_an_unterminated_trailing_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("events.ndjson");
+        let mut tailer = AutoloopEventTailer::new(&path);
+
+        append(
+            &path,
+            &format!(
+                "{ITER}
+{{\"type\":\"loop.fin"
+            ),
+        );
+        assert_eq!(tailer.poll().unwrap().len(), 1);
+        assert_eq!(tailer.unterminated_bytes(), r#"{"type":"loop.fin"#.len());
+        assert_eq!(tailer.dropped(), DroppedEventLines::default());
+
+        append(&path, "ish\",\"runId\":\"r1\"}\n");
+        assert_eq!(tailer.poll().unwrap().len(), 1);
+        assert_eq!(tailer.unterminated_bytes(), 0);
     }
 
     #[test]

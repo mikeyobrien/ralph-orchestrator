@@ -25,12 +25,13 @@ use tokio::sync::watch;
 use tracing::debug;
 
 use ralph_adapters::{
-    AutoloopEvent, AutoloopEventTailer, BackendStreamTailer, StreamLine,
+    AutoloopEvent, AutoloopEventTailer, BackendStreamTailer, DroppedEventLines, StreamLine,
     backend_stream_tailer::{MAX_STREAM_LINE_BYTES, MAX_STREAM_LINES},
 };
 
 use crate::state::TuiState;
 use crate::state_mutations::apply_loop_completed;
+use ralph_core::utils::format_bytes;
 use ralph_core::{engine_run_dir, sanitize_tui_inline_text};
 
 /// Per-reader translation context: tracks the current iteration's role label
@@ -66,6 +67,10 @@ pub struct AutoloopMapCtx {
     live_items: VecDeque<LiveItem>,
     /// Latest cumulative dropped-byte count, rendered as one replaceable status.
     backpressure_bytes: Option<u64>,
+    /// Unreadable `--events` lines skipped during the current iteration.
+    iteration_dropped_events: DroppedEventLines,
+    /// Tailer-wide dropped-line total already attributed to an iteration.
+    dropped_events_seen: DroppedEventLines,
     /// Newest bounded lifecycle/status lines emitted after iteration start.
     lifecycle_lines: VecDeque<Line<'static>>,
     /// Newest distinct tool summaries retained after authoritative reconciliation.
@@ -208,6 +213,7 @@ pub fn apply_autoloop_event(
                 }
                 ctx.live_items.clear();
                 ctx.backpressure_bytes = None;
+                ctx.iteration_dropped_events = DroppedEventLines::default();
                 ctx.lifecycle_lines.clear();
                 ctx.completed_tool_lines.clear();
                 ctx.authoritative_lines.clear();
@@ -428,7 +434,8 @@ fn render_live_region(state: &mut TuiState, ctx: &AutoloopMapCtx) {
     };
     let prefix: Vec<_> = ctx.iteration_prefix.iter().cloned().collect();
     debug_assert_eq!(mark, ctx.iteration_prefix.len());
-    let status_lines = usize::from(ctx.backpressure_bytes.is_some());
+    let status = status_lines(ctx);
+    let status_lines = status.len();
     let lifecycle_count = ctx
         .lifecycle_lines
         .len()
@@ -453,9 +460,7 @@ fn render_live_region(state: &mut TuiState, ctx: &AutoloopMapCtx) {
             .into_iter()
             .rev(),
     );
-    if let Some(skipped_bytes) = ctx.backpressure_bytes {
-        lines.push(backpressure_line(skipped_bytes));
-    }
+    lines.extend(status);
     lines.extend(
         ctx.live_items
             .iter()
@@ -511,8 +516,8 @@ fn render_completed_region(state: &mut TuiState, ctx: &AutoloopMapCtx) {
     };
     let prefix: Vec<_> = ctx.iteration_prefix.iter().cloned().collect();
     debug_assert_eq!(mark, ctx.iteration_prefix.len());
-    let status_count = usize::from(ctx.backpressure_bytes.is_some());
-    let mut available = MAX_STREAM_LINES.saturating_sub(status_count);
+    let status = status_lines(ctx);
+    let mut available = MAX_STREAM_LINES.saturating_sub(status.len());
 
     let lifecycle_count = ctx
         .lifecycle_lines
@@ -543,9 +548,7 @@ fn render_completed_region(state: &mut TuiState, ctx: &AutoloopMapCtx) {
             .into_iter()
             .rev(),
     );
-    if let Some(skipped_bytes) = ctx.backpressure_bytes {
-        lines.push(backpressure_line(skipped_bytes));
-    }
+    lines.extend(status);
     lines.extend(
         ctx.completed_tool_lines
             .iter()
@@ -581,11 +584,81 @@ fn styled_stream_line(text: &str, style: Style) -> Line<'static> {
     Line::from(Span::styled(bounded_inline_text(text), style))
 }
 
-fn backpressure_line(skipped_bytes: u64) -> Line<'static> {
-    styled_stream_line(
-        &format!("… {skipped_bytes} bytes skipped …"),
-        Style::default().add_modifier(Modifier::DIM),
-    )
+/// Warnings about progress the view could not show, reason first: what was
+/// lost and whether the iteration's history is still intact.
+fn status_lines(ctx: &AutoloopMapCtx) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    if let Some(skipped_bytes) = ctx.backpressure_bytes {
+        let size = format_bytes(skipped_bytes);
+        let text = if !ctx.authoritative_output_applied {
+            format!("{size} of live stream skipped: text restored at end, gap tools unlisted")
+        } else if ctx.authoritative_lines.is_empty() {
+            format!("{size} of live stream skipped and no final output: transcript incomplete")
+        } else {
+            format!("{size} of live stream skipped: final text intact, gap tools unlisted")
+        };
+        lines.push(warning_line(&text));
+    }
+    let dropped = ctx.iteration_dropped_events;
+    if dropped.lines > 0 {
+        let noun = if dropped.lines == 1 {
+            "event"
+        } else {
+            "events"
+        };
+        lines.push(warning_line(&format!(
+            "{} unreadable engine {noun} skipped ({}): view incomplete, journal intact",
+            dropped.lines,
+            format_bytes(dropped.bytes)
+        )));
+    }
+    lines
+}
+
+fn warning_line(text: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            "\u{26A0} ",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            bounded_inline_text_with_prefix(text, "\u{26A0} ".len()),
+            Style::default().fg(Color::Yellow),
+        ),
+    ])
+}
+
+/// Attributes newly skipped `--events` lines to the current iteration and
+/// re-renders its warning.
+fn note_dropped_events(
+    state: &Arc<Mutex<TuiState>>,
+    ctx: &mut AutoloopMapCtx,
+    total: DroppedEventLines,
+) {
+    if total.lines <= ctx.dropped_events_seen.lines {
+        return;
+    }
+    ctx.iteration_dropped_events.lines += total.lines - ctx.dropped_events_seen.lines;
+    ctx.iteration_dropped_events.bytes += total.bytes - ctx.dropped_events_seen.bytes;
+    ctx.dropped_events_seen = total;
+    let Ok(mut s) = state.lock() else {
+        return;
+    };
+    if s.iterations.is_empty() {
+        s.start_new_iteration();
+    }
+    if ctx.live_region_mark.is_none() {
+        let warning = status_lines(ctx).pop();
+        if let Some(line) = warning {
+            push_iteration_line(&mut s, ctx, line);
+        }
+    } else if ctx.authoritative_output_applied {
+        render_completed_region(&mut s, ctx);
+    } else {
+        render_live_region(&mut s, ctx);
+    }
 }
 
 fn bounded_prefixed_line(prefix: &'static str, prefix_style: Style, text: &str) -> Line<'static> {
@@ -671,6 +744,7 @@ pub async fn run_autoloop_event_reader<S>(
                             }
                             apply_autoloop_event(event, &state, &mut ctx);
                         }
+                        note_dropped_events(&state, &mut ctx, tailer.dropped());
                         poll_backend_stream(&state, &mut ctx);
                     }
                     Err(e) => {
@@ -693,10 +767,24 @@ pub async fn run_autoloop_event_reader<S>(
                 }
                 apply_autoloop_event(event, &state, &mut ctx);
             }
+            note_dropped_events(&state, &mut ctx, tailer.dropped());
         }
         Err(e) => {
             debug!(error = %e, "autoloop event reader final drain failed");
         }
+    }
+    let cut_off = tailer.unterminated_bytes();
+    if cut_off > 0
+        && let Ok(mut s) = state.lock()
+    {
+        if s.iterations.is_empty() {
+            s.start_new_iteration();
+        }
+        let line = warning_line(&format!(
+            "last engine event cut off ({}): final progress missing, journal intact",
+            format_bytes(cut_off as u64)
+        ));
+        push_iteration_line(&mut s, &mut ctx, line);
     }
     // Mirror the final event drain for a backend that was killed between ticks.
     // If backend.output landed above, reconciliation already dropped the tailer.
@@ -1350,7 +1438,8 @@ mod tests {
             "visible tool paths must not expose workspace or private run prefixes: {text:?}"
         );
         assert!(
-            text.iter().all(|line| !line.contains("bytes skipped")),
+            text.iter()
+                .all(|line| !line.contains("of live stream skipped")),
             "normal incremental stream must not show backpressure: {text:?}"
         );
     }
@@ -1844,7 +1933,16 @@ mod tests {
         let unterminated =
             MAX_STREAM_LINE_BYTES + ralph_adapters::backend_stream_tailer::MAX_BYTES_PER_POLL;
         append(&stream_path, &"x".repeat(unterminated));
-        assert!(wait_for_line(&state, &format!("… {unterminated} bytes skipped …")).await);
+        assert!(
+            wait_for_line(
+                &state,
+                &format!(
+                    "{} of live stream skipped",
+                    format_bytes(unterminated as u64)
+                )
+            )
+            .await
+        );
 
         let polls = 6_u64;
         let oversized = ralph_adapters::backend_stream_tailer::MAX_BYTES_PER_POLL;
@@ -1872,13 +1970,17 @@ mod tests {
 
         let expected_skipped = unterminated as u64 + polls * (oversized as u64 + 2);
         assert!(
-            wait_for_line(&state, &format!("… {expected_skipped} bytes skipped …")).await,
+            wait_for_line(
+                &state,
+                &format!("{} of live stream skipped", format_bytes(expected_skipped))
+            )
+            .await,
             "cumulative status did not reach expected total"
         );
         let text = lines_text(&state);
         assert_eq!(
             text.iter()
-                .filter(|line| line.contains("bytes skipped"))
+                .filter(|line| line.contains("of live stream skipped"))
                 .count(),
             1,
             "backpressure updates must replace one visible status: {text:?}"
@@ -2017,7 +2119,11 @@ mod tests {
         // Each oversized poll adds its bytes plus the two trailing newlines.
         let expected_skipped = POLLS * (oversized as u64 + 2);
         assert!(
-            wait_for_line(&state, &format!("… {expected_skipped} bytes skipped …")).await,
+            wait_for_line(
+                &state,
+                &format!("{} of live stream skipped", format_bytes(expected_skipped))
+            )
+            .await,
             "cumulative status did not reach expected total"
         );
 
@@ -2026,7 +2132,7 @@ mod tests {
         let text = lines_text(&state);
         assert_eq!(
             text.iter()
-                .filter(|line| line.contains("bytes skipped"))
+                .filter(|line| line.contains("of live stream skipped"))
                 .count(),
             1,
             "backpressure must coalesce into one status: {text:?}"
@@ -2056,23 +2162,26 @@ mod tests {
         // count, and rendered whole rather than truncated at 80 columns.
         let status_index = text
             .iter()
-            .position(|line| line.contains("bytes skipped"))
+            .position(|line| line.contains("of live stream skipped"))
             .expect("status line missing from retained state");
         let status_view = render_content(&state, 80, 24, Some(status_index));
         assert_eq!(
             status_view
                 .iter()
-                .filter(|row| row.contains("bytes skipped"))
+                .filter(|row| row.contains("of live stream skipped"))
                 .count(),
             1,
             "status must occupy a single rendered row: {status_view:?}"
         );
         let status_row = status_view
             .iter()
-            .find(|row| row.contains("bytes skipped"))
+            .find(|row| row.contains("of live stream skipped"))
             .expect("status row not rendered");
         assert!(
-            status_row.contains(&format!("… {expected_skipped} bytes skipped …")),
+            status_row.contains(&format!(
+                "{} of live stream skipped: text restored at end, gap tools unlisted",
+                format_bytes(expected_skipped)
+            )),
             "status row is clipped or untrue: {status_row:?}"
         );
         assert!(
@@ -2195,6 +2304,82 @@ mod tests {
         assert!(s.loop_completed, "final drain should apply loop.finish");
         assert_eq!(s.iteration, 2);
         assert_eq!(s.final_cost_usd, Some(0.05));
+    }
+
+    #[tokio::test]
+    async fn dropped_and_cut_off_event_lines_are_explained_in_rendered_cells() {
+        // One unreadable complete line, then a final event the engine never
+        // finished writing. Both must be named on screen, not silently skipped.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("events.ndjson");
+        append(
+            &path,
+            concat!(
+                r#"{"type":"iteration.start","iteration":1,"maxIterations":3,"runId":"r1"}"#,
+                "\n",
+                "not json\n",
+                r#"{"type":"loop.fin"#,
+            ),
+        );
+
+        let state = make_state();
+        let (cancel_tx, cancel_rx) = watch::channel(false);
+        let reader_state = Arc::clone(&state);
+        let workspace = dir.path().to_path_buf();
+        let engine_root = ralph_core::engine_state::engine_state_root(&workspace);
+        let handle = tokio::spawn(async move {
+            run_autoloop_event_reader(
+                path,
+                workspace,
+                engine_root,
+                reader_state,
+                cancel_rx,
+                HashMap::new(),
+            )
+            .await;
+        });
+        assert!(wait_for_line(&state, "unreadable engine event").await);
+        cancel_tx.send(true).unwrap();
+        handle.await.unwrap();
+
+        let rows = render_content(&state, 80, 12, Some(0));
+        let dropped = "⚠ 1 unreadable engine event skipped (8 B): view incomplete, journal intact";
+        let cut_off = "⚠ last engine event cut off (17 B): final progress missing, journal intact";
+        for expected in [dropped, cut_off] {
+            let row = rows
+                .iter()
+                .find(|row| row.contains(expected))
+                .unwrap_or_else(|| panic!("{expected:?} not rendered whole: {rows:?}"));
+            assert!(row.chars().count() <= 80, "warning overflowed: {row:?}");
+        }
+        assert!(
+            rows.iter()
+                .any(|row| row.contains("run ended before reporting a result")),
+            "the cut-off loop.finish must still read as no result: {rows:?}"
+        );
+    }
+
+    #[test]
+    fn backpressure_warning_states_what_survived_after_reconciliation() {
+        let mut ctx = AutoloopMapCtx::default();
+        ctx.backpressure_bytes = Some(500_161);
+        let live = status_lines(&ctx);
+        assert_eq!(
+            live[0].to_string(),
+            "⚠ 488.4 KiB of live stream skipped: text restored at end, gap tools unlisted"
+        );
+
+        ctx.authoritative_output_applied = true;
+        assert_eq!(
+            status_lines(&ctx)[0].to_string(),
+            "⚠ 488.4 KiB of live stream skipped and no final output: transcript incomplete"
+        );
+
+        ctx.authoritative_lines.push_back(Line::raw("final"));
+        assert_eq!(
+            status_lines(&ctx)[0].to_string(),
+            "⚠ 488.4 KiB of live stream skipped: final text intact, gap tools unlisted"
+        );
     }
 
     #[tokio::test]

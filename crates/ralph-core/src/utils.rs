@@ -364,6 +364,19 @@ pub fn strip_ansi(s: &str) -> String {
     strip_ansi_from_bytes(s.as_bytes())
 }
 
+/// Human-readable byte size: `512 B`, `4.0 KiB`, `1.2 MiB`.
+pub fn format_bytes(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    let value = bytes as f64;
+    if value < KIB {
+        format!("{bytes} B")
+    } else if value < KIB * KIB {
+        format!("{:.1} KiB", value / KIB)
+    } else {
+        format!("{:.1} MiB", value / (KIB * KIB))
+    }
+}
+
 /// How long an `execve` of a freshly written file may stay `ETXTBSY` before
 /// the error is surfaced.
 pub const EXEC_BUSY_RETRY_BUDGET: Duration = Duration::from_secs(2);
