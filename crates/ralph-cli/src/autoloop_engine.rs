@@ -1200,11 +1200,17 @@ async fn run_autoloop_with_tui(
     let reader_handle = {
         let reader_state = Arc::clone(&state);
         let cancel_rx = terminated_rx.clone();
+        // Position the journal tailer before the engine starts, so the view
+        // reads this run's `backend.start` records and none from earlier runs.
+        let journal = ralph_adapters::AutoloopJournalTailer::from_end(engine_journal_path(
+            &engine_state_root,
+        ));
         tokio::spawn(async move {
-            ralph_tui::run_autoloop_event_reader(
+            ralph_tui::run_autoloop_event_reader_with_journal(
                 events_path,
                 workspace,
                 engine_state_root,
+                journal,
                 reader_state,
                 cancel_rx,
                 role_display_names,

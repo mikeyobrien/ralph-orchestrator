@@ -25,12 +25,14 @@ use tokio::sync::watch;
 use tracing::debug;
 
 use ralph_adapters::{
-    AutoloopEvent, AutoloopEventTailer, BackendStreamTailer, DroppedEventLines, StreamLine,
+    AutoloopEvent, AutoloopEventTailer, AutoloopJournalTailer, AutoloopRecord, BackendStreamTailer,
+    DroppedEventLines, StreamLine,
     backend_stream_tailer::{MAX_STREAM_LINE_BYTES, MAX_STREAM_LINES},
 };
 
-use crate::state::TuiState;
+use crate::state::{Attention, TuiState};
 use crate::state_mutations::apply_loop_completed;
+use ralph_core::engine_state::engine_journal_path;
 use ralph_core::utils::format_bytes;
 use ralph_core::{engine_run_dir, sanitize_tui_inline_text};
 
@@ -79,6 +81,13 @@ pub struct AutoloopMapCtx {
     authoritative_lines: VecDeque<Line<'static>>,
     /// Prevents replayed `backend.output` events from appending final text twice.
     authoritative_output_applied: bool,
+    /// The run whose events this view renders, from the first `runId` seen.
+    run_id: Option<String>,
+    /// TUI buffer index for each engine iteration number.
+    iteration_buffers: HashMap<u32, usize>,
+    /// Harness kinds from journal `backend.start` records whose iteration
+    /// buffer does not exist yet, keyed by run and engine iteration.
+    pending_backend_kinds: HashMap<(String, u32), String>,
 }
 
 #[derive(Debug)]
@@ -158,6 +167,11 @@ pub fn apply_autoloop_event(
     {
         ctx.run_dir = engine_run_dir(engine_state_root, run_id);
     }
+    if ctx.run_id.is_none()
+        && let Some(run_id) = event.run_id.as_deref().filter(|id| !id.is_empty())
+    {
+        ctx.run_id = Some(run_id.to_string());
+    }
 
     match event.kind.as_str() {
         "loop.start" => {
@@ -194,7 +208,13 @@ pub fn apply_autoloop_event(
             if is_new {
                 ctx.current_iteration = Some(iteration);
                 let role_display = ctx.role_display_for_iteration(iteration);
-                s.start_new_iteration_with_metadata(Some(role_display), None);
+                let backend = ctx.run_id.as_ref().and_then(|run_id| {
+                    ctx.pending_backend_kinds
+                        .remove(&(run_id.clone(), iteration))
+                });
+                s.start_new_iteration_with_metadata(Some(role_display), backend);
+                ctx.iteration_buffers
+                    .insert(iteration, s.iterations.len().saturating_sub(1));
                 s.iteration = iteration;
                 if let Some(max) = event.max_iterations {
                     s.max_iterations = Some(max);
@@ -218,6 +238,7 @@ pub fn apply_autoloop_event(
                 ctx.completed_tool_lines.clear();
                 ctx.authoritative_lines.clear();
                 ctx.authoritative_output_applied = false;
+                refresh_attention(&mut s, ctx);
                 ctx.stream_tailer = ctx
                     .workspace_root
                     .as_deref()
@@ -270,6 +291,7 @@ pub fn apply_autoloop_event(
                 ctx.stream_tailer = None;
                 ctx.authoritative_output_applied = true;
                 reconcile_authoritative_output(&mut s, ctx, event.output.as_deref());
+                refresh_attention(&mut s, ctx);
             }
 
             s.last_event = Some("backend.output".to_string());
@@ -412,6 +434,7 @@ fn poll_backend_stream(state: &Arc<Mutex<TuiState>>, ctx: &mut AutoloopMapCtx) {
     }
     trim_live_items(ctx);
     if let Ok(mut state) = state.lock() {
+        refresh_attention(&mut state, ctx);
         render_live_region(&mut state, ctx);
     }
 }
@@ -630,6 +653,83 @@ fn warning_line(text: &str) -> Line<'static> {
     ])
 }
 
+/// Recomputes the header warning: unreadable engine events for the whole run,
+/// plus live-stream bytes skipped in the current iteration.
+fn refresh_attention(state: &mut TuiState, ctx: &AutoloopMapCtx) {
+    let events = ctx.dropped_events_seen.lines;
+    let stream = ctx
+        .backpressure_bytes
+        .filter(|_| !ctx.authoritative_output_applied);
+    state.attention = match (events, stream) {
+        (0, None) => None,
+        (0, Some(bytes)) => Some(Attention {
+            full: format!("\u{26A0} live stream skipped {}", format_bytes(bytes)),
+            compact: format!("\u{26A0} {} skipped", format_bytes(bytes)),
+        }),
+        (events, None) => {
+            let noun = if events == 1 { "event" } else { "events" };
+            Some(Attention {
+                full: format!("\u{26A0} {events} engine {noun} skipped"),
+                compact: format!("\u{26A0} {events} skipped"),
+            })
+        }
+        (events, Some(bytes)) => Some(Attention {
+            full: format!(
+                "\u{26A0} {events} events + {} stream skipped",
+                format_bytes(bytes)
+            ),
+            compact: "\u{26A0} skips".to_string(),
+        }),
+    };
+}
+
+/// Applies one engine journal record. Only `backend.start` matters here: it is
+/// the one place the engine names the harness kind (claude-sdk, pi, acp,
+/// command) that actually ran an iteration, including per-role overrides.
+fn apply_journal_record(
+    state: &Arc<Mutex<TuiState>>,
+    ctx: &mut AutoloopMapCtx,
+    record: &AutoloopRecord,
+) {
+    if record.topic != "backend.start" {
+        return;
+    }
+    let (Some(iteration), Some(kind)) = (record.iteration, record.field("backend_kind")) else {
+        return;
+    };
+    let kind = sanitize_tui_inline_text(kind);
+    if kind.is_empty() {
+        return;
+    }
+    let is_current_run = ctx.run_id.as_deref() == Some(record.run.as_str());
+    if let Some(&index) = ctx.iteration_buffers.get(&iteration)
+        && is_current_run
+        && let Ok(mut s) = state.lock()
+        && let Some(buffer) = s.iterations.get_mut(index)
+    {
+        buffer.backend = Some(kind);
+        return;
+    }
+    ctx.pending_backend_kinds
+        .insert((record.run.clone(), iteration), kind);
+}
+
+/// Applies newly appended journal records.
+fn poll_journal(
+    state: &Arc<Mutex<TuiState>>,
+    ctx: &mut AutoloopMapCtx,
+    journal: &mut AutoloopJournalTailer,
+) {
+    match journal.poll() {
+        Ok(records) => {
+            for record in &records {
+                apply_journal_record(state, ctx, record);
+            }
+        }
+        Err(error) => debug!(%error, "autoloop journal poll failed"),
+    }
+}
+
 /// Attributes newly skipped `--events` lines to the current iteration and
 /// re-renders its warning.
 fn note_dropped_events(
@@ -646,6 +746,7 @@ fn note_dropped_events(
     let Ok(mut s) = state.lock() else {
         return;
     };
+    refresh_attention(&mut s, ctx);
     if s.iterations.is_empty() {
         s.start_new_iteration();
     }
@@ -712,6 +813,33 @@ pub async fn run_autoloop_event_reader<S>(
     workspace_root: PathBuf,
     engine_state_root: PathBuf,
     state: Arc<Mutex<TuiState>>,
+    cancel_rx: watch::Receiver<bool>,
+    role_display_names: HashMap<String, String, S>,
+) where
+    S: BuildHasher + Send,
+{
+    let journal = AutoloopJournalTailer::from_end(engine_journal_path(&engine_state_root));
+    run_autoloop_event_reader_with_journal(
+        events_path,
+        workspace_root,
+        engine_state_root,
+        journal,
+        state,
+        cancel_rx,
+        role_display_names,
+    )
+    .await;
+}
+
+/// [`run_autoloop_event_reader`] with a journal tailer the caller positioned
+/// before launching the engine, so no `backend.start` record written during
+/// startup is skipped.
+pub async fn run_autoloop_event_reader_with_journal<S>(
+    events_path: PathBuf,
+    workspace_root: PathBuf,
+    engine_state_root: PathBuf,
+    mut journal: AutoloopJournalTailer,
+    state: Arc<Mutex<TuiState>>,
     mut cancel_rx: watch::Receiver<bool>,
     role_display_names: HashMap<String, String, S>,
 ) where
@@ -745,6 +873,7 @@ pub async fn run_autoloop_event_reader<S>(
                             apply_autoloop_event(event, &state, &mut ctx);
                         }
                         note_dropped_events(&state, &mut ctx, tailer.dropped());
+                        poll_journal(&state, &mut ctx, &mut journal);
                         poll_backend_stream(&state, &mut ctx);
                     }
                     Err(e) => {
@@ -768,6 +897,7 @@ pub async fn run_autoloop_event_reader<S>(
                 apply_autoloop_event(event, &state, &mut ctx);
             }
             note_dropped_events(&state, &mut ctx, tailer.dropped());
+            poll_journal(&state, &mut ctx, &mut journal);
         }
         Err(e) => {
             debug!(error = %e, "autoloop event reader final drain failed");
@@ -2357,6 +2487,11 @@ mod tests {
                 .any(|row| row.contains("run ended before reporting a result")),
             "the cut-off loop.finish must still read as no result: {rows:?}"
         );
+        let header = render_header(&state.lock().unwrap());
+        assert!(
+            header.contains("⚠ 1 engine event skipped"),
+            "the header keeps the drop visible: {header:?}"
+        );
     }
 
     #[test]
@@ -2380,6 +2515,75 @@ mod tests {
             status_lines(&ctx)[0].to_string(),
             "⚠ 488.4 KiB of live stream skipped: final text intact, gap tools unlisted"
         );
+    }
+
+    #[tokio::test]
+    async fn header_names_the_harness_from_the_journal_for_this_run_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = dir.path().to_path_buf();
+        let engine_root = ralph_core::engine_state::engine_state_root(&workspace);
+        std::fs::create_dir_all(&engine_root).unwrap();
+        let journal = ralph_core::engine_state::engine_journal_path(&engine_root);
+        // A previous run in the same journal must not label this run.
+        append(
+            &journal,
+            concat!(
+                r#"{"run":"r1","iteration":"1","topic":"backend.start","fields":{"backend_kind":"acp"}}"#,
+                "\n",
+            ),
+        );
+        let events = dir.path().join("events.ndjson");
+        // Positioned before the engine writes anything for this run.
+        let journal_tailer = AutoloopJournalTailer::from_end(&journal);
+
+        let state = make_state();
+        let (cancel_tx, cancel_rx) = watch::channel(false);
+        let reader_state = Arc::clone(&state);
+        let reader_events = events.clone();
+        let handle = tokio::spawn(async move {
+            run_autoloop_event_reader_with_journal(
+                reader_events,
+                workspace,
+                engine_root,
+                journal_tailer,
+                reader_state,
+                cancel_rx,
+                HashMap::from([("builder".to_string(), "Builder".to_string())]),
+            )
+            .await;
+        });
+
+        // The journal record lands before the event that opens the iteration.
+        append(
+            &journal,
+            concat!(
+                r#"{"run":"r2","iteration":"1","topic":"backend.start","fields":{"backend_kind":"pi"}}"#,
+                "\n",
+            ),
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        append(
+            &events,
+            concat!(
+                r#"{"type":"iteration.banner","iteration":1,"maxIterations":3,"allowedRoles":["builder"],"runId":"r2"}"#,
+                "\n",
+                r#"{"type":"iteration.start","iteration":1,"maxIterations":3,"runId":"r2"}"#,
+                "\n",
+            ),
+        );
+        assert!(wait_for_iteration(&state).await);
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        while state.lock().unwrap().iterations[0].backend.is_none() {
+            assert!(tokio::time::Instant::now() < deadline, "harness never set");
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        cancel_tx.send(true).unwrap();
+        handle.await.unwrap();
+
+        let header = render_header(&state.lock().unwrap());
+        assert!(header.contains("Builder @pi"), "{header:?}");
+        assert!(!header.contains("@acp"), "{header:?}");
+        assert!(!header.contains("[WAVE]"), "{header:?}");
     }
 
     #[tokio::test]

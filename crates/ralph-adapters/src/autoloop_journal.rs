@@ -407,6 +407,17 @@ impl AutoloopJournalTailer {
         }
     }
 
+    /// Create a tailer that skips the journal's existing content and reads only
+    /// records appended after this call. The journal accumulates across runs,
+    /// so a live view of a new run should not replay its predecessors.
+    pub fn from_end(path: impl Into<PathBuf>) -> Self {
+        let mut tailer = Self::new(path);
+        tailer.position = std::fs::metadata(&tailer.path)
+            .map(|meta| meta.len())
+            .unwrap_or(0);
+        tailer
+    }
+
     /// The journal path being tailed.
     pub fn path(&self) -> &Path {
         &self.path
@@ -494,6 +505,33 @@ impl AutoloopJournalTailer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn from_end_skips_records_written_before_it_was_created() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("journal.jsonl");
+        std::fs::write(
+            &path,
+            "{\"run\":\"old\",\"topic\":\"loop.start\",\"fields\":{}}\n",
+        )
+        .unwrap();
+        let mut tailer = AutoloopJournalTailer::from_end(&path);
+        assert!(tailer.poll().unwrap().is_empty());
+
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        std::io::Write::write_all(
+            &mut file,
+            b"{\"run\":\"new\",\"iteration\":\"1\",\"topic\":\"backend.start\",\"fields\":{\"backend_kind\":\"pi\"}}\n",
+        )
+        .unwrap();
+        let records = tailer.poll().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].run, "new");
+        assert_eq!(records[0].field("backend_kind"), Some("pi"));
+    }
 
     fn sample() -> &'static str {
         // Compact hand-authored journal matching the contract event shapes.

@@ -1,3 +1,4 @@
+use super::fit::{Item, fit, spans_width};
 use crate::state::{TuiState, UpdateStatus};
 use ralph_core::truncate_with_ellipsis;
 use ratatui::{
@@ -5,158 +6,173 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
 };
-use unicode_width::UnicodeWidthStr;
 
 // ============================================================================
-// Width Breakpoints for Priority-Based Progressive Disclosure
+// Priority-Based Item Selection
 // ============================================================================
-// At narrower widths, lower-priority components are hidden or compressed.
+// Each item offers full, compact, and minimal forms and the row is fitted to
+// the real render width (see [`super::fit`]). Items upgrade in priority order,
+// so at narrow widths lower-priority items shrink or disappear instead of the
+// row being clipped. The four live questions come first: where the loop is,
+// what needs attention, whether the view is live, and what is running.
 //
-// Priority levels (lower number = more important, always shown):
-// - Priority 1: Iteration counter [iter N/M] - always shown (TUI pagination)
-// - Priority 2: Mode indicator [LIVE]/[REVIEW] (▶/◀ compressed) - always shown
-// - Priority 3: Hat display, Scroll indicator - compressed at 50
-// - Priority 4: Iteration elapsed time MM:SS - hidden at 50
-// - Priority 5: Idle countdown - hidden at 40
-// - Priority 6: Help hint - hidden at 65
+// Priority (lower = more important):
+// 1. Iteration counter / status - required
+// 2. Attention warning - required when present
+// 3. Mode [LIVE]/[REVIEW] (▶/◀) - required
+// 4. Hat and harness: `🔨Builder @pi` / `🔨Builder` / `🔨`
+// 5. Scroll indicator [SCROLL]/[S]
+// 6. Iteration elapsed time
+// 7. Idle countdown
+// 8. Git branch (full or 12-char ellipsis form)
+// 9. Help hint
+// The update badge takes whatever width is left on the right.
 // ============================================================================
 
-/// Width breakpoint constants
-const WIDTH_FULL: u16 = 80; // Show everything including help hint
-#[allow(dead_code)] // Kept for documentation of breakpoint tiers
-const WIDTH_HIDE_HELP: u16 = 65; // Below this: help hint hidden
-const WIDTH_SHOW_BRANCH: u16 = 65; // Below this: hide branch name
-const WIDTH_COMPRESS: u16 = 50; // Compress mode/hat, hide time
-const WIDTH_MINIMAL: u16 = 40; // Hide idle countdown
+/// Width breakpoints still used by the update badge's forms.
+const WIDTH_FULL: u16 = 80;
+const WIDTH_HIDE_HELP: u16 = 65;
+const WIDTH_MINIMAL: u16 = 40;
 
-/// Renders the header widget with priority-based progressive disclosure.
-///
-/// At narrower terminal widths, lower-priority components are hidden or compressed
-/// to ensure critical information (iteration, mode) remains visible.
+/// Branch names longer than this get an ellipsis form.
+const BRANCH_COMPACT_CHARS: usize = 12;
+
+fn sep(text: impl Into<String>, style: Style) -> Vec<Span<'static>> {
+    vec![Span::raw(" | "), Span::styled(text.into(), style)]
+}
+
+/// Renders the header widget, choosing each item's form by `width`.
 pub fn render(state: &TuiState, width: u16) -> Paragraph<'static> {
-    let mut left_spans = vec![];
+    let mut items = Vec::new();
 
-    // Priority 1: Iteration counter or status indicator - ALWAYS shown
-    if state.subprocess_error.is_some() {
-        left_spans.push(Span::styled(
-            "[ERROR]".to_string(),
-            Style::default().fg(Color::Red),
-        ));
+    // 1. Iteration counter or status indicator.
+    let status = if state.subprocess_error.is_some() {
+        Span::styled("[ERROR]".to_string(), Style::default().fg(Color::Red))
     } else if state.iterations.is_empty() && state.last_event.is_none() {
-        // No events received yet — subprocess RPC connection not established
-        left_spans.push(Span::styled(
+        // No events received yet: the event source is not connected.
+        Span::styled(
             "[connecting]".to_string(),
             Style::default().fg(Color::DarkGray),
-        ));
+        )
     } else {
-        // Uses TUI pagination state (current_view/total_iterations) not Ralph loop iteration
+        // Uses TUI pagination state (current_view/total_iterations), not the engine iteration.
         let current = state
             .current_iteration()
             .map(|buffer| buffer.number)
             .unwrap_or_else(|| (state.current_view + 1) as u32);
-        let total_iterations = state.total_iterations() as u32;
-        let total_display = state.max_iterations.unwrap_or(total_iterations);
-        let iter_display = format!("[iter {}/{}]", current, total_display);
-        left_spans.push(Span::raw(iter_display));
+        let total_display = state
+            .max_iterations
+            .unwrap_or(state.total_iterations() as u32);
+        Span::raw(format!("[iter {current}/{total_display}]"))
+    };
+    items.push(Item::required(1, vec![vec![status]]));
+
+    // 2. Attention: progress the view lost. Replaces decoration, never clipped.
+    if let Some(attention) = &state.attention {
+        let style = Style::default().fg(Color::Yellow);
+        items.push(Item::required(
+            2,
+            vec![
+                vec![Span::raw(" "), Span::styled(attention.full.clone(), style)],
+                vec![
+                    Span::raw(" "),
+                    Span::styled(attention.compact.clone(), style),
+                ],
+                vec![Span::raw(" "), Span::styled("\u{26A0}", style)],
+            ],
+        ));
     }
 
-    // Priority 4: Elapsed time - hidden at WIDTH_COMPRESS and below
-    if width > WIDTH_COMPRESS
-        && let Some(elapsed) = state.get_iteration_elapsed()
-    {
-        left_spans.push(Span::raw(format!(
-            " {}",
-            ralph_core::utils::format_elapsed(elapsed)
-        )));
+    // 6. Elapsed time.
+    if let Some(elapsed) = state.get_iteration_elapsed() {
+        items.push(Item::optional(
+            6,
+            vec![vec![Span::raw(format!(
+                " {}",
+                ralph_core::utils::format_elapsed(elapsed)
+            ))]],
+        ));
     }
 
-    // Priority 3: Hat display - compressed at WIDTH_COMPRESS and below
-    left_spans.push(Span::raw(" | "));
+    // 4. Hat and the harness that ran it.
     let iteration_finished = state.current_iteration().and_then(|b| b.elapsed).is_some();
     let hat_display = if iteration_finished && state.pending_hat.is_some() {
-        // Iteration done and next hat is known — show it instead of the stale frozen hat
+        // Iteration done and next hat known: show it instead of the stale frozen hat.
         state.get_pending_hat_display()
     } else {
-        // In-progress / no iteration / no pending hat — frozen hat, fall back to pending
         state
             .current_iteration_hat_display()
             .map(|d| d.to_string())
             .unwrap_or_else(|| state.get_pending_hat_display())
     };
-    let hat_with_backend = if let Some(backend) = state.current_iteration_backend()
-        && width > WIDTH_COMPRESS
-    {
-        format!("{hat_display} @{backend}")
-    } else {
-        hat_display.clone()
-    };
-    if width > WIDTH_COMPRESS {
-        // Full hat display: "🔨 Builder"
-        left_spans.push(Span::raw(hat_with_backend));
-    } else {
-        // Compressed: emoji only (first character cluster)
-        let emoji = hat_display.chars().next().unwrap_or('?');
-        left_spans.push(Span::raw(emoji.to_string()));
+    let mut hat_forms = Vec::new();
+    if let Some(backend) = state.current_iteration_backend() {
+        hat_forms.push(sep(format!("{hat_display} @{backend}"), Style::default()));
     }
+    hat_forms.push(sep(hat_display.clone(), Style::default()));
+    hat_forms.push(sep(
+        hat_display.chars().next().unwrap_or('?').to_string(),
+        Style::default(),
+    ));
+    items.push(Item::optional(4, hat_forms));
 
-    // Priority 5: Idle countdown - hidden at WIDTH_MINIMAL and below
-    if let Some(idle) = state.idle_timeout_remaining
-        && width > WIDTH_MINIMAL
-    {
-        left_spans.push(Span::raw(format!(" | idle: {}s", idle.as_secs())));
-    }
-
-    // Priority 2: Mode indicator - ALWAYS shown (compressed at WIDTH_COMPRESS and below)
-    // Shows [LIVE] when following latest, [REVIEW] when viewing history
-    left_spans.push(Span::raw(" | "));
-    let mode = if state.following_latest {
-        if width > WIDTH_COMPRESS {
-            Span::styled("[LIVE]", Style::default().fg(Color::Green))
-        } else {
-            Span::styled("▶", Style::default().fg(Color::Green))
-        }
-    } else if width > WIDTH_COMPRESS {
-        Span::styled("[REVIEW]", Style::default().fg(Color::Yellow))
-    } else {
-        Span::styled("◀", Style::default().fg(Color::Yellow))
-    };
-    left_spans.push(mode);
-
-    // Priority 3: Scroll indicator - compressed at WIDTH_COMPRESS and below
-    if state.in_scroll_mode {
-        if width > WIDTH_COMPRESS {
-            left_spans.push(Span::styled(" [SCROLL]", Style::default().fg(Color::Cyan)));
-        } else {
-            left_spans.push(Span::styled(" [S]", Style::default().fg(Color::Cyan)));
-        }
-    }
-
-    if let Some(branch) = state.current_branch()
-        && width >= WIDTH_SHOW_BRANCH
-    {
-        let prefix = " | git:";
-        let available_width = (width as usize).saturating_sub(spans_width(&left_spans));
-
-        if available_width > prefix.len() + 3 {
-            let branch = truncate_with_ellipsis(branch, available_width - prefix.len());
-            left_spans.push(Span::styled(
-                format!("{prefix}{branch}"),
-                Style::default().fg(Color::Cyan),
-            ));
-        }
-    }
-
-    // Priority 6: Help hint - shown only at WIDTH_FULL (80+)
-    let help_hint = " | ? help";
-    if width >= WIDTH_FULL && spans_width(&left_spans) + help_hint.len() <= width as usize {
-        left_spans.push(Span::styled(
-            help_hint,
-            Style::default().fg(Color::DarkGray),
+    // 7. Idle countdown.
+    if let Some(idle) = state.idle_timeout_remaining {
+        items.push(Item::optional(
+            7,
+            vec![sep(format!("idle: {}s", idle.as_secs()), Style::default())],
         ));
     }
 
-    let left_width = spans_width(&left_spans);
-    let mut spans = left_spans;
+    // 3. Mode: [LIVE] when following latest, [REVIEW] when viewing history.
+    let (full_mode, compact_mode, mode_color) = if state.following_latest {
+        ("[LIVE]", "▶", Color::Green)
+    } else {
+        ("[REVIEW]", "◀", Color::Yellow)
+    };
+    items.push(Item::required(
+        3,
+        vec![
+            sep(full_mode, Style::default().fg(mode_color)),
+            sep(compact_mode, Style::default().fg(mode_color)),
+        ],
+    ));
+
+    // 5. Scroll indicator.
+    if state.in_scroll_mode {
+        let style = Style::default().fg(Color::Cyan);
+        items.push(Item::optional(
+            5,
+            vec![
+                vec![Span::styled(" [SCROLL]", style)],
+                vec![Span::styled(" [S]", style)],
+            ],
+        ));
+    }
+
+    // 8. Git branch.
+    if let Some(branch) = state.current_branch() {
+        let style = Style::default().fg(Color::Cyan);
+        let mut forms = vec![sep(format!("git:{branch}"), style)];
+        if branch.chars().count() > BRANCH_COMPACT_CHARS {
+            forms.push(sep(
+                format!(
+                    "git:{}",
+                    truncate_with_ellipsis(branch, BRANCH_COMPACT_CHARS)
+                ),
+                style,
+            ));
+        }
+        items.push(Item::optional(8, forms));
+    }
+
+    // 9. Help hint.
+    items.push(Item::optional(
+        9,
+        vec![sep("? help", Style::default().fg(Color::DarkGray))],
+    ));
+
+    let (mut spans, left_width) = fit(items, width as usize);
     if let Some(right_spans) = update_badge_spans(state, width, left_width) {
         let gap = width as usize - left_width - spans_width(&right_spans);
         spans.push(Span::raw(" ".repeat(gap)));
@@ -166,13 +182,6 @@ pub fn render(state: &TuiState, width: u16) -> Paragraph<'static> {
     let line = Line::from(spans);
     let block = Block::default().borders(Borders::BOTTOM);
     Paragraph::new(line).block(block)
-}
-
-fn spans_width(spans: &[Span<'_>]) -> usize {
-    spans
-        .iter()
-        .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
-        .sum()
 }
 
 fn update_badge_spans(
@@ -599,87 +608,105 @@ mod tests {
         );
     }
 
+    /// The header's first row, exactly as rendered.
+    fn header_row(state: &TuiState, width: u16) -> String {
+        render_to_string_with_width(state, width)
+            .chars()
+            .take(width as usize)
+            .collect()
+    }
+
     #[test]
-    fn header_at_50_chars_compresses_mode() {
-        // At 50 chars, mode should be compressed to icon only
-        let state = create_full_state();
-        let text = render_to_string_with_width(&state, 50);
+    fn header_at_50_chars_keeps_high_priority_items_whole() {
+        let row = header_row(&create_full_state(), 50);
+        for item in ["[iter 3/10]", "[LIVE]", "Builder", "04:32", "[SCROLL]"] {
+            assert!(row.contains(item), "{item} missing at 50: {row:?}");
+        }
+        // Idle (priority 7) is the first item that no longer fits.
+        assert!(!row.contains("idle"), "{row:?}");
+    }
 
-        // Mode should be compressed: "[LIVE]" -> "▶"
-        // Should have the icon but not "[LIVE]"
-        assert!(
-            text.contains('▶'),
-            "mode icon should be visible, got: {}",
-            text
-        );
-        assert!(
-            !text.contains("[LIVE]"),
-            "mode text '[LIVE]' should be hidden at 50 chars, got: {}",
-            text
-        );
+    #[test]
+    fn header_at_40_chars_drops_time_before_compressing_mode() {
+        let row = header_row(&create_full_state(), 40);
+        for item in ["[iter 3/10]", "[LIVE]", "Builder", "[S]"] {
+            assert!(row.contains(item), "{item} missing at 40: {row:?}");
+        }
+        assert!(!row.contains("04:32"), "{row:?}");
+        assert!(!row.contains("idle"), "{row:?}");
+    }
 
-        // Time should be hidden at 50 chars
+    #[test]
+    fn header_at_30_chars_keeps_iteration_and_mode() {
+        let row = header_row(&create_full_state(), 30);
+        assert!(row.contains("[iter 3/10]"), "{row:?}");
+        assert!(row.contains("[LIVE]"), "{row:?}");
         assert!(
-            !text.contains("04:32"),
-            "elapsed time should be hidden at 50 chars, got: {}",
-            text
-        );
-
-        // Iteration should always be visible
-        assert!(
-            text.contains("[iter 3/10]"),
-            "iteration should be visible, got: {}",
-            text
+            !row.contains("Builder"),
+            "hat should compress first: {row:?}"
         );
     }
 
     #[test]
-    fn header_at_40_chars_minimal() {
-        // At 40 chars, only critical components should be visible
-        let state = create_full_state();
-        let text = render_to_string_with_width(&state, 40);
+    fn header_warning_displaces_lower_priority_items_at_52_to_56_columns() {
+        let mut state = create_full_state();
+        state.set_current_branch(Some("main".to_string()));
+        state.attention = Some(crate::state::Attention {
+            full: "\u{26A0} 3 engine events skipped".to_string(),
+            compact: "\u{26A0} 3 skipped".to_string(),
+        });
 
-        // Iteration (priority 1) always visible
-        assert!(
-            text.contains("[iter"),
-            "iteration should be visible at 40 chars, got: {}",
-            text
-        );
+        for width in 52..=56 {
+            let row = header_row(&state, width);
+            // The warning renders whole, never clipped, next to the
+            // always-shown iteration and mode.
+            assert!(
+                row.contains("⚠ 3 engine events skipped"),
+                "warning clipped at {width}: {row:?}"
+            );
+            assert!(row.contains("[iter 3/10]"), "{width}: {row:?}");
+            assert!(row.contains("[LIVE]"), "{width}: {row:?}");
+            // Lower-priority content gave up its room instead.
+            for displaced in ["Builder", "04:32", "idle", "git:main", "? help"] {
+                assert!(
+                    !row.contains(displaced),
+                    "{displaced} kept at {width} while a warning needed room: {row:?}"
+                );
+            }
+        }
 
-        // Mode icon (priority 2) always visible
-        assert!(
-            text.contains('▶'),
-            "mode icon should be visible at 40 chars, got: {}",
-            text
-        );
+        // Without the warning, the same widths show the displaced items.
+        state.attention = None;
+        let row = header_row(&state, 54);
+        assert!(row.contains("Builder") && row.contains("04:32"), "{row:?}");
+    }
 
-        // Idle should be hidden (priority 5)
+    #[test]
+    fn header_warning_falls_back_to_compact_form_before_clipping() {
+        let mut state = create_full_state();
+        state.attention = Some(crate::state::Attention {
+            full: "\u{26A0} 3 engine events skipped".to_string(),
+            compact: "\u{26A0} 3 skipped".to_string(),
+        });
+        let row = header_row(&state, 40);
+        assert!(row.contains("⚠ 3 skipped"), "{row:?}");
+        assert!(!row.contains("engine events"), "{row:?}");
         assert!(
-            !text.contains("idle"),
-            "idle should be hidden at 40 chars, got: {}",
-            text
+            row.contains("[iter 3/10]") && row.contains("[LIVE]"),
+            "{row:?}"
         );
     }
 
     #[test]
-    fn header_at_30_chars_extreme() {
-        // At 30 chars (extreme narrow), show only absolute minimum
-        let state = create_full_state();
-        let text = render_to_string_with_width(&state, 30);
-
-        // Should at least show iteration
-        assert!(
-            text.contains("[iter"),
-            "iteration should be visible even at 30 chars, got: {}",
-            text
-        );
-
-        // Mode icon should be visible (critical)
-        assert!(
-            text.contains('▶'),
-            "mode icon should be visible even at 30 chars, got: {}",
-            text
-        );
+    fn header_has_no_wave_mode_in_any_state() {
+        let mut state = create_full_state();
+        for following in [true, false] {
+            state.following_latest = following;
+            for width in [30, 52, 80, 120] {
+                let row = header_row(&state, width);
+                assert!(!row.contains("WAVE") && !row.contains("worker"), "{row:?}");
+            }
+        }
     }
 
     #[test]

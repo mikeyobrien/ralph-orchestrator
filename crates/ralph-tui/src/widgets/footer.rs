@@ -1,6 +1,7 @@
+use super::fit::{Item, fit, spans_width};
 use crate::state::{ExportOutcome, TuiState};
 use ratatui::{
-    layout::{Constraint, Layout, Rect},
+    layout::Rect,
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Widget},
@@ -27,10 +28,15 @@ impl Widget for Footer<'_> {
         // A pending human ask (autoloop HITL) is the most important thing to
         // surface — the run is blocked on it. Display only; answers go through RObot.
         if let Some(question) = &self.state.pending_ask {
+            // The label is the warning and always renders whole; only the
+            // question text gives up width, with an explicit ellipsis.
+            let label = "\u{26A0} HUMAN ASK: ";
+            let room =
+                (inner_area.width as usize).saturating_sub(1 + spans_width(&[Span::raw(label)]));
             let line = Line::from(vec![
                 Span::raw(" "),
-                Span::styled("\u{26A0} HUMAN ASK: ", Style::default().fg(Color::Yellow)),
-                Span::raw(question.as_str()),
+                Span::styled(label, Style::default().fg(Color::Yellow)),
+                Span::raw(fit_text(question, room)),
             ]);
             Paragraph::new(line).render(inner_area, buf);
             return;
@@ -144,92 +150,115 @@ impl Widget for Footer<'_> {
             return;
         }
 
-        // Default footer with flexible layout
-        // Build left content: optional alert + elapsed time
-        let mut left_spans = vec![Span::raw(" ")];
+        // Default footer: priority-selected items on the left, the run
+        // indicator always whole on the right.
+        let (indicator_text, indicator_style) = if self.state.loop_completed {
+            ("■ DONE", Style::default().fg(Color::Blue))
+        } else {
+            ("◉ ACTIVE", Style::default().fg(Color::Green))
+        };
+        let indicator = vec![
+            Span::styled(indicator_text, indicator_style),
+            Span::raw(" "),
+        ];
+        let indicator_width = spans_width(&indicator);
 
-        // Show new iteration alert when viewing history and a new iteration arrived
+        let mut items = Vec::new();
+        // A new iteration arrived while reviewing history.
         if let Some(iter_num) = self.state.new_iteration_alert
             && !self.state.following_latest
         {
-            left_spans.push(Span::styled(
-                format!("▶ New: iter {} ", iter_num),
-                Style::default().fg(Color::Green),
+            let style = Style::default().fg(Color::Green);
+            items.push(Item::required(
+                1,
+                vec![
+                    vec![
+                        Span::styled(format!("▶ New: iter {iter_num} "), style),
+                        Span::raw("│ "),
+                    ],
+                    vec![
+                        Span::styled(format!("▶ {iter_num} "), style),
+                        Span::raw("│ "),
+                    ],
+                ],
             ));
-            left_spans.push(Span::raw("│ "));
         }
-
-        // Show total elapsed time (default to 00:00 if loop hasn't started)
-        let elapsed_display = if let Some(elapsed) = self.state.get_loop_elapsed() {
-            format!(
-                "Total Time Elapsed: {}",
-                ralph_core::utils::format_elapsed(elapsed)
-            )
-        } else {
-            "Total Time Elapsed: 00:00".to_string()
-        };
-        left_spans.push(Span::raw(elapsed_display));
-        // Surface the final run cost once the loop has completed (autoloop
-        // reports costUsd on its terminal event).
+        // Total elapsed time (00:00 before the loop starts).
+        let elapsed =
+            ralph_core::utils::format_elapsed(self.state.get_loop_elapsed().unwrap_or_default());
+        items.push(Item::required(
+            2,
+            vec![
+                vec![Span::raw(format!("Total Time Elapsed: {elapsed}"))],
+                vec![Span::raw(format!("Elapsed {elapsed}"))],
+                vec![Span::raw(elapsed)],
+            ],
+        ));
+        // Final run cost once the loop has completed (autoloop reports it on
+        // its terminal event).
         if self.state.loop_completed
             && let Some(cost) = self.state.final_cost_usd
             && cost > 0.0
         {
-            left_spans.push(Span::raw(" │ "));
-            left_spans.push(Span::styled(
-                format!("Cost: ${cost:.2}"),
-                Style::default().fg(Color::DarkGray),
+            let style = Style::default().fg(Color::DarkGray);
+            items.push(Item::optional(
+                3,
+                vec![
+                    vec![
+                        Span::raw(" │ "),
+                        Span::styled(format!("Cost: ${cost:.2}"), style),
+                    ],
+                    vec![Span::raw(" │ "), Span::styled(format!("${cost:.2}"), style)],
+                ],
             ));
         }
-        if inner_area.width >= 58 {
-            left_spans.push(Span::raw(" │ "));
-            left_spans.push(Span::styled(
-                "e export E all",
-                Style::default().fg(Color::DarkGray),
-            ));
-        }
+        items.push(Item::optional(
+            5,
+            vec![vec![
+                Span::raw(" │ "),
+                Span::styled("e export E all", Style::default().fg(Color::DarkGray)),
+            ]],
+        ));
         if self.state.mouse_capture_enabled {
-            left_spans.push(Span::raw(" │ "));
-            left_spans.push(Span::styled(
-                "Mouse: scroll (m)",
-                Style::default().fg(Color::DarkGray),
+            let style = Style::default().fg(Color::DarkGray);
+            items.push(Item::optional(
+                4,
+                vec![
+                    vec![Span::raw(" │ "), Span::styled("Mouse: scroll (m)", style)],
+                    vec![Span::raw(" │ "), Span::styled("m", style)],
+                ],
             ));
         }
 
-        let indicator_text = if self.state.loop_completed {
-            "■ DONE"
-        } else {
-            "◉ ACTIVE"
-        };
-
-        let indicator_style = if self.state.loop_completed {
-            Style::default().fg(Color::Blue)
-        } else {
-            Style::default().fg(Color::Green)
-        };
-
-        // Calculate left content width for layout
-        let left_content_width: usize = left_spans.iter().map(|s| s.width()).sum();
-
-        // Use horizontal layout: left content | flexible spacer | right indicator
-        let chunks = Layout::horizontal([
-            Constraint::Length(left_content_width as u16), // Alert + " Last: event"
-            Constraint::Fill(1),                           // Flexible spacer
-            Constraint::Length((indicator_text.len() + 2) as u16), // "indicator "
-        ])
-        .split(inner_area);
-
-        // Render left side (alert + last event)
-        let left = Line::from(left_spans);
-        Paragraph::new(left).render(chunks[0], buf);
-
-        // Render right side (indicator)
-        let right = Line::from(vec![
-            Span::styled(indicator_text, indicator_style),
-            Span::raw(" "),
-        ]);
-        Paragraph::new(right).render(chunks[2], buf);
+        let left_room = (inner_area.width as usize).saturating_sub(1 + indicator_width + 1);
+        let (left_spans, left_width) = fit(items, left_room);
+        let mut spans = vec![Span::raw(" ")];
+        spans.extend(left_spans);
+        let gap = (inner_area.width as usize).saturating_sub(1 + left_width + indicator_width);
+        spans.push(Span::raw(" ".repeat(gap)));
+        spans.extend(indicator);
+        Paragraph::new(Line::from(spans)).render(inner_area, buf);
     }
+}
+
+/// `text` whole when it fits `room` columns, else cut with a trailing `…`.
+fn fit_text(text: &str, room: usize) -> String {
+    use unicode_width::UnicodeWidthChar;
+    if spans_width(&[Span::raw(text)]) <= room {
+        return text.to_string();
+    }
+    let mut out = String::new();
+    let mut used = 0;
+    for ch in text.chars() {
+        let w = ch.width().unwrap_or(0);
+        if used + w + 1 > room {
+            break;
+        }
+        out.push(ch);
+        used += w;
+    }
+    out.push('…');
+    out
 }
 
 /// Convenience function for rendering the footer.
@@ -545,5 +574,46 @@ mod tests {
             "should show export failure, got: {}",
             text
         );
+    }
+
+    fn footer_row(state: &TuiState, width: u16) -> String {
+        // Row 0 is the top border; the content is the second row.
+        render_to_string_with_width(state, width)
+            .chars()
+            .skip(width as usize)
+            .collect()
+    }
+
+    #[test]
+    fn human_ask_label_stays_whole_at_52_to_56_columns() {
+        let mut state = TuiState::new();
+        state.pending_ask =
+            Some("Should the migration drop the legacy table or keep a view?".to_string());
+        for width in 52..=56 {
+            let row = footer_row(&state, width);
+            assert!(row.contains("⚠ HUMAN ASK: Should"), "{width}: {row:?}");
+            assert!(
+                row.trim_end().ends_with('…'),
+                "the question shortens with an ellipsis, never a silent cut: {row:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn run_indicator_is_never_displaced_at_52_to_56_columns() {
+        let mut state = TuiState::new();
+        state.loop_completed = true;
+        state.final_cost_usd = Some(12.34);
+        state.mouse_capture_enabled = true;
+        state.new_iteration_alert = Some(7);
+        state.following_latest = false;
+        for width in 52..=56 {
+            let row = footer_row(&state, width);
+            assert!(row.trim_end().ends_with("■ DONE"), "{width}: {row:?}");
+            assert!(row.contains("▶"), "the new-iteration alert stays: {row:?}");
+            assert!(row.contains("Elapsed") || row.contains("00:00"), "{row:?}");
+            // Lower-priority hints give way before anything is clipped.
+            assert!(!row.contains("e export"), "{width}: {row:?}");
+        }
     }
 }

@@ -135,6 +135,15 @@ pub struct ExportFlash {
     pub when: Instant,
 }
 
+/// A run-level warning the header must keep visible: progress the view lost.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Attention {
+    /// Full form, e.g. `⚠ 3 engine events skipped`.
+    pub full: String,
+    /// Compact form, e.g. `⚠ 3 skipped`.
+    pub compact: String,
+}
+
 /// Status of the background update check.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpdateStatus {
@@ -252,6 +261,8 @@ pub struct TuiState {
     /// Error message set when subprocess exits before sending any RPC events.
     /// When set, the TUI displays an error state instead of empty content.
     pub subprocess_error: Option<String>,
+    /// Warning the header shows ahead of lower-priority items.
+    pub attention: Option<Attention>,
 
     // ========================================================================
     // Autoloop Source State
@@ -328,6 +339,7 @@ impl TuiState {
             guidance_flash: None,
             // Subprocess error state
             subprocess_error: None,
+            attention: None,
             // Autoloop source state
             pending_ask: None,
             autoloop_source: false,

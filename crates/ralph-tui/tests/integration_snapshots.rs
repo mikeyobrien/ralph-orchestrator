@@ -477,7 +477,7 @@ fn test_header_width_breakpoints() {
         "80col header should show help hint"
     );
 
-    // Narrow (50) - should compress mode to symbols
+    // Narrow (50) - every item that fits renders whole; [LIVE] still fits.
     let harness_50 = TuiTestHarness::new().with_terminal_size(50, 1);
     {
         let mut state = harness_50.state().lock().unwrap();
@@ -485,12 +485,20 @@ fn test_header_width_breakpoints() {
     }
     let header_50 = harness_50.render_header();
     assert!(
-        !header_50.contains("[LIVE]"),
-        "50col header should compress mode"
+        header_50.contains("[LIVE]"),
+        "50col header has room for the full mode: {header_50:?}"
     );
+
+    // Very narrow (16) - mode falls back to its symbol form rather than clipping.
+    let harness_16 = TuiTestHarness::new().with_terminal_size(16, 1);
+    {
+        let mut state = harness_16.state().lock().unwrap();
+        state.start_new_iteration();
+    }
+    let header_16 = harness_16.render_header();
     assert!(
-        header_50.contains("▶") || header_50.contains("◀"),
-        "50col header should use symbol mode"
+        !header_16.contains("[LIVE]") && (header_16.contains("▶") || header_16.contains("◀")),
+        "16col header should use symbol mode: {header_16:?}"
     );
 }
 
