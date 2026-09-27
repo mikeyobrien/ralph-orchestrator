@@ -11,6 +11,16 @@ use crate::utils::find_executable;
 /// The oldest autoloop release that provides Ralph's required protocol.
 pub const MIN_AUTOLOOP_VERSION: &str = "0.10.0";
 
+/// First autoloop release that reads `[routing.jev]`. Older engines keep the
+/// section and never act on it, so routing would silently not happen.
+pub const MIN_JEV_ROUTING_VERSION: &str = "0.12.0";
+
+/// Whether `version` (`major.minor.patch`) is at least `minimum`; `None` when
+/// either does not parse.
+pub fn version_at_least(version: &str, minimum: &str) -> Option<bool> {
+    Some(parse_version(version)? >= parse_version(minimum)?)
+}
+
 /// The standalone autoloop release installed by Ralph.
 pub const VENDORED_AUTOLOOP_VERSION: &str = "0.10.1";
 

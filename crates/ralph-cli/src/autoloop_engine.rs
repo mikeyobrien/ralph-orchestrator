@@ -107,6 +107,29 @@ fn notify_hook_settings(
     ])
 }
 
+/// Fails unless the resolved autoloop engine reads `[routing.jev]`.
+fn require_jev_routing_engine() -> Result<()> {
+    use ralph_core::autoloop_health::{
+        AutoloopHealth, MIN_JEV_ROUTING_VERSION, check_autoloop, version_at_least,
+    };
+    let version = match check_autoloop() {
+        AutoloopHealth::Ok { version, .. } | AutoloopHealth::TooOld { version, .. } => version,
+        AutoloopHealth::VersionUnknown { .. } | AutoloopHealth::Missing => {
+            bail!(
+                "Jev routing is enabled, but Ralph cannot determine the autoloop version; routing needs autoloop >= {MIN_JEV_ROUTING_VERSION}, and older engines silently skip it"
+            )
+        }
+    };
+    if version_at_least(&version, MIN_JEV_ROUTING_VERSION) != Some(true) {
+        bail!(
+            "Jev routing is enabled, but autoloop {version} ignores [routing.jev] and would run without routing; upgrade to autoloop >= {MIN_JEV_ROUTING_VERSION} ({AUTOLOOP_UPGRADE_HINT})"
+        );
+    }
+    Ok(())
+}
+
+const AUTOLOOP_UPGRADE_HINT: &str = "npm install -g @mobrienv/autoloop@latest";
+
 /// A TOML basic string.
 fn toml_string(value: &str) -> String {
     format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
@@ -401,6 +424,14 @@ pub async fn run_autoloop_engine(
     // Use an explicit preset if configured; otherwise generate one from ralph's
     // native hats topology so existing ralph configs run on the autoloop engine
     // without a hand-authored preset.
+    if let (Some(explicit), Some(_)) = (
+        config.core.autoloop_preset.as_deref(),
+        config.core.routing.jev.as_ref(),
+    ) {
+        bail!(
+            "core.routing.jev is set, but core.autoloop_preset ({explicit}) is your own preset, which Ralph never rewrites; configure [routing.jev] in that preset's autoloops.toml, or remove core.autoloop_preset so Ralph generates the preset from core.routing.jev"
+        );
+    }
     let (preset, explicit_preset) = match config.core.autoloop_preset.as_deref() {
         Some(p) => {
             let preset = resolve(&workspace, p);
@@ -428,6 +459,12 @@ pub async fn run_autoloop_engine(
             (preset, false)
         }
     };
+
+    // An engine that predates [routing.jev] keeps the section and never acts
+    // on it, so routing would silently not happen. Refuse instead.
+    if ralph_core::preset_source::preset_enables_jev_routing(&preset).unwrap_or(false) {
+        require_jev_routing_engine()?;
+    }
 
     // Configured post.loop hooks ride the engine's finish notification. The
     // engine reads `notify.*` from the preset file only (`--set` is ignored for

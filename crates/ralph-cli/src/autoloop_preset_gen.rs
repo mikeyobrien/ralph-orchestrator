@@ -24,6 +24,7 @@
 //! | `event_loop.max_runtime_seconds`         | `event_loop.max_runtime` (ms)     |
 //! | `event_loop.max_cost_usd`                | `event_loop.max_cost_usd`         |
 //! | `core.guardrails`                        | `harness.md`                      |
+//! | `core.routing.jev` (when enabled)        | `routing.jev.*` (absolute `routes_file`) |
 //!
 //! Autoloop resolves a declarative wave inside one iteration, joins it, and
 //! reads the wave's aggregate strategy from the concurrent role itself. So a
@@ -391,6 +392,33 @@ fn parallel_settings(config: &RalphConfig) -> Vec<(&'static str, String)> {
     settings
 }
 
+/// `[routing.jev]` from `core.routing.jev`, with `routes_file` made absolute
+/// (the engine resolves it against the preset directory, which for a
+/// generated preset is not where the operator's catalog lives).
+fn jev_routing_lines(config: &RalphConfig) -> Vec<String> {
+    let Some(jev) = config.core.routing.enabled_jev() else {
+        return Vec::new();
+    };
+    let routes_file = config.core.workspace_root.join(&jev.routes_file);
+    let mut lines = vec![
+        "routing.jev.enabled = true\n".to_string(),
+        format!(
+            "routing.jev.routes_file = {}\n",
+            q(&routes_file.to_string_lossy())
+        ),
+    ];
+    if let Some(model) = &jev.model {
+        lines.push(format!("routing.jev.model = {}\n", q(model)));
+    }
+    if let Some(min_confidence) = jev.min_confidence {
+        lines.push(format!("routing.jev.min_confidence = {min_confidence}\n"));
+    }
+    if let Some(timeout_ms) = jev.timeout_ms {
+        lines.push(format!("routing.jev.timeout_ms = {timeout_ms}\n"));
+    }
+    lines
+}
+
 fn write_autoloops(config: &RalphConfig, dir: &Path) -> io::Result<()> {
     let el = &config.event_loop;
     let mut auto = String::new();
@@ -427,6 +455,9 @@ fn write_autoloops(config: &RalphConfig, dir: &Path) -> io::Result<()> {
     }
     for (key, value) in parallel_settings(config) {
         auto.push_str(&format!("{key} = {value}\n"));
+    }
+    for line in jev_routing_lines(config) {
+        auto.push_str(&line);
     }
     auto.push('\n');
     for (key, value) in autoloop_backend_spec(config)? {
@@ -769,6 +800,61 @@ hats:
         );
         assert!(topo.contains("\"review.perspective\" = [\"reviewer\"]\n"));
         assert!(topo.contains("\"review.done\" = [\"synthesizer\"]\n"));
+    }
+
+    #[test]
+    fn emits_jev_routing_from_core_routing_with_an_absolute_catalog() {
+        let mut cfg: RalphConfig = serde_yaml::from_str(
+            r"
+core:
+  routing:
+    jev:
+      enabled: true
+      routes_file: routing/routes.json
+      model: jev-1.13.0
+      min_confidence: 0.9
+      timeout_ms: 3000
+",
+        )
+        .expect("valid routing config");
+        cfg.core.workspace_root = std::path::PathBuf::from("/work");
+        let cfg = pin_backend(cfg);
+        let dir = tempfile::tempdir().unwrap();
+
+        generate_preset(&cfg, dir.path()).unwrap();
+
+        let auto = fs::read_to_string(dir.path().join("autoloops.toml")).unwrap();
+        for line in [
+            "routing.jev.enabled = true\n",
+            "routing.jev.routes_file = \"/work/routing/routes.json\"\n",
+            "routing.jev.model = \"jev-1.13.0\"\n",
+            "routing.jev.min_confidence = 0.9\n",
+            "routing.jev.timeout_ms = 3000\n",
+        ] {
+            assert!(auto.contains(line), "missing {line:?} in {auto}");
+        }
+        assert!(
+            ralph_core::preset_source::preset_enables_jev_routing(dir.path())
+                .expect("generated TOML parses"),
+            "the engine must read the generated block as enabled"
+        );
+    }
+
+    #[test]
+    fn disabled_or_absent_jev_routing_emits_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        generate_preset(&config_with_hats(), dir.path()).unwrap();
+        let auto = fs::read_to_string(dir.path().join("autoloops.toml")).unwrap();
+        assert!(!auto.contains("routing"), "{auto}");
+
+        let cfg: RalphConfig = serde_yaml::from_str(
+            "core:\n  routing:\n    jev:\n      enabled: false\n      routes_file: r.json\n",
+        )
+        .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        generate_preset(&pin_backend(cfg), dir.path()).unwrap();
+        let auto = fs::read_to_string(dir.path().join("autoloops.toml")).unwrap();
+        assert!(!auto.contains("routing"), "{auto}");
     }
 
     #[test]

@@ -61,6 +61,12 @@ pub async fn execute(
         credential_store_probe(),
     ));
 
+    checks.extend(jev_routing_checks(
+        &config,
+        |key| env::var(key).ok(),
+        engine_version(),
+    ));
+
     checks.extend(other_checks);
 
     let report = report_from_checks(checks);
@@ -71,6 +77,96 @@ pub async fn execute(
     }
 
     Ok(())
+}
+
+/// The resolved engine's version, when it can be determined.
+fn engine_version() -> Option<String> {
+    use ralph_core::autoloop_health::{AutoloopHealth, check_autoloop};
+    match check_autoloop() {
+        AutoloopHealth::Ok { version, .. } | AutoloopHealth::TooOld { version, .. } => {
+            Some(version)
+        }
+        AutoloopHealth::VersionUnknown { .. } | AutoloopHealth::Missing => None,
+    }
+}
+
+/// Jev routing checks, only when routing is on: credential in the
+/// environment, a catalog the engine will accept, settings in range, and an
+/// engine that reads `[routing.jev]` at all.
+fn jev_routing_checks<F>(
+    config: &RalphConfig,
+    env_lookup: F,
+    engine_version: Option<String>,
+) -> Vec<CheckResult>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    use ralph_core::autoloop_health::{MIN_JEV_ROUTING_VERSION, version_at_least};
+    use ralph_core::jev_routing::{
+        effective_jev_routing, validate_routes_catalog, validate_settings,
+    };
+
+    let settings = match effective_jev_routing(config) {
+        Ok(Some(settings)) => settings,
+        Ok(None) => return Vec::new(),
+        Err(error) => {
+            return vec![CheckResult::fail(
+                "jev:config",
+                "Jev routing config unreadable",
+                error,
+            )];
+        }
+    };
+
+    let mut checks = Vec::new();
+    checks.push(
+        if env_lookup("TYPESAFE_API_KEY").is_some_and(|key| !key.trim().is_empty()) {
+            CheckResult::pass("jev:credential", "TYPESAFE_API_KEY is set")
+        } else {
+            CheckResult::fail(
+                "jev:credential",
+                "TYPESAFE_API_KEY is missing",
+                "Export TYPESAFE_API_KEY in the environment Ralph runs in. Never put it in TOML, a route catalog, or an argument string.",
+            )
+        },
+    );
+    checks.push(match validate_routes_catalog(&settings.routes_file) {
+        Ok(count) => CheckResult::pass(
+            "jev:catalog",
+            format!("{count} routes in {}", settings.routes_file.display()),
+        ),
+        Err(error) => CheckResult::fail(
+            "jev:catalog",
+            "Route catalog invalid",
+            format!("{error} (from {})", settings.source),
+        ),
+    });
+    checks.push(match validate_settings(&settings) {
+        Ok(()) => CheckResult::pass("jev:settings", "Routing settings in range"),
+        Err(error) => CheckResult::fail("jev:settings", "Routing settings out of range", error),
+    });
+    checks.push(
+        match engine_version
+            .as_deref()
+            .map(|version| (version, version_at_least(version, MIN_JEV_ROUTING_VERSION)))
+        {
+            Some((version, Some(true))) => CheckResult::pass(
+                "jev:engine",
+                format!("autoloop {version} reads [routing.jev]"),
+            ),
+            Some((version, _)) => CheckResult::fail(
+                "jev:engine",
+                format!("autoloop {version} ignores [routing.jev]"),
+                format!("Upgrade to autoloop >= {MIN_JEV_ROUTING_VERSION}; older engines run without routing."),
+            ),
+            None => CheckResult::fail(
+                "jev:engine",
+                "autoloop version unknown",
+                format!("Routing needs autoloop >= {MIN_JEV_ROUTING_VERSION}."),
+            ),
+        },
+    );
+    checks
 }
 
 fn split_preflight_checks(
@@ -685,6 +781,73 @@ mod tests {
             concurrency: 1,
             aggregate: None,
         }
+    }
+
+    fn routing_config(dir: &Path, routes: &str) -> RalphConfig {
+        std::fs::write(dir.join("routes.json"), routes).unwrap();
+        let mut config: RalphConfig = serde_yaml::from_str(
+            "core:\n  routing:\n    jev:\n      enabled: true\n      routes_file: routes.json\n",
+        )
+        .unwrap();
+        config.core.workspace_root = dir.to_path_buf();
+        config
+    }
+
+    fn statuses(checks: &[CheckResult]) -> Vec<(String, CheckStatus)> {
+        checks
+            .iter()
+            .map(|check| (check.name.clone(), check.status))
+            .collect()
+    }
+
+    #[test]
+    fn jev_checks_are_absent_when_routing_is_off() {
+        let checks = jev_routing_checks(&RalphConfig::default(), |_| None, None);
+        assert!(checks.is_empty());
+    }
+
+    #[test]
+    fn jev_checks_pass_with_key_valid_catalog_and_capable_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = routing_config(
+            dir.path(),
+            r#"[{"id":"fix","description":"d","instructions":"i"}]"#,
+        );
+        let checks = jev_routing_checks(
+            &config,
+            |key| (key == "TYPESAFE_API_KEY").then(|| "sk-test".to_string()),
+            Some("0.12.0".to_string()),
+        );
+        assert_eq!(
+            statuses(&checks),
+            vec![
+                ("jev:credential".to_string(), CheckStatus::Pass),
+                ("jev:catalog".to_string(), CheckStatus::Pass),
+                ("jev:settings".to_string(), CheckStatus::Pass),
+                ("jev:engine".to_string(), CheckStatus::Pass),
+            ]
+        );
+    }
+
+    #[test]
+    fn jev_checks_fail_on_missing_key_bad_catalog_and_old_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = routing_config(
+            dir.path(),
+            r#"[{"id":"no_match","description":"d","instructions":"i"}]"#,
+        );
+        let checks = jev_routing_checks(&config, |_| None, Some("0.11.0".to_string()));
+        let failed: Vec<_> = checks
+            .iter()
+            .filter(|check| check.status == CheckStatus::Fail)
+            .map(|check| check.name.as_str())
+            .collect();
+        assert_eq!(failed, ["jev:credential", "jev:catalog", "jev:engine"]);
+        let credential = &checks[0];
+        assert!(
+            format!("{credential:?}").contains("Never put it in TOML"),
+            "{credential:?}"
+        );
     }
 
     #[test]

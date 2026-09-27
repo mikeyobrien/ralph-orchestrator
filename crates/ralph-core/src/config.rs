@@ -1212,6 +1212,55 @@ pub struct CoreConfig {
     /// resolve against `workspace_root`.
     #[serde(default)]
     pub autoloop_preset: Option<String>,
+
+    /// Engine-side workflow routing. Only used when Ralph generates the
+    /// preset; an explicit `autoloop_preset` carries its own `[routing]`.
+    #[serde(default, skip_serializing_if = "RoutingConfig::is_empty")]
+    pub routing: RoutingConfig,
+}
+
+/// Engine-side routing (`core.routing`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoutingConfig {
+    /// Jev workflow routing, emitted as the preset's `[routing.jev]`.
+    #[serde(default)]
+    pub jev: Option<JevRoutingConfig>,
+}
+
+impl RoutingConfig {
+    fn is_empty(&self) -> bool {
+        self.jev.is_none()
+    }
+
+    /// The Jev routing block when it is switched on.
+    pub fn enabled_jev(&self) -> Option<&JevRoutingConfig> {
+        self.jev.as_ref().filter(|jev| jev.enabled)
+    }
+}
+
+/// `core.routing.jev`: autoloop selects one workflow from a route catalog with
+/// TypeSafe Jev before the first iteration, and stops the run (no fallback) on
+/// a missing credential, invalid catalog, provider failure, timeout, malformed
+/// answer, `no_match`, or low confidence. `TYPESAFE_API_KEY` comes only from
+/// the environment, never from config.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JevRoutingConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Route catalog (JSON array). Relative paths resolve against the
+    /// workspace root.
+    pub routes_file: String,
+    /// Jev model; the engine default is `jev-1.13.0`.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Minimum route probability, 0..=1; the engine default is 0.8.
+    #[serde(default)]
+    pub min_confidence: Option<f64>,
+    /// Provider timeout in milliseconds, 1..=60000; the engine default is 2000.
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
 }
 
 fn default_specs_dir() -> String {
@@ -1246,6 +1295,7 @@ impl Default for CoreConfig {
                 }),
             engine: default_engine(),
             autoloop_preset: None,
+            routing: RoutingConfig::default(),
         }
     }
 }

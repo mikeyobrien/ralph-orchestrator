@@ -1,0 +1,17 @@
+[
+  {
+    "id": "bugfix",
+    "description": "Fix a reported defect in existing behavior.",
+    "instructions": "Reproduce the defect with a failing test first, then make the smallest change that passes it."
+  },
+  {
+    "id": "feature",
+    "description": "Add new user-facing behavior.",
+    "instructions": "Write the acceptance criteria as tests, implement against them, and update the docs that describe the behavior."
+  },
+  {
+    "id": "docs",
+    "description": "Change documentation only; no code changes.",
+    "instructions": "Edit only documentation files. Verify every command and path you mention exists."
+  }
+]

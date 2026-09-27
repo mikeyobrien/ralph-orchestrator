@@ -1,0 +1,3 @@
+{"steps":[{"stdout":["autoloop 0.12.0"]}]}
+{"steps":[{"stdout":["autoloop 0.12.0"]}]}
+{"steps":[{"events":["{\"type\":\"loop.finish\",\"runId\":\"run-jev\",\"iterations\":1,\"stopReason\":\"completed\",\"costUsd\":0}"]},{"summary":{"run_id":"run-jev","iterations":1,"stop_reason":"completed","journal":"${AUTOLOOP_STATE_DIR}/journal.jsonl","memory":"${AUTOLOOP_STATE_DIR}/memory.jsonl"}},{"exit":0}]}

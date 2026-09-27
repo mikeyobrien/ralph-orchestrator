@@ -1,0 +1,23 @@
+# Jev workflow routing (autoloop >= 0.12.0).
+#
+# Before the first iteration, the engine asks TypeSafe Jev which route in
+# routes.json fits the objective and injects only that route's instructions.
+# Any failure (missing key, invalid catalog, provider error, timeout,
+# no_match, confidence below min_confidence) stops the run before the
+# backend starts. There is no fallback.
+#
+# TYPESAFE_API_KEY must be exported in the environment Ralph runs in.
+# Never put it in this file, in routes.json, or in an argument string.
+#
+# Check the setup without starting a run:  ralph doctor -c ralph.yml
+cli:
+  backend: claude
+
+core:
+  routing:
+    jev:
+      enabled: true
+      routes_file: routes.json   # relative to the workspace root
+      # model: jev-1.13.0        # engine default
+      # min_confidence: 0.8      # engine default, 0..1
+      # timeout_ms: 2000         # engine default, 1..60000

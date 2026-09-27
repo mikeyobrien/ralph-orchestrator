@@ -55,6 +55,10 @@ pub enum PresetSourceError {
     Malformed { path: PathBuf, message: String },
     #[error("unsupported preset shape at {path}")]
     Unsupported { path: PathBuf },
+    #[error(
+        "the preset at {path} enables [routing.jev], which a hats overlay (-H) cannot carry; run it with `core.autoloop_preset: {path}` so the engine reads it directly, or move the routing into `core.routing.jev` in ralph.yml"
+    )]
+    RoutingNotCarried { path: PathBuf },
 }
 
 impl PresetSourceError {
@@ -209,12 +213,41 @@ impl PresetSource for TomlPresetSource {
     }
 
     fn load(&self, path: &Path) -> Result<Value, PresetSourceError> {
+        // A hats overlay keeps only hats/events/event_loop; dropping an
+        // enabled router silently would leave the operator believing it ran.
+        if preset_enables_jev_routing(path)? {
+            return Err(PresetSourceError::RoutingNotCarried {
+                path: path.to_path_buf(),
+            });
+        }
         let topology = read_toml(&path.join("topology.toml"))?;
         let autoloops = read_toml(&path.join("autoloops.toml"))?;
         let harness_text = maybe_read_text(&path.join("harness.md"))?;
 
         build_overlay(path, &topology, &autoloops, harness_text.as_deref())
     }
+}
+
+/// Whether an autoloop preset's `autoloops.toml` switches on `[routing.jev]`.
+///
+/// Accepts a preset directory or a single-file preset. The engine stringifies
+/// config leaves, so `true` and `"true"` both count as enabled.
+pub fn preset_enables_jev_routing(preset: &Path) -> Result<bool, PresetSourceError> {
+    let file = if preset.is_dir() {
+        preset.join("autoloops.toml")
+    } else {
+        preset.to_path_buf()
+    };
+    let config = read_toml(&file)?;
+    let enabled = config
+        .get("routing")
+        .and_then(|routing| routing.get("jev"))
+        .and_then(|jev| jev.get("enabled"));
+    Ok(match enabled {
+        Some(toml::Value::Boolean(value)) => *value,
+        Some(toml::Value::String(value)) => value == "true",
+        _ => false,
+    })
 }
 
 fn read_toml(path: &Path) -> Result<toml::Value, PresetSourceError> {

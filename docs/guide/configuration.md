@@ -307,6 +307,36 @@ core:
 > and completion. Disabling or enabling this field does not select an engine
 > mode.
 
+#### core.routing.jev
+
+Jev workflow routing (autoloop >= 0.12.0). Before the first iteration the engine
+asks TypeSafe Jev to pick one route from a catalog and injects that route's
+instructions. It is off by default and fails closed: a missing key, an invalid
+catalog, a provider failure, a timeout, a malformed answer, `no_match`, or
+confidence below the threshold stops the run before the backend starts. There
+is no fallback.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | boolean | `false` | Turn routing on |
+| `routes_file` | string | required | JSON catalog, relative to the workspace root |
+| `model` | string | `jev-1.13.0` | Jev model |
+| `min_confidence` | number | `0.8` | Minimum route probability, 0 to 1 |
+| `timeout_ms` | integer | `2000` | Provider timeout, 1 to 60000 |
+
+The catalog is a JSON array of 1 to 64 routes, each with an `id` matching
+`^[a-z][a-z0-9_-]{0,63}$` (unique, never `no_match`) and nonempty
+`description` and `instructions`.
+
+`TYPESAFE_API_KEY` must be in the environment of the process that runs Ralph.
+Never put it in TOML, a route catalog, or an argument string.
+
+Ralph writes this block into the preset it generates. With an explicit
+`core.autoloop_preset`, configure `[routing.jev]` in that preset instead; setting
+both refuses to start. `ralph doctor` checks the key, the catalog, the
+settings, and that the engine reads `[routing.jev]`. See
+`examples/jev-routing/`.
+
 ### memories
 
 Persistent learning across sessions.

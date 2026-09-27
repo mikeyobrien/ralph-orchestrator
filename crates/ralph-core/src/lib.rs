@@ -25,6 +25,7 @@ mod git_ops;
 mod handoff;
 pub mod hooks;
 mod instructions;
+pub mod jev_routing;
 mod landing;
 pub mod loop_completion;
 pub mod loop_context;
@@ -62,9 +63,9 @@ pub use backend::BackendMetadata;
 pub use cli_capture::{CliCapture, CliCapturePair};
 pub use config::{
     AggregateConfig, CliConfig, ConfigError, CoreConfig, EventLoopConfig, EventMetadata,
-    FeaturesConfig, HatBackend, HatConfig, InjectMode, MemoriesConfig, MemoriesFilter, RalphConfig,
-    RobotMode, ScratchpadConfig, SkillOverride, SkillsConfig, resolve_context_window,
-    resolve_context_window_for_backend,
+    FeaturesConfig, HatBackend, HatConfig, InjectMode, JevRoutingConfig, MemoriesConfig,
+    MemoriesFilter, RalphConfig, RobotMode, RoutingConfig, ScratchpadConfig, SkillOverride,
+    SkillsConfig, resolve_context_window, resolve_context_window_for_backend,
 };
 // Re-export loop_name types (also available via FeaturesConfig.loop_naming)
 pub use diagnostics::DiagnosticsCollector;
