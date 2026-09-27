@@ -615,3 +615,19 @@ Use this template for new entries:
 - Reversibility: High; the mode is opt-in.
 - Evidence: `5b05a66`; the seam table and probe journal in `progress.md`.
 
+
+## DEC-068 (2026-09-27)
+- Decision: Make `ralph resume` work against autoloop's hardcoded resume lookup with a Ralph-owned shim (`.ralph/autoloop-resume/.autoloop` → `.ralph/autoloop`) set as `AUTOLOOP_PROJECT_DIR` for the resume child only, and write the engine state keys into the generated preset.
+- Confidence: 80
+- Alternatives Considered: (A) Move engine state back to `<workspace>/.autoloop`. Rejected because Ralph owns `.ralph/autoloop` (Step 3) and a top-level `.autoloop` is the drift that step removed. (B) Re-launch the objective with `ralph run --continue` instead of `autoloop resume`. Rejected because it discards the engine's own resume point and journal continuity. (C) Wait for upstream. Rejected; the command is broken today.
+- Reasoning: The engine still owns the resume decision (iteration, suspend and wait state). The shim only changes where resume reads its registry, and the resumed run takes every other path from its record. It was verified live: stopped at count 2, resumed to count 4, with no `.autoloop` created.
+- Reversibility: High; delete the shim once upstream issue 5 is fixed.
+- Evidence: `upstream-issues.md` issue 5; the Step 12 section in `progress.md`.
+
+## DEC-069 (2026-09-27)
+- Decision: Ralph forwards SIGINT/SIGTERM/SIGHUP to the engine while it runs (SIGTERM first, SIGKILL on a repeat) and keeps waiting for it. Headless and RPC keep the engine in Ralph's process group; the TUI and RObot paths keep it in its own group and signal that group.
+- Confidence: 85
+- Alternatives Considered: (A) Give every path its own group. Rejected: a group kill of Ralph (the stop Ralph cannot forward, e.g. a test harness or supervisor SIGKILL) then misses the engine; a gate run leaked engines this way. (B) Leave default signal handling. Rejected: `ralph loops stop` signals Ralph's pid alone, and Ralph died and orphaned a live engine and its agent.
+- Reasoning: autoloop turns SIGTERM into an orderly abort that marks the run `stopped` and resumable, so forwarding keeps the engine's own stop semantics, and waiting lets completion coordination record the stop.
+- Reversibility: High.
+- Evidence: `integration_engine_stop`; the Step 12 section in `progress.md`.

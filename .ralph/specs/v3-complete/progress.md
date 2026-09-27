@@ -2,8 +2,8 @@
 
 ## Current Step
 
-Steps 3 through 11 are closed (Step 11 on 2026-09-27). Step 12 (live
-verification under the engine) is next.
+Steps 3 through 12 are closed (Step 12 on 2026-09-27). Step 13 (TUI parity
+inspection with rendered cells) is next.
 
 ## Active Wave
 
@@ -4689,4 +4689,61 @@ route needs a key (pending, as in Step 10).
 `cargo test --workspace` exited 0 with 81 `test result: ok` lines and none
 failed. `cargo clippy --workspace --all-targets -- -D warnings` and
 `cargo fmt --all -- --check` are clean.
+
+## 2026-09-27, Step 12 closed: live verification under the engine
+
+Engine: the global autoloop 0.11.0 (PATH lookup), claude backend, scratch
+repos under the session scratchpad `step12/`. 0.12.0 was used only from the
+scratch install for drift checks.
+
+### Phase 3 evidence
+
+| Item | Result |
+|---|---|
+| 3.1 doctor | `ralph doctor` reports "Autoloop 0.11.0 available (PATH lookup)". |
+| 3.2 live loop | `ralph run -H builtin:code-assist` ran Planner, Builder, Critic, and Finalizer with a live event stream. The journal is under `.ralph/autoloop` with no top-level `.autoloop`; the tests it wrote pass; $0.54. |
+| 3.3 parallel loops | A primary loop and worktree loop `fair-finch` ran concurrently. With `auto_merge` off (the default), the worktree was preserved and listed as `unmerged`. `ralph loops merge` then landed it (`26c9452`; header and footer both on main). |
+| 3.4 RPC | `ralph run --rpc` emits one `iteration_end` per iteration and one `loop_terminated` (it had emitted duplicates). |
+| 3.4 resume | A run stopped at count 2 (3 iterations, $0.21) was resumed by `ralph resume` to count 4 with `completion_promise` and no `.autoloop` (scratch `resume5`). |
+| 3.5 drift | `waiting` and `no_event` stop reasons were unmapped and are now mapped. Budget and backend keys are unchanged in 0.12.0. |
+| 3.8 hooks | Covered by the Step 8b live delivery evidence. |
+
+### Fixes found live
+
+- `9df6eab`: `no_event` maps to LoopStale and `waiting` to Suspended; engine
+  spawn and control retry ETXTBSY (the carried `autoloop_runner.rs` item); the
+  `completion_coord` test is renamed to what it asserts (the carried Step 2
+  item).
+- `2488d47`: preflight reports post.loop hooks as delivered through the
+  engine's finish notification, warns on an explicit preset, and fails only on
+  unsupported events.
+- Step 12 commit:
+  - `ralph loops merge` and the merge-queue drain ran the v2 `ralph` found on
+    PATH with the user's global backend. Merge children now run this
+    executable, with a merge config layered on the project's `ralph.yml`.
+  - RPC terminal events were duplicated.
+  - A completed worktree loop was shown as `orphan`; it is now `unmerged`, and
+    prune keeps it.
+  - Loop history had no start record; start and resume are now recorded.
+  - An interrupted run left no persisted run id. Resume now falls back to the
+    latest run in the engine journal.
+  - `autoloop resume` reads its registry only from
+    `$AUTOLOOP_PROJECT_DIR/.autoloop` and takes no `--set` (upstream issue 5).
+    `ralph resume` points the lookup at the `.ralph/autoloop-resume` shim, and
+    the generated preset carries the state paths (DEC-068).
+  - A stop sent to Ralph's pid alone (`ralph loops stop`, a service manager)
+    killed Ralph and orphaned the engine and its agent, which kept iterating
+    and spending. Ralph now forwards the stop and waits (DEC-069). The stopped
+    banner reports the engine's iteration count and cost.
+  - Test hygiene: `integration_merge_drain_autoloop` counts merge children by
+    the engine runs they start, and the AC-93 sleep backend exits once its
+    engine is gone. Both had leaked spinning processes.
+
+### Tests
+
+`integration_engine_stop` (SIGTERM to Ralph's pid reaches the engine; Ralph
+waits and exits normally; no orphan); unit tests for the resume lookup shim,
+the explicit-preset resume refusal, the journal run-id fallback, preset state
+keys, merge config layering, the merge child executable, and one terminal RPC
+event per run.
 

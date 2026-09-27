@@ -56,3 +56,25 @@ against 0.12.0. File them at mikeyobrien/autoloop after review.
 - Expected: the promise should be an exact line or marker, and a blocked emit
   should count as an invalid event for that turn.
 
+
+## 5. `autoloop resume` ignores the state directory and CLI config layers
+
+- Versions: 0.11.0 and 0.12.0 (`autoloop-cli/dist/commands/resume.js`,
+  `autoloop-harness/dist/resume.js`).
+- Effect, registry: `resume` looks runs up in
+  `$AUTOLOOP_PROJECT_DIR/.autoloop/registry.jsonl` (default `./.autoloop`).
+  It ignores `AUTOLOOP_STATE_DIR` and `core.state_dir`, so a run started with
+  either set cannot be resumed: "error: no run matching `<id>`".
+- Effect, memory: `resume` takes no `--set` and rebuilds config from the
+  run's preset file. When the preset does not name `core.memory_file`, the
+  default is `join(basename(record.state_dir), "memory.jsonl")` joined onto the
+  work dir. `state_dir` is the per-run directory, so the resumed run's memory
+  path becomes `<work_dir>/<run_id>/memory.jsonl`, not the memory the run
+  started with.
+- Expected: resume finds runs where `run` put them (the registry beside the
+  recorded `state_dir`, or honor `AUTOLOOP_STATE_DIR`), and reuses the paths
+  recorded for the run instead of recomputing them.
+- Ralph mitigation: `ralph resume` points `AUTOLOOP_PROJECT_DIR` at
+  `.ralph/autoloop-resume`, whose `.autoloop` is a symlink to `.ralph/autoloop`.
+  It also writes the four `core.*` state keys into the generated preset, and
+  refuses to resume through an explicit preset that lacks them.
