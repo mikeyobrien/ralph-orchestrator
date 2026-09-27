@@ -28,6 +28,7 @@ mod display;
 mod doctor;
 mod engine_install;
 mod engine_provision;
+mod gate;
 mod hats;
 mod hooks;
 mod init;
@@ -570,6 +571,10 @@ enum Commands {
     /// Legacy alias for `code-task` (runtime tasks are `ralph tools task`).
     #[command(hide = true)]
     Task(CodeTaskArgs),
+
+    /// Completion judgments the engine runs at its acceptance seam.
+    #[command(hide = true)]
+    Gate(gate::GateArgs),
 
     /// Removed in v3; prints the migration to hat `concurrency`/`aggregate`.
     #[command(hide = true, disable_help_flag = true)]
@@ -1115,6 +1120,7 @@ async fn main() -> Result<()> {
             code_task_command(&config_sources, hats_source.as_ref(), cli.color, args).await
         }
         Some(Commands::Wave { .. }) => Err(wave_removed_error()),
+        Some(Commands::Gate(args)) => gate::execute(args).await,
         Some(Commands::Tools(args)) => tools::execute(args, cli.color.should_use_colors()).await,
         Some(Commands::Loops(args)) => loops::execute(args, cli.color.should_use_colors()),
         Some(Commands::Hats(args)) => {

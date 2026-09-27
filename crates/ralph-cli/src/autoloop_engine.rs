@@ -107,6 +107,28 @@ fn notify_hook_settings(
     ])
 }
 
+/// First engine release with the acceptance gate (`acceptance.verify_cmds`)
+/// the completion judge runs in. An older engine would ignore the key and
+/// accept completion unjudged.
+const MIN_ACCEPTANCE_GATE_VERSION: &str = "0.11.0";
+
+/// Fails unless the resolved autoloop engine is at least `minimum`.
+fn require_engine_at_least(minimum: &str, feature: &str) -> Result<()> {
+    use ralph_core::autoloop_health::{AutoloopHealth, check_autoloop, version_at_least};
+    let version = match check_autoloop() {
+        AutoloopHealth::Ok { version, .. } | AutoloopHealth::TooOld { version, .. } => version,
+        AutoloopHealth::VersionUnknown { .. } | AutoloopHealth::Missing => bail!(
+            "{feature} needs autoloop >= {minimum}, but Ralph cannot determine the autoloop version"
+        ),
+    };
+    if version_at_least(&version, minimum) != Some(true) {
+        bail!(
+            "{feature} needs autoloop >= {minimum}, but autoloop {version} is installed; upgrade with {AUTOLOOP_UPGRADE_HINT}"
+        );
+    }
+    Ok(())
+}
+
 /// Fails unless the resolved autoloop engine reads `[routing.jev]`.
 fn require_jev_routing_engine() -> Result<()> {
     use ralph_core::autoloop_health::{
@@ -432,6 +454,14 @@ pub async fn run_autoloop_engine(
             "core.routing.jev is set, but core.autoloop_preset ({explicit}) is your own preset, which Ralph never rewrites; configure [routing.jev] in that preset's autoloops.toml, or remove core.autoloop_preset so Ralph generates the preset from core.routing.jev"
         );
     }
+    if let (Some(explicit), Some(_)) = (
+        config.core.autoloop_preset.as_deref(),
+        config.core.completion.jev.as_ref(),
+    ) {
+        bail!(
+            "core.completion.jev is set, but core.autoloop_preset ({explicit}) is your own preset, which Ralph never rewrites; add `ralph gate jev-judge` to that preset's acceptance.verify_cmds yourself, or remove core.autoloop_preset so Ralph generates the preset"
+        );
+    }
     let (preset, explicit_preset) = match config.core.autoloop_preset.as_deref() {
         Some(p) => {
             let preset = resolve(&workspace, p);
@@ -464,6 +494,42 @@ pub async fn run_autoloop_engine(
     // on it, so routing would silently not happen. Refuse instead.
     if ralph_core::preset_source::preset_enables_jev_routing(&preset).unwrap_or(false) {
         require_jev_routing_engine()?;
+    }
+
+    // The Jev completion judge rides the engine's acceptance gate, which the
+    // harness runs on every done-claim and which holds completion on failure.
+    if let Some(settings) = config.core.completion.enabled_jev()
+        && !explicit_preset
+    {
+        require_engine_at_least(MIN_ACCEPTANCE_GATE_VERSION, "the Jev completion judge")?;
+        let snapshot = ralph_core::jev_judge::JudgeSnapshot {
+            settings,
+            workspace: workspace.clone(),
+            journal_file: engine_journal_path(&engine_state_root),
+            record_file: ralph_core::jev_judge::JudgeSnapshot::record_path(&engine_state_root),
+        };
+        let snapshot_path = ralph_core::jev_judge::JudgeSnapshot::path(&engine_state_root);
+        snapshot
+            .write(&snapshot_path)
+            .context("writing the Jev judge snapshot")?;
+        let ralph = std::env::current_exe().context("locating the ralph executable")?;
+        let command = format!(
+            "{} gate jev-judge --snapshot {}",
+            shell_quote(&ralph.to_string_lossy()),
+            shell_quote(&snapshot_path.to_string_lossy())
+        );
+        let path = preset.join("autoloops.toml");
+        let mut toml = std::fs::read_to_string(&path)
+            .context("reading the generated preset to add the completion judge")?;
+        // The metareview's EXIT verdict completes the loop without consulting
+        // the acceptance gate (autoloop 0.11.0 and 0.12.0), which would turn a
+        // held completion into a passed run. With the judge on, the gate must
+        // be the only way to complete, so the metareview is switched off.
+        toml.push_str(&format!(
+            "\nacceptance.verify_cmds = [{}]\nreview.enabled = false\n",
+            toml_string(&command)
+        ));
+        std::fs::write(&path, toml).context("writing the completion judge into the preset")?;
     }
 
     // Configured post.loop hooks ride the engine's finish notification. The
@@ -913,10 +979,12 @@ fn format_cut_off_event(unterminated_bytes: usize, ctx: &HeadlessPrintCtx) -> Op
     ))
 }
 
-/// Print the headless lines for one poll: its events, then any new drops.
+/// Print the headless lines for one poll: its events, any new drops, then
+/// completion-judge decisions from the journal.
 fn print_headless_poll(
     events: &[AutoloopEvent],
     tailer: &AutoloopEventTailer,
+    journal: &mut ralph_adapters::AutoloopJournalTailer,
     ctx: &mut HeadlessPrintCtx,
 ) {
     for event in events {
@@ -927,6 +995,53 @@ fn print_headless_poll(
     if let Some(line) = format_dropped_events(tailer.dropped(), ctx) {
         print_headless_line(&line);
     }
+    for record in journal.poll().unwrap_or_default() {
+        if let Some(line) = format_judge_record(&record, ctx) {
+            print_headless_line(&line);
+        }
+    }
+}
+
+/// The run's journal (a sibling of its events file), read from its current end.
+fn headless_journal_tailer(events_path: &Path) -> ralph_adapters::AutoloopJournalTailer {
+    let engine_root = events_path.parent().unwrap_or(Path::new("."));
+    ralph_adapters::AutoloopJournalTailer::from_end(engine_journal_path(engine_root))
+}
+
+/// The completion judge's decision, from the engine's `acceptance.command`
+/// record for `ralph gate jev-judge`.
+fn format_judge_record(
+    record: &ralph_adapters::AutoloopRecord,
+    ctx: &HeadlessPrintCtx,
+) -> Option<String> {
+    if record.topic != "acceptance.command"
+        || !record
+            .field("command")
+            .is_some_and(|command| command.contains(" gate jev-judge "))
+    {
+        return None;
+    }
+    let text = record
+        .field("output_tail")
+        .and_then(|tail| {
+            tail.lines()
+                .rev()
+                .find(|line| line.starts_with("jev judge "))
+        })
+        .map(|line| sanitize_tui_inline_text(line))
+        .unwrap_or_else(|| {
+            format!(
+                "jev judge held: judge exited {} without a decision",
+                record.field("exit_code").unwrap_or("?")
+            )
+        });
+    let p = ctx.palette;
+    let color = if record.field("exit_code") == Some("0") {
+        p.green
+    } else {
+        p.yellow
+    };
+    Some(format!("{color}\u{2696} {text}{}", p.reset))
 }
 
 fn print_headless_line(line: &str) {
@@ -952,6 +1067,8 @@ async fn run_autoloop_headless(
 ) -> Result<AutoloopOutcome> {
     use tokio::sync::watch;
 
+    // Positioned before the engine starts, so this run's records are read.
+    let mut journal = headless_journal_tailer(&events_path);
     // Headless intentionally leaves autoloop in Ralph's process group. Unlike
     // the interactive TUI path, there is no local quit action requiring Ralph
     // to kill a separately-owned subprocess tree.
@@ -974,7 +1091,7 @@ async fn run_autoloop_headless(
                 }
                 _ = ticker.tick() => {
                     match tailer.poll() {
-                        Ok(events) => print_headless_poll(&events, &tailer, &mut ctx),
+                        Ok(events) => print_headless_poll(&events, &tailer, &mut journal, &mut ctx),
                         Err(error) => {
                             tracing::debug!(%error, "headless autoloop event reader poll failed");
                         }
@@ -986,7 +1103,7 @@ async fn run_autoloop_headless(
         // autoloop writes terminal events immediately before exit. Drain once
         // after cancellation so those final structured facts are not lost.
         match tailer.poll() {
-            Ok(events) => print_headless_poll(&events, &tailer, &mut ctx),
+            Ok(events) => print_headless_poll(&events, &tailer, &mut journal, &mut ctx),
             Err(error) => {
                 tracing::debug!(%error, "headless autoloop event reader final drain failed");
             }
@@ -1140,6 +1257,7 @@ async fn run_autoloop_with_robot(
     use tokio::sync::watch;
 
     let runner = runner.own_process_group(true);
+    let mut journal = headless_journal_tailer(&events_path);
     let child = runner.spawn().context("spawning the autoloop subprocess")?;
     let done = Arc::new(AtomicBool::new(false));
     let robot_shutdown = service.shutdown_flag();
@@ -1163,7 +1281,7 @@ async fn run_autoloop_with_robot(
                 }
                 _ = ticker.tick() => {
                     match tailer.poll() {
-                        Ok(events) => print_headless_poll(&events, &tailer, &mut ctx),
+                        Ok(events) => print_headless_poll(&events, &tailer, &mut journal, &mut ctx),
                         Err(error) => {
                             tracing::debug!(%error, "RObot autoloop event reader poll failed");
                         }
@@ -1173,7 +1291,7 @@ async fn run_autoloop_with_robot(
         }
 
         match tailer.poll() {
-            Ok(events) => print_headless_poll(&events, &tailer, &mut ctx),
+            Ok(events) => print_headless_poll(&events, &tailer, &mut journal, &mut ctx),
             Err(error) => {
                 tracing::debug!(%error, "RObot autoloop event reader final drain failed");
             }

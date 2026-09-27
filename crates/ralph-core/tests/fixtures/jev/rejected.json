@@ -1,0 +1,23 @@
+{
+  "model": "jev-1.13.0",
+  "answers": {
+    "completion_verified": {
+      "type": "noul",
+      "noul": 0.12
+    },
+    "verdict": {
+      "type": "choice",
+      "choice": "rejected",
+      "probabilities": {
+        "approved": 0.03,
+        "rejected": 0.9,
+        "needs_more": 0.07
+      },
+      "confidence": 0.84
+    }
+  },
+  "usage": {
+    "input_tokens": 812,
+    "output_tokens": 41
+  }
+}

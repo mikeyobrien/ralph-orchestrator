@@ -1,0 +1,13 @@
+{
+  "model": "jev-1.13.0",
+  "answers": {
+    "verdict": {
+      "type": "choice",
+      "choice": "approved"
+    }
+  },
+  "usage": {
+    "input_tokens": 1,
+    "output_tokens": 1
+  }
+}

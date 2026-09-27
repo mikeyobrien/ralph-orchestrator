@@ -1217,6 +1217,56 @@ pub struct CoreConfig {
     /// preset; an explicit `autoloop_preset` carries its own `[routing]`.
     #[serde(default, skip_serializing_if = "RoutingConfig::is_empty")]
     pub routing: RoutingConfig,
+
+    /// Completion gates Ralph registers at the engine's acceptance seam.
+    #[serde(default, skip_serializing_if = "CompletionConfig::is_empty")]
+    pub completion: CompletionConfig,
+}
+
+/// Completion gates (`core.completion`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompletionConfig {
+    /// Jev completion judge, run by the engine on every done-claim.
+    #[serde(default)]
+    pub jev: Option<JevJudgeConfig>,
+}
+
+impl CompletionConfig {
+    fn is_empty(&self) -> bool {
+        self.jev.is_none()
+    }
+
+    /// The judge settings when the judge is switched on.
+    pub fn enabled_jev(&self) -> Option<crate::jev_judge::JudgeSettings> {
+        let jev = self.jev.as_ref().filter(|jev| jev.enabled)?;
+        let defaults = crate::jev_judge::JudgeSettings::default();
+        Some(crate::jev_judge::JudgeSettings {
+            model: jev.model.clone().unwrap_or(defaults.model),
+            threshold: jev.threshold.unwrap_or(defaults.threshold),
+            timeout_ms: jev.timeout_ms.unwrap_or(defaults.timeout_ms),
+        })
+    }
+}
+
+/// `core.completion.jev`: a Jev judgment the engine requires before it
+/// accepts a completion. Approves only when the verdict is `approved` and
+/// `completion_verified` clears `threshold`; anything else, including a
+/// missing credential or provider failure, holds completion.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JevJudgeConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Jev model; default `jev-1.13.0`.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Minimum `completion_verified` noul, 0..=1; default 0.8.
+    #[serde(default)]
+    pub threshold: Option<f64>,
+    /// Provider timeout in milliseconds; default 10000.
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
 }
 
 /// Engine-side routing (`core.routing`).
@@ -1296,6 +1346,7 @@ impl Default for CoreConfig {
             engine: default_engine(),
             autoloop_preset: None,
             routing: RoutingConfig::default(),
+            completion: CompletionConfig::default(),
         }
     }
 }

@@ -337,6 +337,40 @@ both refuses to start. `ralph doctor` checks the key, the catalog, the
 settings, and that the engine reads `[routing.jev]`. See
 `examples/jev-routing/`.
 
+#### core.completion.jev
+
+A Jev completion judge (autoloop >= 0.11.0). The engine still owns completion:
+Ralph registers `ralph gate jev-judge` as one of the engine's acceptance
+`verify_cmds`, which the harness runs on every done-claim and which holds
+completion unless it passes.
+
+The judge asks TypeSafe Jev two questions about the run's own evidence (the
+objective, the completion claim, the latest output, and the changed files): a
+`noul` for `completion_verified`, and a `choice` verdict over `approved`,
+`rejected`, and `needs_more`. It approves only when the verdict is `approved`
+**and** `completion_verified` is at least `threshold`. A held completion is
+handed back to the agent with the deciding values, for example
+`jev judge held: completion_verified 0.55 < 0.80 (verdict approved 0.72)`.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | boolean | `false` | Turn the judge on |
+| `model` | string | `jev-1.13.0` | Jev model |
+| `threshold` | number | `0.8` | Minimum `completion_verified`, 0 to 1 |
+| `timeout_ms` | integer | `10000` | Provider timeout |
+
+If no judgment can be obtained (missing `TYPESAFE_API_KEY`, provider error,
+timeout, or malformed answer), completion is held and the decision is recorded
+as `marker_fallback`, never as a Jev approval. Decisions are recorded in
+`.ralph/autoloop/jev-judge.jsonl` with the deciding values, model, and
+provenance, and never with the key, objective, or instructions.
+
+With the judge on, Ralph also sets `review.enabled = false` in the generated
+preset: the engine's metareview can end a run with an `EXIT` verdict without
+consulting the acceptance gate, which would turn a held completion into a
+passed run. An explicit `core.autoloop_preset` refuses with the judge enabled;
+add the command to that preset's `acceptance.verify_cmds` yourself.
+
 ### memories
 
 Persistent learning across sessions.

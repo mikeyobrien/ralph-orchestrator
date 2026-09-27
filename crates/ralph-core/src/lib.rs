@@ -25,6 +25,7 @@ mod git_ops;
 mod handoff;
 pub mod hooks;
 mod instructions;
+pub mod jev_judge;
 pub mod jev_routing;
 mod landing;
 pub mod loop_completion;
@@ -62,10 +63,11 @@ pub use backend::BackendMetadata;
 #[cfg(feature = "recording")]
 pub use cli_capture::{CliCapture, CliCapturePair};
 pub use config::{
-    AggregateConfig, CliConfig, ConfigError, CoreConfig, EventLoopConfig, EventMetadata,
-    FeaturesConfig, HatBackend, HatConfig, InjectMode, JevRoutingConfig, MemoriesConfig,
-    MemoriesFilter, RalphConfig, RobotMode, RoutingConfig, ScratchpadConfig, SkillOverride,
-    SkillsConfig, resolve_context_window, resolve_context_window_for_backend,
+    AggregateConfig, CliConfig, CompletionConfig, ConfigError, CoreConfig, EventLoopConfig,
+    EventMetadata, FeaturesConfig, HatBackend, HatConfig, InjectMode, JevJudgeConfig,
+    JevRoutingConfig, MemoriesConfig, MemoriesFilter, RalphConfig, RobotMode, RoutingConfig,
+    ScratchpadConfig, SkillOverride, SkillsConfig, resolve_context_window,
+    resolve_context_window_for_backend,
 };
 // Re-export loop_name types (also available via FeaturesConfig.loop_naming)
 pub use diagnostics::DiagnosticsCollector;

@@ -66,6 +66,11 @@ pub async fn execute(
         |key| env::var(key).ok(),
         engine_version(),
     ));
+    checks.extend(jev_judge_checks(
+        &config,
+        |key| env::var(key).ok(),
+        engine_version(),
+    ));
 
     checks.extend(other_checks);
 
@@ -163,6 +168,68 @@ where
                 "jev:engine",
                 "autoloop version unknown",
                 format!("Routing needs autoloop >= {MIN_JEV_ROUTING_VERSION}."),
+            ),
+        },
+    );
+    checks
+}
+
+/// Completion-judge checks, only when `core.completion.jev` is on: the
+/// credential, the threshold range, and an engine with the acceptance gate.
+fn jev_judge_checks<F>(
+    config: &RalphConfig,
+    env_lookup: F,
+    engine_version: Option<String>,
+) -> Vec<CheckResult>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    use ralph_core::autoloop_health::version_at_least;
+    let Some(settings) = config.core.completion.enabled_jev() else {
+        return Vec::new();
+    };
+    let mut checks = Vec::new();
+    checks.push(
+        if env_lookup("TYPESAFE_API_KEY").is_some_and(|key| !key.trim().is_empty()) {
+            CheckResult::pass("judge:credential", "TYPESAFE_API_KEY is set")
+        } else {
+            CheckResult::fail(
+                "judge:credential",
+                "TYPESAFE_API_KEY is missing; every completion will be held",
+                "Export TYPESAFE_API_KEY in the environment Ralph runs in. Never put it in TOML or an argument string.",
+            )
+        },
+    );
+    checks.push(if (0.0..=1.0).contains(&settings.threshold) {
+        CheckResult::pass(
+            "judge:threshold",
+            format!("completion_verified threshold {:.2}", settings.threshold),
+        )
+    } else {
+        CheckResult::fail(
+            "judge:threshold",
+            "Threshold out of range",
+            format!("threshold {} must be within 0..=1", settings.threshold),
+        )
+    });
+    checks.push(
+        match engine_version
+            .as_deref()
+            .map(|version| (version, version_at_least(version, "0.11.0")))
+        {
+            Some((version, Some(true))) => CheckResult::pass(
+                "judge:engine",
+                format!("autoloop {version} runs acceptance.verify_cmds"),
+            ),
+            Some((version, _)) => CheckResult::fail(
+                "judge:engine",
+                format!("autoloop {version} has no acceptance gate"),
+                "Upgrade to autoloop >= 0.11.0.",
+            ),
+            None => CheckResult::fail(
+                "judge:engine",
+                "autoloop version unknown",
+                "The completion judge needs autoloop >= 0.11.0.",
             ),
         },
     );
@@ -798,6 +865,30 @@ mod tests {
             .iter()
             .map(|check| (check.name.clone(), check.status))
             .collect()
+    }
+
+    #[test]
+    fn judge_checks_are_absent_when_disabled_and_need_no_credential() {
+        let mut config = RalphConfig::default();
+        assert!(jev_judge_checks(&config, |_| None, None).is_empty());
+        config.core.completion = serde_yaml::from_str("jev:\n  enabled: false\n").unwrap();
+        assert!(jev_judge_checks(&config, |_| None, None).is_empty());
+    }
+
+    #[test]
+    fn judge_checks_report_credential_threshold_and_engine() {
+        let mut config = RalphConfig::default();
+        config.core.completion =
+            serde_yaml::from_str("jev:\n  enabled: true\n  threshold: 1.5\n").unwrap();
+        let checks = jev_judge_checks(&config, |_| None, Some("0.11.0".to_string()));
+        assert_eq!(
+            statuses(&checks),
+            vec![
+                ("judge:credential".to_string(), CheckStatus::Fail),
+                ("judge:threshold".to_string(), CheckStatus::Fail),
+                ("judge:engine".to_string(), CheckStatus::Pass),
+            ]
+        );
     }
 
     #[test]

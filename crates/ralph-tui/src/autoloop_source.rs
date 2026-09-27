@@ -653,6 +653,41 @@ fn warning_line(text: &str) -> Line<'static> {
     ])
 }
 
+/// The completion judge's decision, from the engine's `acceptance.command`
+/// record for `ralph gate jev-judge`: one dense line, green when approved.
+fn judge_line(record: &AutoloopRecord) -> Option<Line<'static>> {
+    if record.topic != "acceptance.command"
+        || !record
+            .field("command")
+            .is_some_and(|command| command.contains(" gate jev-judge "))
+    {
+        return None;
+    }
+    let text = record
+        .field("output_tail")
+        .and_then(|tail| {
+            tail.lines()
+                .rev()
+                .find(|line| line.starts_with("jev judge "))
+        })
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            format!(
+                "jev judge held: judge exited {} without a decision",
+                record.field("exit_code").unwrap_or("?")
+            )
+        });
+    let color = if record.field("exit_code") == Some("0") {
+        Color::Green
+    } else {
+        Color::Yellow
+    };
+    Some(Line::from(vec![
+        Span::styled("\u{2696} ", Style::default().fg(color)),
+        Span::styled(bounded_inline_text(&text), Style::default().fg(color)),
+    ]))
+}
+
 /// Recomputes the header warning: unreadable engine events for the whole run,
 /// plus live-stream bytes skipped in the current iteration.
 fn refresh_attention(state: &mut TuiState, ctx: &AutoloopMapCtx) {
@@ -691,6 +726,15 @@ fn apply_journal_record(
     ctx: &mut AutoloopMapCtx,
     record: &AutoloopRecord,
 ) {
+    if let Some(line) = judge_line(record) {
+        if let Ok(mut s) = state.lock() {
+            if s.iterations.is_empty() {
+                s.start_new_iteration();
+            }
+            push_iteration_line(&mut s, ctx, line);
+        }
+        return;
+    }
     if record.topic != "backend.start" {
         return;
     }
