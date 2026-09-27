@@ -471,10 +471,10 @@ pub(crate) fn load_config_with_overrides(
     let user_layer = config_resolution::load_optional_user_config_value()?;
     let mut merged_value = config_resolution::default_core_value()?;
     if let Some((user_value, _)) = &user_layer {
-        merged_value = config_resolution::merge_yaml_values(merged_value, user_value.clone())?;
+        merged_value = config_resolution::merge_config_layers(merged_value, user_value.clone())?;
     }
     if let Some(primary_value) = primary_value {
-        merged_value = config_resolution::merge_yaml_values(merged_value, primary_value)?;
+        merged_value = config_resolution::merge_config_layers(merged_value, primary_value)?;
     }
 
     let merged_label = config_resolution::compose_core_label(

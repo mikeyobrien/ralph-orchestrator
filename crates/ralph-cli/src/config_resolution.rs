@@ -55,6 +55,33 @@ pub(crate) fn default_core_value() -> Result<Value> {
     Ok(value)
 }
 
+/// Merges one config layer over another.
+///
+/// Like [`merge_yaml_values`], except that `cli.args` belong to the backend
+/// they were written for: when the overlay selects a different `cli.backend`
+/// without its own `cli.args`, the base layer's args are dropped instead of
+/// leaking onto the new backend. A user config that pairs `backend: pi` with
+/// pi flags must not hand those flags to a project's `backend: claude`.
+pub(crate) fn merge_config_layers(mut base: Value, overlay: Value) -> Result<Value> {
+    let cli = Value::String("cli".to_string());
+    let backend = Value::String("backend".to_string());
+    let args = Value::String("args".to_string());
+    let overlay_cli = overlay.get(&cli).and_then(Value::as_mapping);
+    let overlay_backend = overlay_cli.and_then(|cli| cli.get(&backend));
+    let overlay_has_args = overlay_cli.is_some_and(|cli| cli.contains_key(&args));
+    if let Some(overlay_backend) = overlay_backend
+        && !overlay_has_args
+        && let Some(base_cli) = base.get_mut(&cli).and_then(Value::as_mapping_mut)
+        && base_cli.get(&backend) != Some(overlay_backend)
+        && base_cli.remove(&args).is_some()
+    {
+        tracing::debug!(
+            "cli.args from a lower config layer were dropped because a higher layer selected a different cli.backend"
+        );
+    }
+    merge_yaml_values(base, overlay)
+}
+
 pub(crate) fn merge_yaml_values(base: Value, overlay: Value) -> Result<Value> {
     match (base, overlay) {
         (Value::Mapping(mut base_map), Value::Mapping(overlay_map)) => {
@@ -128,6 +155,37 @@ mod tests {
         let path = user_config_path_from_home(Some(Path::new("/tmp/test-home")))
             .expect("path should exist");
         assert_eq!(path, PathBuf::from("/tmp/test-home/.ralph/config.yml"));
+    }
+
+    fn yaml(text: &str) -> Value {
+        serde_yaml::from_str(text).unwrap()
+    }
+
+    #[test]
+    fn a_higher_layer_backend_does_not_inherit_another_backends_args() {
+        let user = yaml("cli:\n  backend: pi\n  args: [--provider, spark]\n");
+        let project = yaml("cli:\n  backend: claude\n");
+        let merged = merge_config_layers(user, project).unwrap();
+        assert_eq!(merged["cli"]["backend"], yaml("claude"));
+        assert!(merged["cli"].get("args").is_none(), "{merged:?}");
+    }
+
+    #[test]
+    fn args_are_kept_when_the_backend_is_unchanged_or_overridden_together() {
+        let user = yaml("cli:\n  backend: pi\n  args: [--provider, spark]\n");
+        let same = merge_config_layers(user.clone(), yaml("cli:\n  backend: pi\n")).unwrap();
+        assert_eq!(same["cli"]["args"], yaml("[--provider, spark]"));
+
+        let paired = merge_config_layers(
+            user.clone(),
+            yaml("cli:\n  backend: claude\n  args: [--verbose]\n"),
+        )
+        .unwrap();
+        assert_eq!(paired["cli"]["args"], yaml("[--verbose]"));
+
+        let args_only = merge_config_layers(user, yaml("cli:\n  args: [--model, x]\n")).unwrap();
+        assert_eq!(args_only["cli"]["backend"], yaml("pi"));
+        assert_eq!(args_only["cli"]["args"], yaml("[--model, x]"));
     }
 
     #[test]

@@ -368,10 +368,10 @@ async fn load_core_value(
 
     let mut merged = config_resolution::default_core_value()?;
     if let Some((user_value, _)) = &user_layer {
-        merged = config_resolution::merge_yaml_values(merged, user_value.clone())?;
+        merged = config_resolution::merge_config_layers(merged, user_value.clone())?;
     }
     if let Some(primary_value) = primary_value {
-        merged = config_resolution::merge_yaml_values(merged, primary_value)?;
+        merged = config_resolution::merge_config_layers(merged, primary_value)?;
     }
 
     let merged_label = config_resolution::compose_core_label(

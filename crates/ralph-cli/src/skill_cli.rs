@@ -279,7 +279,7 @@ fn load_config(root: &Path) -> RalphConfig {
     };
 
     if let Ok(Some((user_value, _))) = config_resolution::load_optional_user_config_value() {
-        if let Ok(next) = config_resolution::merge_yaml_values(merged, user_value) {
+        if let Ok(next) = config_resolution::merge_config_layers(merged, user_value) {
             merged = next;
         } else {
             return RalphConfig::default();
@@ -291,7 +291,7 @@ fn load_config(root: &Path) -> RalphConfig {
         && let Ok(value) =
             config_resolution::parse_yaml_value(&content, &path.display().to_string())
     {
-        if let Ok(next) = config_resolution::merge_yaml_values(merged, value) {
+        if let Ok(next) = config_resolution::merge_config_layers(merged, value) {
             merged = next;
         } else {
             return RalphConfig::default();
