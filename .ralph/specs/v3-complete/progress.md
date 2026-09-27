@@ -2,8 +2,8 @@
 
 ## Current Step
 
-Steps 3 through 12 are closed (Step 12 on 2026-09-27). Step 13 (TUI parity
-inspection with rendered cells) is next.
+Steps 3 through 13 are closed (Step 13 on 2026-09-27). Step 14 (GA gate,
+close the epic, final suites, push) is next.
 
 ## Active Wave
 
@@ -4746,4 +4746,70 @@ waits and exits normally; no orphan); unit tests for the resume lookup shim,
 the explicit-preset resume refusal, the journal run-id fallback, preset state
 keys, merge config layering, the merge child executable, and one terminal RPC
 event per run.
+
+## 2026-09-27, Step 13 closed: TUI parity from rendered cells
+
+### What renders the frames
+
+The live app's frame drawing moved into `ralph_tui::render_frame` (with
+`frame_layout`). The app, the new test, and `validate_widgets` all draw
+through it, so a snapshot is the frame a user sees.
+
+### The fixture
+
+`crates/ralph-tui/tests/fixtures/autoloop_code_assist/` is the Step 12 live
+`ralph run -H builtin:code-assist` run (autoloop 0.11.0, claude backend),
+sanitized. It holds the `--events` stream, the four `claude-stream.N.jsonl`
+files, and the journal's `backend.start` records. Paths are rewritten to
+`/work` and owners to `ralph`. Session ids, init records (tool lists, MCP
+servers), thinking, usage, and the agent's claude.ai connector notice are
+removed.
+
+### `autoloop_frames` (production reader, staged like the engine)
+
+The test starts `run_autoloop_event_reader_with_journal` and writes each
+iteration's journal record, stream, and events in the engine's order,
+waiting on the rendered state between stages. It then:
+
+- asserts that all four agent iterations keep their `⚙ Bash` tool calls after
+  reconciliation to `backend.output`;
+- snapshots each iteration's header: `📋 Planner @claude-sdk`,
+  `⚙️ Builder @claude-sdk`, `🧪 Fresh-Eyes Critic @claude-sdk`, and
+  `🏁 Finalizer @claude-sdk`, then `metareview` for the engine's closing
+  review iteration;
+- snapshots iteration 1 reviewed from the finished run (tool calls, then
+  text, then the routed event) at 100x30, and the final screen at 40x16;
+- asserts no frame at 40, 80, or 120 columns contains `WAVE`;
+- appends a malformed engine line and snapshots the header
+  `⚠ 1 engine event skipped`, which also survives at 40 columns as `⚠`.
+
+It passed 10 of 10 repeated runs.
+
+### Defects the rendered cells showed, fixed
+
+- The stop reason printed twice ("■ run finished: verdict_exit" from both
+  `summary` and `loop.finish`). It is now recorded once.
+- The engine's closing metareview iteration was labelled `working`, even
+  after the run was done. `review.banner` now labels its iteration
+  `metareview` until a role banner replaces it.
+- The help overlay clipped its own bindings at 80x24 (fixed 50% width, 35
+  rows) and advertised guidance keys that do nothing under the autoloop
+  source. It now sizes to its content, drops spacer rows when short, and
+  omits the guidance keys under the autoloop source. A test checks every
+  binding at 80x24 and 60x24.
+- `validate_widgets` rendered 1-row header and footer areas into a 2-row
+  design, so it wrote only border characters, and it used the v2 event model.
+  It now builds state from the fixture's events through
+  `apply_autoloop_event` and writes live, review, finished, narrow, and help
+  frames.
+
+### Observed, not changed
+
+- Adjacent assistant text blocks arrive joined without a separator
+  ("…to the builder.I finished…") because the claude CLI's result
+  concatenates them. It is visible in the TUI but belongs to the backend.
+- `TuiState::update(&Event)` and `Tui::observer()` (the v2 bus path) have no
+  production caller. `integration_snapshots` and the header unit tests still
+  drive state through them, so they are not evidence for the v3 path;
+  `autoloop_frames` is. Step 14 records this in the GA R-matrix.
 
