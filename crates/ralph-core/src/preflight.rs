@@ -203,12 +203,25 @@ impl PreflightCheck for HooksValidationCheck {
         validate_hook_duplicate_names(config, &mut diagnostics);
         validate_hook_command_resolvability(config, &mut diagnostics);
 
+        if let Err(error) = crate::hooks::engine_notify::validate_engine_hooks(&config.hooks) {
+            diagnostics.push(error.to_string());
+        }
+
         if diagnostics.is_empty() {
-            CheckResult::warn(
-                self.name(),
-                format!("Configured hooks are inert ({configured_hooks} hook(s))"),
-                "WARNING: lifecycle hooks are NOT executed under the autoloop engine pending the engine bridge.",
-            )
+            if config.core.autoloop_preset.is_some() {
+                CheckResult::warn(
+                    self.name(),
+                    format!("Hooks need notify lines in your preset ({configured_hooks} hook(s))"),
+                    "core.autoloop_preset is your own preset, which Ralph does not edit; post.loop hooks fire only if its autoloops.toml carries the notify.* lines `ralph run` prints.",
+                )
+            } else {
+                CheckResult::pass(
+                    self.name(),
+                    format!(
+                        "{configured_hooks} post.loop hook(s) fire through the engine's finish notification"
+                    ),
+                )
+            }
         } else {
             CheckResult::fail(
                 self.name(),
@@ -1323,33 +1336,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hooks_check_warns_that_resolvable_configured_hooks_are_inert() {
+    async fn hooks_check_passes_post_loop_hooks_and_refuses_unsupported_events() {
         let temp = tempfile::tempdir().expect("tempdir");
         let script_dir = temp.path().join("scripts/hooks");
         std::fs::create_dir_all(&script_dir).expect("create script directory");
-
-        let script_path = script_dir.join("env-guard.sh");
+        let script_path = script_dir.join("notify.sh");
         std::fs::write(&script_path, "#!/usr/bin/env sh\nexit 0\n").expect("write script");
         mark_executable(&script_path);
 
         let mut config = RalphConfig::default();
         config.core.workspace_root = temp.path().to_path_buf();
         config.hooks.enabled = true;
-        config.hooks.events.insert(
-            HookPhaseEvent::PreLoopStart,
-            vec![hook_spec("env-guard", &["./scripts/hooks/env-guard.sh"])],
+        let mut notify = hook_spec("notify", &["./scripts/hooks/notify.sh"]);
+        notify.on_error = Some(HookOnError::Warn);
+        config
+            .hooks
+            .events
+            .insert(HookPhaseEvent::PostLoopComplete, vec![notify]);
+
+        let result = HooksValidationCheck.run(&config).await;
+        assert_eq!(result.status, CheckStatus::Pass);
+        assert_eq!(
+            result.label,
+            "1 post.loop hook(s) fire through the engine's finish notification"
         );
 
-        let check = HooksValidationCheck;
-        let result = check.run(&config).await;
-
-        assert_eq!(result.status, CheckStatus::Warn);
-        assert!(result.label.contains("Configured hooks are inert"));
-        assert!(result.label.contains("1 hook(s)"));
-        let message = result.message.expect("expected inert-hooks warning");
-        assert!(message.contains("lifecycle hooks are NOT executed"));
-        assert!(message.contains("autoloop engine"));
-        assert!(message.contains("pending the engine bridge"));
+        config.hooks.events.insert(
+            HookPhaseEvent::PreLoopStart,
+            vec![hook_spec("env-guard", &["./scripts/hooks/notify.sh"])],
+        );
+        let result = HooksValidationCheck.run(&config).await;
+        assert_eq!(result.status, CheckStatus::Fail);
+        let message = result.message.expect("refusal message");
+        assert!(
+            message.contains(
+                "hook event `pre.loop.start` has no equivalent under the v3 autoloop engine"
+            ),
+            "{message}"
+        );
     }
 
     #[tokio::test]

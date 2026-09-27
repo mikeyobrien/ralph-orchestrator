@@ -68,8 +68,9 @@ fn test_preflight_unknown_check_fails() {
 }
 
 #[test]
-fn configured_hooks_warning_is_visible_in_run_and_doctor_but_absent_without_hooks() {
-    const WARNING: &str = "WARNING: lifecycle hooks are NOT executed under the autoloop engine pending the engine bridge.";
+fn unsupported_hook_refusal_is_visible_in_run_and_doctor_but_absent_without_hooks() {
+    const WARNING: &str =
+        "hook event `pre.loop.start` has no equivalent under the v3 autoloop engine";
 
     let temp_dir = TempDir::new().expect("temp dir");
     let temp_path = temp_dir.path();
@@ -114,7 +115,7 @@ features:
         let hooks_text = rendered(&hooks_output);
         assert!(
             hooks_text.contains(WARNING),
-            "{subcommand} output did not contain inert-hooks warning:\n{hooks_text}"
+            "{subcommand} output did not name the unsupported hook event:\n{hooks_text}"
         );
 
         let mut no_hooks_args = vec![
@@ -129,7 +130,7 @@ features:
         let no_hooks_text = rendered(&no_hooks_output);
         assert!(
             !no_hooks_text.contains(WARNING),
-            "{subcommand} output unexpectedly contained inert-hooks warning:\n{no_hooks_text}"
+            "{subcommand} output unexpectedly named a hook refusal:\n{no_hooks_text}"
         );
     }
 }
