@@ -326,6 +326,16 @@ pub async fn run_autoloop_engine(
     let loop_id =
         prepare_loop_identity(&identity_context, launch.continue_mode, loop_id.as_deref())?;
 
+    // Record which untracked files predate this run, so landing commits only
+    // what the loop created. A continued or resumed run keeps its original
+    // baseline.
+    let resuming = launch.continue_mode || launch.native_resume;
+    if (!resuming || !identity_context.landing_baseline_path().exists())
+        && let Err(error) = ralph_core::record_untracked_baseline(&identity_context)
+    {
+        tracing::warn!(%error, "Could not record the untracked-file baseline; landing will commit tracked changes only");
+    }
+
     if let Ok(merge_loop_id) = std::env::var("RALPH_MERGE_LOOP_ID") {
         let repo_root = context
             .as_ref()

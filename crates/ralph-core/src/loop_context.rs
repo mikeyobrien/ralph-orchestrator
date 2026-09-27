@@ -270,6 +270,15 @@ impl LoopContext {
         self.agent_dir().join("handoff.md")
     }
 
+    /// Path to the untracked-file baseline recorded when the loop starts.
+    ///
+    /// Landing commits only untracked files that are absent from this list,
+    /// so operator files already sitting in the workspace are never swept
+    /// into the loop's auto-commit.
+    pub fn landing_baseline_path(&self) -> PathBuf {
+        self.ralph_dir().join("landing-untracked-baseline.json")
+    }
+
     /// Path to the diagnostics directory.
     ///
     /// Each loop has its own diagnostics output.

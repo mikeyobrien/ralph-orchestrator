@@ -2,7 +2,7 @@
 //!
 //! Orchestrates the "land the plane" sequence on loop completion:
 //! 1. Verify task state (log warnings for open tasks)
-//! 2. Auto-commit uncommitted changes
+//! 2. Auto-commit the loop's changes (never untracked files that predate it)
 //! 3. Clean git state (stashes, prune refs)
 //! 4. Generate handoff prompt
 //!
@@ -10,11 +10,14 @@
 //! handoffs between Ralph loops.
 
 use crate::git_ops::{
-    AutoCommitResult, auto_commit_changes, clean_stashes, is_working_tree_clean, prune_remote_refs,
+    AutoCommitResult, GitOpsError, UntrackedScope, auto_commit_changes, clean_stashes,
+    is_working_tree_clean, list_untracked_files, prune_remote_refs,
 };
 use crate::handoff::{HandoffError, HandoffWriter};
 use crate::loop_context::LoopContext;
 use crate::task_store::TaskStore;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use tracing::{debug, warn};
 
@@ -38,6 +41,75 @@ pub struct LandingResult {
 
     /// Whether the working tree is clean after landing.
     pub working_tree_clean: bool,
+}
+
+/// Untracked files present when a loop started, stored at
+/// [`LoopContext::landing_baseline_path`].
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct UntrackedBaseline {
+    untracked: BTreeSet<String>,
+}
+
+/// Records the untracked files present when a loop starts.
+///
+/// Landing later commits only untracked files absent from this baseline, so
+/// operator files that already sat in the workspace (or were synced into a
+/// new worktree) stay out of the loop's auto-commit. The baseline file lists
+/// itself, since it lives under `.ralph/`, which a project may not ignore.
+pub fn record_untracked_baseline(context: &LoopContext) -> std::io::Result<()> {
+    let workspace = context.workspace();
+    let baseline_path = context.landing_baseline_path();
+    let mut untracked: BTreeSet<String> = list_untracked_files(workspace)
+        .map_err(|e| std::io::Error::other(e.to_string()))?
+        .into_iter()
+        .collect();
+    if let Ok(relative) = baseline_path.strip_prefix(workspace) {
+        untracked.insert(relative.to_string_lossy().into_owned());
+    }
+    if let Some(parent) = baseline_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string_pretty(&UntrackedBaseline { untracked })
+        .map_err(std::io::Error::other)?;
+    std::fs::write(baseline_path, json)
+}
+
+/// Reads the untracked baseline recorded at loop start, if any.
+fn read_untracked_baseline(context: &LoopContext) -> Option<BTreeSet<String>> {
+    let content = std::fs::read_to_string(context.landing_baseline_path()).ok()?;
+    serde_json::from_str::<UntrackedBaseline>(&content)
+        .ok()
+        .map(|baseline| baseline.untracked)
+}
+
+/// Auto-commits the loop's changes: tracked edits plus untracked files the
+/// loop created. Without a baseline, untracked files are left alone rather
+/// than swept in, and a warning names how many were skipped.
+pub fn commit_loop_changes(
+    context: &LoopContext,
+    loop_id: &str,
+) -> Result<AutoCommitResult, GitOpsError> {
+    let workspace = context.workspace();
+    match read_untracked_baseline(context) {
+        Some(baseline) => auto_commit_changes(
+            workspace,
+            loop_id,
+            UntrackedScope::ExceptPreexisting(&baseline),
+        ),
+        None => {
+            let skipped = list_untracked_files(workspace)
+                .map(|f| f.len())
+                .unwrap_or(0);
+            if skipped > 0 {
+                warn!(
+                    loop_id = %loop_id,
+                    skipped,
+                    "No untracked-file baseline for this loop; committing tracked changes only"
+                );
+            }
+            auto_commit_changes(workspace, loop_id, UntrackedScope::None)
+        }
+    }
 }
 
 /// Errors that can occur during landing.
@@ -134,7 +206,7 @@ impl LandingHandler {
 
         // Step 2: Auto-commit uncommitted changes
         let commit_result = if self.config.auto_commit {
-            match auto_commit_changes(workspace, &loop_id) {
+            match commit_loop_changes(&self.context, &loop_id) {
                 Ok(result) => {
                     if result.committed {
                         debug!(
@@ -276,6 +348,7 @@ mod tests {
     #[test]
     fn test_landing_with_uncommitted_changes() {
         let (temp, ctx) = setup_test_context();
+        record_untracked_baseline(&ctx).unwrap();
 
         // Create uncommitted changes (outside .ralph/ which is gitignored)
         fs::write(temp.path().join("new_file.txt"), "content").unwrap();
@@ -286,6 +359,94 @@ mod tests {
         assert!(result.committed);
         assert!(result.commit_sha.is_some());
         assert!(result.working_tree_clean);
+    }
+
+    #[test]
+    fn test_landing_without_baseline_commits_tracked_changes_only() {
+        let (temp, ctx) = setup_test_context();
+        fs::write(temp.path().join("README.md"), "# Test\nedited\n").unwrap();
+        fs::write(temp.path().join("unknown_origin.txt"), "content").unwrap();
+
+        let result = LandingHandler::new(ctx.clone())
+            .land("Test prompt")
+            .unwrap();
+
+        assert!(result.committed);
+        let committed = committed_paths(temp.path());
+        assert!(
+            !committed.contains(&"unknown_origin.txt".to_string()),
+            "without a baseline, untracked files must not be swept in: {committed:?}"
+        );
+        assert!(!result.working_tree_clean);
+    }
+
+    #[test]
+    fn test_baseline_lists_itself_when_ralph_dir_is_not_ignored() {
+        let temp = TempDir::new().unwrap();
+        init_test_repo(temp.path(), &[]);
+        let ctx = LoopContext::primary(temp.path().to_path_buf());
+        ctx.ensure_directories().unwrap();
+        record_untracked_baseline(&ctx).unwrap();
+
+        fs::write(temp.path().join("feature.rs"), "fn f() {}\n").unwrap();
+        let result = commit_loop_changes(&ctx, "primary").unwrap();
+
+        assert!(result.committed);
+        let committed = committed_paths(temp.path());
+        assert!(
+            committed.contains(&"feature.rs".to_string()),
+            "{committed:?}"
+        );
+        assert!(
+            !committed.contains(&".ralph/landing-untracked-baseline.json".to_string()),
+            "{committed:?}"
+        );
+    }
+
+    fn committed_paths(repo: &std::path::Path) -> Vec<String> {
+        let output = Command::new("git")
+            .args(["ls-tree", "-r", "--name-only", "HEAD"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[test]
+    fn test_landing_does_not_commit_untracked_files_that_predate_the_loop() {
+        let (temp, ctx) = setup_test_context();
+        // An operator-local file already sitting in the workspace at loop start.
+        fs::write(temp.path().join("ralph.operator.yml"), "backend: local\n").unwrap();
+        record_untracked_baseline(&ctx).unwrap();
+
+        // The loop's own work: a new file and an edit to a tracked file.
+        fs::write(temp.path().join("feature.rs"), "fn feature() {}\n").unwrap();
+        fs::write(temp.path().join("README.md"), "# Test\nedited\n").unwrap();
+
+        let result = LandingHandler::new(ctx.clone())
+            .land("Test prompt")
+            .unwrap();
+
+        assert!(result.committed);
+        let committed = committed_paths(temp.path());
+        assert!(
+            committed.contains(&"feature.rs".to_string()),
+            "{committed:?}"
+        );
+        assert!(
+            !committed.contains(&"ralph.operator.yml".to_string()),
+            "a pre-existing untracked operator file was swept into the landing commit: {committed:?}"
+        );
+        assert!(temp.path().join("ralph.operator.yml").exists());
+        let readme = Command::new("git")
+            .args(["show", "HEAD:README.md"])
+            .current_dir(temp.path())
+            .output()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&readme.stdout).contains("edited"));
     }
 
     #[test]

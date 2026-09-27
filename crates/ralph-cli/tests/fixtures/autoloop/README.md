@@ -75,6 +75,15 @@ line 1, invocation 2 executes line 2, and so on. Once all lines have been used,
 every later invocation replays the final line. This supports tests that invoke
 Ralph repeatedly or launch merge children.
 
+## Version probe
+
+`ralph run` can call `autoloop --version` before it launches the run, and that
+probe consumes an invocation line like any other. When a fixture's run steps
+have side effects that must happen during the run (for example a `stream` step
+that creates a file after Ralph has recorded its landing baseline), start the
+fixture with a probe line such as `{"steps":[{"stdout":["autoloop 0.11.0"]}]}`.
+`landing_scope.jsonl` and `prompt_delivery.jsonl` do this.
+
 ## Worked example
 
 `headless_stream.jsonl` models an event stream split by a synchronization

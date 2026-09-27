@@ -33,7 +33,6 @@
 //! assert!(matches!(action, CompletionAction::Enqueued { .. }));
 //! ```
 
-use crate::git_ops::auto_commit_changes;
 use crate::landing::{LandingHandler, LandingResult};
 use crate::loop_context::LoopContext;
 use crate::merge_queue::{MergeQueue, MergeQueueError};
@@ -177,7 +176,7 @@ impl LoopCompletionHandler {
 
         if self.auto_merge {
             // Auto-commit any uncommitted changes before enqueueing
-            match auto_commit_changes(context.workspace(), &loop_id) {
+            match crate::landing::commit_loop_changes(context, &loop_id) {
                 Ok(result) => {
                     if result.committed {
                         info!(
@@ -371,14 +370,15 @@ mod tests {
             .output()
             .unwrap();
 
-        // Create uncommitted changes in the worktree
-        std::fs::write(worktree_path.join("feature.txt"), "new feature").unwrap();
-
         // Create .ralph directory for merge queue
         std::fs::create_dir_all(repo_root.join(".ralph")).unwrap();
 
         let context =
             LoopContext::worktree("ralph-autocommit", worktree_path.clone(), repo_root.clone());
+        crate::landing::record_untracked_baseline(&context).unwrap();
+
+        // Create uncommitted changes in the worktree
+        std::fs::write(worktree_path.join("feature.txt"), "new feature").unwrap();
 
         let handler = LoopCompletionHandler::new(true);
 
@@ -408,6 +408,50 @@ mod tests {
             .unwrap();
         let status = String::from_utf8_lossy(&output.stdout);
         assert!(status.trim().is_empty(), "Working tree should be clean");
+    }
+
+    #[test]
+    fn test_worktree_merge_commit_skips_untracked_files_synced_before_the_loop() {
+        let temp = TempDir::new().unwrap();
+        let repo_root = temp.path().to_path_buf();
+        init_test_repo(&repo_root, &[".ralph/"]);
+
+        let worktree_path = repo_root.join(".worktrees/ralph-scoped");
+        std::fs::create_dir_all(repo_root.join(".worktrees")).unwrap();
+        Command::new("git")
+            .args(["worktree", "add", "-b", "ralph/ralph-scoped"])
+            .arg(&worktree_path)
+            .current_dir(&repo_root)
+            .output()
+            .unwrap();
+        std::fs::create_dir_all(repo_root.join(".ralph")).unwrap();
+
+        let context =
+            LoopContext::worktree("ralph-scoped", worktree_path.clone(), repo_root.clone());
+        context.ensure_directories().unwrap();
+
+        // Worktree creation syncs untracked operator files in before the loop runs.
+        std::fs::write(worktree_path.join("ralph.fable-sol.yml"), "cli: {}\n").unwrap();
+        crate::landing::record_untracked_baseline(&context).unwrap();
+
+        std::fs::write(worktree_path.join("feature.txt"), "new feature").unwrap();
+
+        let action = LoopCompletionHandler::new(true)
+            .handle_completion(&context, "add feature")
+            .unwrap();
+        assert!(matches!(action, CompletionAction::Enqueued { .. }));
+
+        let output = Command::new("git")
+            .args(["ls-tree", "-r", "--name-only", "HEAD"])
+            .current_dir(&worktree_path)
+            .output()
+            .unwrap();
+        let committed = String::from_utf8_lossy(&output.stdout);
+        assert!(committed.lines().any(|p| p == "feature.txt"), "{committed}");
+        assert!(
+            !committed.lines().any(|p| p == "ralph.fable-sol.yml"),
+            "the synced operator file must stay untracked, got:\n{committed}"
+        );
     }
 
     #[test]

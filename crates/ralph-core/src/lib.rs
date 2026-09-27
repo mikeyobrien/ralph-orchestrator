@@ -74,10 +74,10 @@ pub use event_parser::EventParser;
 pub use event_reader::{Event, EventReader, MalformedLine, ParseResult};
 pub use file_lock::{FileLock, LockGuard as FileLockGuard, LockedFile};
 pub use git_ops::{
-    AutoCommitResult, GitOpsError, auto_commit_changes, clean_stashes, get_commit_summary,
-    get_current_branch, get_head_sha, get_recent_files, git_output, git_output_strict,
-    git_ref_exists, git_remote_exists, git_run, has_uncommitted_changes, is_working_tree_clean,
-    prune_remote_refs,
+    AutoCommitResult, GitOpsError, UntrackedScope, auto_commit_changes, clean_stashes,
+    get_commit_summary, get_current_branch, get_head_sha, get_recent_files, git_output,
+    git_output_strict, git_ref_exists, git_remote_exists, git_run, has_uncommitted_changes,
+    is_working_tree_clean, prune_remote_refs,
 };
 pub use handoff::{HandoffError, HandoffResult, HandoffWriter};
 pub use hooks::{
@@ -89,7 +89,10 @@ pub use hooks::{
     SuspendLifecycleState, SuspendStateRecord, SuspendStateStore, SuspendStateStoreError,
 };
 pub use instructions::InstructionBuilder;
-pub use landing::{LandingConfig, LandingError, LandingHandler, LandingResult};
+pub use landing::{
+    LandingConfig, LandingError, LandingHandler, LandingResult, commit_loop_changes,
+    record_untracked_baseline,
+};
 pub use loop_completion::{CompletionAction, CompletionError, LoopCompletionHandler};
 pub use loop_context::LoopContext;
 pub use loop_history::{HistoryError, HistoryEvent, HistoryEventType, HistorySummary, LoopHistory};

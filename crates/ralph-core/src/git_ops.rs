@@ -3,6 +3,7 @@
 //! Provides utilities for git operations like auto-committing uncommitted changes
 //! before merge queue operations, and git state cleanup during landing.
 
+use std::collections::BTreeSet;
 use std::io;
 use std::path::Path;
 use std::process::{Command, Output};
@@ -146,20 +147,23 @@ pub fn has_uncommitted_changes(path: impl AsRef<Path>) -> Result<bool, GitOpsErr
     Ok(!stdout.is_empty())
 }
 
-/// Auto-commit any uncommitted changes in the repository.
+/// Which untracked files an auto-commit may stage.
+#[derive(Debug, Clone, Copy)]
+pub enum UntrackedScope<'a> {
+    /// Stage every untracked, non-ignored file (`git add -A`).
+    All,
+    /// Stage untracked files except those listed, which predate the loop.
+    ExceptPreexisting(&'a BTreeSet<String>),
+    /// Stage no untracked files; only tracked changes are committed.
+    None,
+}
+
+/// Auto-commit uncommitted changes before a merge.
 ///
-/// This stages all changes (untracked, staged, unstaged) and creates a commit
-/// with a standardized message. If there are no uncommitted changes, returns
-/// without creating a commit.
-///
-/// # Arguments
-///
-/// * `path` - Path to the git repository (or worktree)
-/// * `loop_id` - The loop ID to include in the commit message
-///
-/// # Returns
-///
-/// Information about what was committed, or an error if the operation failed.
+/// Tracked modifications and deletions are always staged, as is anything the
+/// caller already staged. Untracked files are staged according to `scope`, so
+/// a loop commits the files it created without sweeping in unrelated
+/// untracked files that were already in the workspace.
 ///
 /// # Commit Message Format
 ///
@@ -168,6 +172,7 @@ pub fn has_uncommitted_changes(path: impl AsRef<Path>) -> Result<bool, GitOpsErr
 pub fn auto_commit_changes(
     path: impl AsRef<Path>,
     loop_id: &str,
+    scope: UntrackedScope<'_>,
 ) -> Result<AutoCommitResult, GitOpsError> {
     let path = path.as_ref();
 
@@ -176,19 +181,37 @@ pub fn auto_commit_changes(
         return Ok(AutoCommitResult::no_commit());
     }
 
-    // Stage all changes (including untracked files)
+    let untracked = match scope {
+        UntrackedScope::All => list_untracked_files(path)?,
+        UntrackedScope::ExceptPreexisting(preexisting) => list_untracked_files(path)?
+            .into_iter()
+            .filter(|file| !preexisting.contains(file))
+            .collect(),
+        UntrackedScope::None => Vec::new(),
+    };
+
     git_ok(
         Command::new("git")
-            .args(["add", "-A"])
+            .args(["add", "-u"])
             .current_dir(path)
             .output()?,
     )
-    .map_err(|e| e.with_context("Failed to stage changes"))?;
+    .map_err(|e| e.with_context("Failed to stage tracked changes"))?;
+    for chunk in untracked.chunks(256) {
+        git_ok(
+            Command::new("git")
+                .args(["add", "--"])
+                .args(chunk)
+                .current_dir(path)
+                .output()?,
+        )
+        .map_err(|e| e.with_context("Failed to stage new files"))?;
+    }
 
     // Count staged files
     let files_staged = count_staged_files(path)?;
 
-    // If nothing was staged after git add -A, return no commit
+    // If nothing was staged, return no commit
     if files_staged == 0 {
         return Ok(AutoCommitResult::no_commit());
     }
@@ -222,6 +245,21 @@ pub fn auto_commit_changes(
         commit_sha: Some(commit_sha),
         files_staged,
     })
+}
+
+/// List untracked, non-ignored files relative to `path`.
+pub fn list_untracked_files(path: impl AsRef<Path>) -> Result<Vec<String>, GitOpsError> {
+    let output = git_ok(
+        Command::new("git")
+            .args(["ls-files", "--others", "--exclude-standard", "-z"])
+            .current_dir(path.as_ref())
+            .output()?,
+    )?;
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .split('\0')
+        .filter(|file| !file.is_empty())
+        .map(str::to_owned)
+        .collect())
 }
 
 /// Count the number of files staged for commit.
@@ -450,7 +488,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         init_test_repo(temp.path(), &[]);
 
-        let result = auto_commit_changes(temp.path(), "test-loop").unwrap();
+        let result = auto_commit_changes(temp.path(), "test-loop", UntrackedScope::All).unwrap();
 
         assert!(!result.committed);
         assert!(result.commit_sha.is_none());
@@ -464,7 +502,7 @@ mod tests {
 
         fs::write(temp.path().join("feature.txt"), "new feature").unwrap();
 
-        let result = auto_commit_changes(temp.path(), "loop-123").unwrap();
+        let result = auto_commit_changes(temp.path(), "loop-123", UntrackedScope::All).unwrap();
 
         assert!(result.committed);
         assert!(result.commit_sha.is_some());
@@ -495,7 +533,7 @@ mod tests {
             .output()
             .unwrap();
 
-        let result = auto_commit_changes(temp.path(), "loop-456").unwrap();
+        let result = auto_commit_changes(temp.path(), "loop-456", UntrackedScope::All).unwrap();
 
         assert!(result.committed);
         assert!(result.commit_sha.is_some());
@@ -509,7 +547,7 @@ mod tests {
 
         fs::write(temp.path().join("README.md"), "# Modified content").unwrap();
 
-        let result = auto_commit_changes(temp.path(), "loop-789").unwrap();
+        let result = auto_commit_changes(temp.path(), "loop-789", UntrackedScope::All).unwrap();
 
         assert!(result.committed);
         assert!(result.commit_sha.is_some());
@@ -535,7 +573,7 @@ mod tests {
         // Modified tracked file
         fs::write(temp.path().join("README.md"), "# Modified").unwrap();
 
-        let result = auto_commit_changes(temp.path(), "loop-mixed").unwrap();
+        let result = auto_commit_changes(temp.path(), "loop-mixed", UntrackedScope::All).unwrap();
 
         assert!(result.committed);
         assert!(result.commit_sha.is_some());
@@ -549,7 +587,7 @@ mod tests {
 
         fs::write(temp.path().join("feature.txt"), "feature").unwrap();
 
-        let result = auto_commit_changes(temp.path(), "loop-clean").unwrap();
+        let result = auto_commit_changes(temp.path(), "loop-clean", UntrackedScope::All).unwrap();
         assert!(result.committed);
 
         // Working tree should be clean after commit
@@ -563,7 +601,7 @@ mod tests {
 
         fs::write(temp.path().join("file.txt"), "content").unwrap();
 
-        let result = auto_commit_changes(temp.path(), "loop-sha").unwrap();
+        let result = auto_commit_changes(temp.path(), "loop-sha", UntrackedScope::All).unwrap();
 
         // Verify the returned SHA matches HEAD
         let head_sha = get_head_sha(temp.path()).unwrap();
@@ -594,7 +632,7 @@ mod tests {
         // Should report no uncommitted changes (ignored files don't count)
         assert!(!has_uncommitted_changes(temp.path()).unwrap());
 
-        let result = auto_commit_changes(temp.path(), "loop-ignored").unwrap();
+        let result = auto_commit_changes(temp.path(), "loop-ignored", UntrackedScope::All).unwrap();
         assert!(!result.committed);
     }
 
