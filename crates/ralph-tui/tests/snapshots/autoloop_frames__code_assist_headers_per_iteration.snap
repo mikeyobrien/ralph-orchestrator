@@ -1,0 +1,9 @@
+---
+source: crates/ralph-tui/tests/autoloop_frames.rs
+expression: "headers.join(\"\\n\")"
+---
+[iter 1/8] 00:00 | 📋  Planner @claude-sdk | [REVIEW] | ? help
+[iter 2/8] 00:00 | ⚙️  Builder @claude-sdk | [REVIEW] | ? help
+[iter 3/8] 00:00 | 🧪  Fresh-Eyes Critic @claude-sdk | [REVIEW] | ? help
+[iter 4/8] 00:00 | 🏁  Finalizer @claude-sdk | [REVIEW] | ? help
+[iter 5/8] 00:00 | metareview | [LIVE] | ? help

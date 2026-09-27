@@ -1,0 +1,34 @@
+---
+source: crates/ralph-tui/tests/autoloop_frames.rs
+expression: "frame(&state, 100, 30)"
+---
+[iter 1/8] 00:00 | 📋  Planner @claude-sdk | [REVIEW] | ? help
+────────────────────────────────────────────────────────────────────────────────────────────────────
+⚙ Bash: ls -la && cat calc.py 2>/dev/null; ls .ralph/autoloop/runs/a...
+⚙ Bash: cat ralph.yml; A=.ralph/autoloop/runs/allied-shard/autoloops...
+⚙ Bash: .ralph/autoloop/runs/allied-shard/autoloops emit tasks.ready...
+The backend is claude, not pi, so rigor mode does not apply. The plan is done. Handing off to the bu
+ilder.I finished the planning step and handed the work to the builder. No code has changed yet.
+
+- **The repo now:** `calc.py` has only `add(a, b)`. There is no test file.
+- **Queued work:**
+  - task-1 adds `subtract(a, b)`, which returns `a - b`, to `calc.py`.
+  - task-2 adds `test_calc.py`, which checks `add` and `subtract` with plain asserts and runs with `
+python3 test_calc.py`.
+- **Instructions to the builder:** Write the test first and confirm it fails while `subtract` is mis
+sing. Then implement it, run `python3 test_calc.py` and show the output. Make one commit per task.
+- **Rigor mode:** I skipped it. The harness only requires it when the backend is pi, and `ralph.yml`
+ sets `backend: claude`.
+→ tasks.ready (continue:routed_event)
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Total Time Elapsed: 00:00 │ Cost: $0.54 │ e export E all                                    ■ DONE

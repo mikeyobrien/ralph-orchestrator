@@ -2,7 +2,7 @@
 
 use ratatui::{
     Frame,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Rect},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
@@ -11,160 +11,87 @@ use ratatui::{
 /// Renders help overlay centered on screen.
 ///
 /// When `autoloop_source` is true the TUI is fed by the autoloop `--events`
-/// stream, which has no back-channel to the subprocess — guidance/steer keys
-/// no-op, so their help rows are greyed out and annotated (FIX gap#6).
+/// stream, which has no back-channel to the subprocess, so the guidance keys
+/// do nothing and are not listed.
 pub fn render(f: &mut Frame, area: Rect, autoloop_source: bool) {
-    let block = Block::default()
-        .title(" Help ")
-        .borders(Borders::ALL)
-        .style(Style::default().bg(Color::Black).fg(Color::White));
-
-    // Guidance keys (`:` / `!`) have no effect under the autoloop source; grey
-    // them out instead of advertising live bindings that do nothing.
-    let (guidance_heading_style, guidance_key_style, guidance_suffix) = if autoloop_source {
-        (
-            Style::default().fg(Color::DarkGray),
-            Style::default().fg(Color::DarkGray),
-            " (unavailable in this mode)",
-        )
-    } else {
-        (
-            Style::default().fg(Color::Yellow),
-            Style::default().fg(Color::Cyan),
-            "",
-        )
+    let heading =
+        |text: &'static str| Line::from(Span::styled(text, Style::default().fg(Color::Yellow)));
+    let key = |keys: &'static str, text: &'static str| {
+        Line::from(vec![
+            Span::styled(format!("  {keys:<7}"), Style::default().fg(Color::Cyan)),
+            Span::raw(text),
+        ])
     };
 
-    let help_text = vec![
-        Line::from(Span::styled(
-            "Navigation:",
-            Style::default().fg(Color::Yellow),
-        )),
-        Line::from(vec![
-            Span::styled("  h/←", Style::default().fg(Color::Cyan)),
-            Span::raw("    Previous iteration"),
-        ]),
-        Line::from(vec![
-            Span::styled("  l/→", Style::default().fg(Color::Cyan)),
-            Span::raw("    Next iteration"),
-        ]),
-        Line::from(""),
-        Line::from(Span::styled(
-            "Scrolling:",
-            Style::default().fg(Color::Yellow),
-        )),
-        Line::from(vec![
-            Span::styled("  j/↓", Style::default().fg(Color::Cyan)),
-            Span::raw("    Scroll down"),
-        ]),
-        Line::from(vec![
-            Span::styled("  k/↑", Style::default().fg(Color::Cyan)),
-            Span::raw("    Scroll up"),
-        ]),
-        Line::from(vec![
-            Span::styled("  g", Style::default().fg(Color::Cyan)),
-            Span::raw("      Scroll to top"),
-        ]),
-        Line::from(vec![
-            Span::styled("  G", Style::default().fg(Color::Cyan)),
-            Span::raw("      Scroll to bottom"),
-        ]),
-        Line::from(vec![
-            Span::styled("  m", Style::default().fg(Color::Cyan)),
-            Span::raw("      Toggle mouse mode (select/scroll)"),
-        ]),
-        Line::from(""),
-        Line::from(Span::styled("Search:", Style::default().fg(Color::Yellow))),
-        Line::from(vec![
-            Span::styled("  /", Style::default().fg(Color::Cyan)),
-            Span::raw("      Start search"),
-        ]),
-        Line::from(vec![
-            Span::styled("  n/N", Style::default().fg(Color::Cyan)),
-            Span::raw("    Next/prev match"),
-        ]),
-        Line::from(""),
-        Line::from(Span::styled("Export:", Style::default().fg(Color::Yellow))),
-        Line::from(vec![
-            Span::styled("  e", Style::default().fg(Color::Cyan)),
-            Span::raw("      Export current iteration"),
-        ]),
-        Line::from(vec![
-            Span::styled("  E", Style::default().fg(Color::Cyan)),
-            Span::raw("      Export all iterations"),
-        ]),
-        Line::from(""),
-        Line::from(Span::styled(
-            format!("Guidance:{guidance_suffix}"),
-            guidance_heading_style,
-        )),
-        Line::from(vec![
-            Span::styled("  :", guidance_key_style),
-            Span::styled("      Send guidance (next prompt)", guidance_heading_style),
-        ]),
-        Line::from(vec![
-            Span::styled("  !", guidance_key_style),
-            Span::styled(
-                "      Urgent steer (blocks handoff until seen)",
-                guidance_heading_style,
-            ),
-        ]),
-        Line::from(""),
-        Line::from(Span::styled("Other:", Style::default().fg(Color::Yellow))),
-        Line::from(vec![
-            Span::styled("  q", Style::default().fg(Color::Cyan)),
-            Span::raw("      Quit"),
-        ]),
-        Line::from(vec![
-            Span::styled("  ?", Style::default().fg(Color::Cyan)),
-            Span::raw("      Show this help"),
-        ]),
-        Line::from(vec![
-            Span::styled("  Esc", Style::default().fg(Color::Cyan)),
-            Span::raw("    Dismiss/cancel"),
-        ]),
-        Line::from(""),
-        Line::from(Span::styled(
-            "Press Esc to dismiss",
-            Style::default().fg(Color::DarkGray),
-        )),
+    let mut sections = vec![
+        vec![
+            heading("Navigation:"),
+            key("h/←", "Previous iteration"),
+            key("l/→", "Next iteration"),
+        ],
+        vec![
+            heading("Scrolling:"),
+            key("j/↓", "Scroll down"),
+            key("k/↑", "Scroll up"),
+            key("g", "Scroll to top"),
+            key("G", "Scroll to bottom"),
+            key("m", "Toggle mouse mode (select/scroll)"),
+        ],
+        vec![
+            heading("Search:"),
+            key("/", "Start search"),
+            key("n/N", "Next/prev match"),
+        ],
+        vec![
+            heading("Export:"),
+            key("e", "Export current iteration"),
+            key("E", "Export all iterations"),
+        ],
     ];
+    if !autoloop_source {
+        sections.push(vec![
+            heading("Guidance:"),
+            key(":", "Send guidance (next prompt)"),
+            key("!", "Urgent steer (blocks handoff until seen)"),
+        ]);
+    }
+    sections.push(vec![
+        heading("Other:"),
+        key("q", "Quit"),
+        key("?", "Show this help"),
+        key("Esc", "Dismiss/cancel"),
+    ]);
 
-    // Size the popup to its content (plus borders) so every binding stays
-    // visible; a fixed percentage height silently clips the tail of the
-    // help text on short terminals.
-    let content_height = help_text.len() as u16 + 2;
+    // Blank rows between sections only when every binding still fits; a
+    // clipped overlay would hide the tail of the list.
+    let rows: usize = sections.iter().map(Vec::len).sum();
+    let spaced = rows + sections.len() - 1 + 2 <= area.height as usize;
+    let mut help_text = Vec::new();
+    for (index, section) in sections.into_iter().enumerate() {
+        if spaced && index > 0 {
+            help_text.push(Line::from(""));
+        }
+        help_text.extend(section);
+    }
+
+    let content_width = help_text.iter().map(Line::width).max().unwrap_or(0);
+    let width = (content_width as u16 + 4).min(area.width);
+    let height = (help_text.len() as u16 + 2).min(area.height);
+    let popup_area = Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
+    };
+    let block = Block::default()
+        .title(" Help · Esc to dismiss ")
+        .borders(Borders::ALL)
+        .style(Style::default().bg(Color::Black).fg(Color::White));
     let paragraph = Paragraph::new(help_text)
         .block(block)
         .alignment(Alignment::Left);
-
-    let popup_area = centered_rect_fixed_height(50, content_height, area);
     f.render_widget(Clear, popup_area);
     f.render_widget(paragraph, popup_area);
-}
-
-/// Center a popup horizontally at `percent_x` width with an exact height,
-/// clamped to the available area.
-fn centered_rect_fixed_height(percent_x: u16, height: u16, r: Rect) -> Rect {
-    let height = height.min(r.height);
-    let top = (r.height - height) / 2;
-    let vertical = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(top),
-            Constraint::Length(height),
-            Constraint::Min(0),
-        ])
-        .split(r);
-
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(vertical[1])[1]
 }
 
 #[cfg(test)]
@@ -192,19 +119,43 @@ mod tests {
     fn guidance_section_plain_in_normal_mode() {
         let text = render_to_string(false);
         assert!(text.contains("Guidance:"), "should show guidance section");
-        assert!(
-            !text.contains("unavailable in this mode"),
-            "normal mode should not mark guidance unavailable, got: {text}"
-        );
+        assert!(text.contains("Urgent steer"), "got: {text}");
     }
 
     #[test]
-    fn guidance_section_marked_unavailable_under_autoloop_source() {
+    fn guidance_keys_are_not_listed_under_autoloop_source() {
         let text = render_to_string(true);
-        assert!(
-            text.contains("unavailable in this mode"),
-            "autoloop source should mark guidance unavailable, got: {text}"
-        );
+        assert!(!text.contains("Guidance:"), "got: {text}");
+        assert!(!text.contains("Urgent steer"), "got: {text}");
+    }
+
+    #[test]
+    fn every_binding_fits_a_standard_terminal() {
+        for (width, height) in [(80, 24), (60, 24)] {
+            let backend = TestBackend::new(width, height);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal.draw(|f| render(f, f.area(), true)).unwrap();
+            let buffer = terminal.backend().buffer();
+            let text: Vec<String> = (0..height)
+                .map(|y| {
+                    (0..width)
+                        .map(|x| buffer.cell((x, y)).unwrap().symbol())
+                        .collect()
+                })
+                .collect();
+            let text = text.join("\n");
+            for binding in [
+                "Toggle mouse mode (select/scroll)",
+                "Export all iterations",
+                "Dismiss/cancel",
+                "Esc to dismiss",
+            ] {
+                assert!(
+                    text.contains(binding),
+                    "{width}x{height} lost {binding:?}:\n{text}"
+                );
+            }
+        }
     }
 
     #[test]

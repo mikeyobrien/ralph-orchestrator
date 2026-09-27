@@ -1,0 +1,5 @@
+---
+source: crates/ralph-tui/tests/autoloop_frames.rs
+expression: header
+---
+[iter 5/8] ⚠ 1 engine event skipped 00:00 | metareview | [LIVE] | ? help

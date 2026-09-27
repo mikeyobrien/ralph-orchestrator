@@ -1,0 +1,20 @@
+---
+source: crates/ralph-tui/tests/autoloop_frames.rs
+expression: "frame(&state, 40, 16)"
+---
+[iter 5/8] 00:00 | metareview | [LIVE]
+────────────────────────────────────────
+■ run finished: verdict_exit
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────
+ Total Time Elapsed: 00:00       ■ DONE

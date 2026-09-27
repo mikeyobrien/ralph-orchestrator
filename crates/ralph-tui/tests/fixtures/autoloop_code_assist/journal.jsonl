@@ -1,0 +1,4 @@
+{"run":"allied-shard","iteration":"1","topic":"backend.start","ts":"2026-09-27T05:35:42.572Z","v":1,"fields":{"backend_kind":"claude-sdk","command":"claude","args":"","prompt_mode":"arg","timeout_ms":"300000"}}
+{"run":"allied-shard","iteration":"2","topic":"backend.start","ts":"2026-09-27T05:36:16.756Z","v":1,"fields":{"backend_kind":"claude-sdk","command":"claude","args":"","prompt_mode":"arg","timeout_ms":"300000"}}
+{"run":"allied-shard","iteration":"3","topic":"backend.start","ts":"2026-09-27T05:36:41.104Z","v":1,"fields":{"backend_kind":"claude-sdk","command":"claude","args":"","prompt_mode":"arg","timeout_ms":"300000"}}
+{"run":"allied-shard","iteration":"4","topic":"backend.start","ts":"2026-09-27T05:36:53.137Z","v":1,"fields":{"backend_kind":"claude-sdk","command":"claude","args":"","prompt_mode":"arg","timeout_ms":"300000"}}

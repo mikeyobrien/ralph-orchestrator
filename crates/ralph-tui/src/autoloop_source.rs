@@ -88,6 +88,9 @@ pub struct AutoloopMapCtx {
     /// Harness kinds from journal `backend.start` records whose iteration
     /// buffer does not exist yet, keyed by run and engine iteration.
     pending_backend_kinds: HashMap<(String, u32), String>,
+    /// The run's stop reason is already on screen. The engine reports it in
+    /// both `loop.finish` and `summary`.
+    finish_recorded: bool,
 }
 
 #[derive(Debug)]
@@ -176,6 +179,20 @@ pub fn apply_autoloop_event(
     match event.kind.as_str() {
         "loop.start" => {
             s.last_event = Some("loop.start".to_string());
+            s.last_event_at = Some(now);
+        }
+
+        "review.banner" => {
+            // The engine's metareview runs at the top of an iteration. A role
+            // banner that follows replaces this label; an iteration that is
+            // only the metareview keeps it.
+            if let Some(iteration) = event.iteration {
+                ctx.announced_role = Some((iteration, METAREVIEW_LABEL.to_string()));
+                if ctx.current_iteration == Some(iteration) {
+                    s.set_latest_iteration_hat_display(METAREVIEW_LABEL.to_string());
+                }
+            }
+            s.last_event = Some("review.banner".to_string());
             s.last_event_at = Some(now);
         }
 
@@ -337,7 +354,8 @@ pub fn apply_autoloop_event(
             }
             // Surface the stop reason as a raw string — autoloop's vocabulary
             // differs from ralph's TerminationReason enum, so do NOT map it.
-            if let Some(stop_reason) = &event.stop_reason {
+            if let Some(stop_reason) = event.stop_reason.as_ref().filter(|_| !ctx.finish_recorded) {
+                ctx.finish_recorded = true;
                 push_iteration_line(
                     &mut s,
                     ctx,
@@ -368,6 +386,7 @@ const COMPLETED_TOOL_LINE_BUDGET: usize = 256;
 const LIFECYCLE_LINE_BUDGET: usize = 64;
 const HUMAN_ASK_PREFIX: &str = "\u{26A0} HUMAN ASK: ";
 const RUN_FINISHED_PREFIX: &str = "\u{25A0} run finished: ";
+const METAREVIEW_LABEL: &str = "metareview";
 
 /// Records an autoloop lifecycle line without allowing it to escape the shared
 /// iteration bound. Once an iteration has started, rendering owns the whole
@@ -1306,6 +1325,53 @@ mod tests {
 
         let s = state.lock().unwrap();
         assert_eq!(s.iterations[0].hat_display.as_deref(), Some("🔨 Builder"));
+    }
+
+    #[test]
+    fn metareview_labels_its_iteration_until_a_role_banner_arrives() {
+        let state = make_state();
+        let mut ctx = AutoloopMapCtx::default();
+        for line in [
+            r#"{"type":"iteration.start","iteration":2}"#,
+            r#"{"type":"review.banner","iteration":2}"#,
+        ] {
+            apply_autoloop_event(&ev(line), &state, &mut ctx);
+        }
+        assert_eq!(
+            state.lock().unwrap().iterations[0].hat_display.as_deref(),
+            Some("metareview")
+        );
+        apply_autoloop_event(
+            &ev(r#"{"type":"iteration.banner","iteration":2,"allowedRoles":["builder"]}"#),
+            &state,
+            &mut ctx,
+        );
+        assert_eq!(
+            state.lock().unwrap().iterations[0].hat_display.as_deref(),
+            Some("builder")
+        );
+    }
+
+    #[test]
+    fn loop_finish_and_summary_record_the_stop_reason_once() {
+        let state = make_state();
+        let mut ctx = AutoloopMapCtx::default();
+        for line in [
+            r#"{"type":"iteration.start","iteration":1}"#,
+            r#"{"type":"summary","iterations":1,"stopReason":"verdict_exit"}"#,
+            r#"{"type":"loop.finish","iterations":1,"stopReason":"verdict_exit"}"#,
+        ] {
+            apply_autoloop_event(&ev(line), &state, &mut ctx);
+        }
+        let lines = lines_text(&state);
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.contains("run finished: verdict_exit"))
+                .count(),
+            1,
+            "{lines:?}"
+        );
     }
 
     #[test]

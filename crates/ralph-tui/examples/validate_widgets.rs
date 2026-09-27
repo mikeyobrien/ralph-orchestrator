@@ -1,183 +1,90 @@
-//! Outputs header and footer widgets to files for TUI validation.
+//! Writes real TUI frames to `tui-validation/` for visual inspection.
+//!
+//! The state is built from the recorded autoloop run in
+//! `tests/fixtures/autoloop_code_assist/` through the production event mapping,
+//! and every frame is drawn by the same `render_frame` the live app uses.
+//! (The per-iteration tool calls come from the backend streams, which the
+//! `autoloop_frames` test replays; this example maps the `--events` stream.)
 //!
 //! Run with: cargo run -p ralph-tui --example validate_widgets
 
-use ralph_proto::{Event, HatId};
-use ralph_tui::TuiState;
-use ratatui::Terminal;
-use ratatui::backend::TestBackend;
-use ratatui::layout::{Constraint, Direction, Layout};
+use std::collections::HashMap;
 use std::fs;
-use std::time::Duration;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
 
-fn render_to_string(terminal: &Terminal<TestBackend>) -> String {
+use ralph_adapters::parse_events;
+use ralph_tui::autoloop_source::{AutoloopMapCtx, apply_autoloop_event};
+use ralph_tui::{TuiState, render_frame};
+use ratatui::{Terminal, backend::TestBackend};
+
+fn frame(state: &TuiState, width: u16, height: u16) -> String {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    terminal.draw(|f| render_frame(f, state)).unwrap();
     let buffer = terminal.backend().buffer();
-    let mut lines = Vec::new();
-    for y in 0..buffer.area.height {
-        let mut line = String::new();
-        for x in 0..buffer.area.width {
-            let cell = buffer.cell((x, y)).unwrap();
-            line.push_str(cell.symbol());
-        }
-        lines.push(line.trim_end().to_string());
-    }
-    lines.join("\n")
+    (0..height)
+        .map(|y| {
+            (0..width)
+                .map(|x| buffer.cell((x, y)).unwrap().symbol())
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn main() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/autoloop_code_assist/events.ndjson");
+    let events = parse_events(&fs::read_to_string(&fixture).unwrap());
+    let role_names: HashMap<String, String> = [
+        ("planner", "📋 Planner"),
+        ("builder", "⚙️ Builder"),
+        ("critic", "🧪 Fresh-Eyes Critic"),
+        ("finalizer", "🏁 Finalizer"),
+    ]
+    .into_iter()
+    .map(|(id, name)| (id.to_string(), name.to_string()))
+    .collect();
+
+    let state = Arc::new(Mutex::new(TuiState::new()));
+    // As `ralph run` sets it for the engine's event stream.
+    state.lock().unwrap().autoloop_source = true;
+    let mut ctx = AutoloopMapCtx::new(role_names);
     let output_dir = std::env::current_dir().unwrap().join("tui-validation");
     fs::create_dir_all(&output_dir).unwrap();
+    let write = |name: &str, text: String| {
+        fs::write(output_dir.join(name), &text).unwrap();
+        println!("== tui-validation/{name}\n{text}\n");
+    };
 
-    // Create a fully populated state for validation
-    let mut state = TuiState::new();
-    let event = Event::new("task.start", "");
-    state.update(&event);
+    // Mid-run: the builder's iteration, live.
+    let builder_done = events
+        .iter()
+        .position(|event| event.kind == "progress" && event.iteration == Some(2))
+        .expect("fixture has the builder's progress");
+    for event in &events[..=builder_done] {
+        apply_autoloop_event(event, &state, &mut ctx);
+    }
+    {
+        let state = state.lock().unwrap();
+        write("live_builder_100x24.txt", frame(&state, 100, 24));
+        write("live_builder_40x12.txt", frame(&state, 40, 12));
+    }
 
-    state.iteration = 2;
-    state.max_iterations = Some(10);
-    state.loop_started = Some(
-        std::time::Instant::now()
-            .checked_sub(Duration::from_secs(272))
-            .unwrap(),
-    );
-    state.pending_hat = Some((HatId::new("builder"), "🔨Builder".to_string()));
-    state.last_event = Some("build.task".to_string());
-    state.last_event_at = Some(std::time::Instant::now()); // Active
-
-    // Render header (1-line borderless design)
-    let backend = TestBackend::new(80, 1);
-    let mut terminal = Terminal::new(backend).unwrap();
-    terminal
-        .draw(|f| {
-            let widget = ralph_tui::header::render(&state, 80);
-            f.render_widget(widget, f.area());
-        })
-        .unwrap();
-    let header_output = render_to_string(&terminal);
-    fs::write(output_dir.join("header.txt"), &header_output).unwrap();
-    println!("Header output written to tui-validation/header.txt");
-    println!("{}", header_output);
-    println!();
-
-    // Render header with scroll mode (1-line borderless design)
-    state.in_scroll_mode = true;
-    let backend = TestBackend::new(80, 1);
-    let mut terminal = Terminal::new(backend).unwrap();
-    terminal
-        .draw(|f| {
-            let widget = ralph_tui::header::render(&state, 80);
-            f.render_widget(widget, f.area());
-        })
-        .unwrap();
-    let header_scroll_output = render_to_string(&terminal);
-    fs::write(output_dir.join("header_scroll.txt"), &header_scroll_output).unwrap();
-    println!("Header (scroll mode) output written to tui-validation/header_scroll.txt");
-    println!("{}", header_scroll_output);
-    println!();
-    state.in_scroll_mode = false;
-
-    // Render header with idle countdown (1-line borderless design)
-    state.idle_timeout_remaining = Some(Duration::from_secs(25));
-    let backend = TestBackend::new(80, 1);
-    let mut terminal = Terminal::new(backend).unwrap();
-    terminal
-        .draw(|f| {
-            let widget = ralph_tui::header::render(&state, 80);
-            f.render_widget(widget, f.area());
-        })
-        .unwrap();
-    let header_idle_output = render_to_string(&terminal);
-    fs::write(output_dir.join("header_idle.txt"), &header_idle_output).unwrap();
-    println!("Header (idle countdown) output written to tui-validation/header_idle.txt");
-    println!("{}", header_idle_output);
-    println!();
-    state.idle_timeout_remaining = None;
-
-    // Render footer (default) - 1-line borderless design
-    let backend = TestBackend::new(80, 1);
-    let mut terminal = Terminal::new(backend).unwrap();
-    terminal
-        .draw(|f| {
-            let widget = ralph_tui::footer::render(&state);
-            f.render_widget(widget, f.area());
-        })
-        .unwrap();
-    let footer_output = render_to_string(&terminal);
-    fs::write(output_dir.join("footer_active.txt"), &footer_output).unwrap();
-    println!("Footer (active) output written to tui-validation/footer_active.txt");
-    println!("{}", footer_output);
-    println!();
-
-    // Render footer (idle state) - 1-line borderless design
-    state.last_event_at = Some(
-        std::time::Instant::now()
-            .checked_sub(Duration::from_secs(10))
-            .unwrap(),
-    );
-    let backend = TestBackend::new(80, 1);
-    let mut terminal = Terminal::new(backend).unwrap();
-    terminal
-        .draw(|f| {
-            let widget = ralph_tui::footer::render(&state);
-            f.render_widget(widget, f.area());
-        })
-        .unwrap();
-    let footer_idle_output = render_to_string(&terminal);
-    fs::write(output_dir.join("footer_idle.txt"), &footer_idle_output).unwrap();
-    println!("Footer (idle) output written to tui-validation/footer_idle.txt");
-    println!("{}", footer_idle_output);
-    println!();
-
-    // Render footer (done state) - 1-line borderless design
-    state.pending_hat = None;
-    let backend = TestBackend::new(80, 1);
-    let mut terminal = Terminal::new(backend).unwrap();
-    terminal
-        .draw(|f| {
-            let widget = ralph_tui::footer::render(&state);
-            f.render_widget(widget, f.area());
-        })
-        .unwrap();
-    let footer_done_output = render_to_string(&terminal);
-    fs::write(output_dir.join("footer_done.txt"), &footer_done_output).unwrap();
-    println!("Footer (done) output written to tui-validation/footer_done.txt");
-    println!("{}", footer_done_output);
-    println!();
-
-    // Render full layout simulation (1-line header/footer, maximizes terminal pane)
-    state.pending_hat = Some((HatId::new("builder"), "🔨Builder".to_string()));
-    state.last_event_at = Some(std::time::Instant::now());
-    let backend = TestBackend::new(100, 24);
-    let mut terminal = Terminal::new(backend).unwrap();
-    terminal
-        .draw(|f| {
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(1), // Header (1 line, borderless)
-                    Constraint::Min(0),    // Terminal pane (flex)
-                    Constraint::Length(1), // Footer (1 line, borderless)
-                ])
-                .split(f.area());
-
-            f.render_widget(
-                ralph_tui::header::render(&state, chunks[0].width),
-                chunks[0],
-            );
-            // Middle content area (just empty for this test)
-            f.render_widget(
-                ratatui::widgets::Block::default()
-                    .borders(ratatui::widgets::Borders::ALL)
-                    .title(" Terminal Output "),
-                chunks[1],
-            );
-            f.render_widget(ralph_tui::footer::render(&state), chunks[2]);
-        })
-        .unwrap();
-    let full_output = render_to_string(&terminal);
-    fs::write(output_dir.join("full_layout.txt"), &full_output).unwrap();
-    println!("Full layout output written to tui-validation/full_layout.txt");
-    println!("{}", full_output);
-
-    println!("\n=== All validation outputs written to tui-validation/ ===");
+    // Finished: reviewing the first iteration, and the final screen.
+    for event in &events[builder_done + 1..] {
+        apply_autoloop_event(event, &state, &mut ctx);
+    }
+    let mut state = state.lock().unwrap();
+    let last = state.total_iterations() - 1;
+    state.current_view = 0;
+    state.following_latest = false;
+    write("review_iteration_1_100x24.txt", frame(&state, 100, 24));
+    state.current_view = last;
+    state.following_latest = true;
+    write("finished_80x12.txt", frame(&state, 80, 12));
+    state.show_help = true;
+    write("help_80x24.txt", frame(&state, 80, 24));
 }

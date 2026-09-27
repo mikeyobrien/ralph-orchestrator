@@ -21,9 +21,9 @@ use crossterm::{
 };
 use futures::StreamExt;
 use ratatui::{
-    Terminal,
+    Frame, Terminal,
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
 };
 use scopeguard::defer;
 use std::io;
@@ -32,6 +32,36 @@ use tokio::io::AsyncWrite;
 use tokio::sync::watch;
 use tokio::time::{Duration, interval};
 use tracing::info;
+
+/// Header, content, and footer areas of a frame.
+pub fn frame_layout(area: Rect) -> std::rc::Rc<[Rect]> {
+    Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(2), // Header: content + bottom border
+            Constraint::Min(0),    // Content: flexible
+            Constraint::Length(2), // Footer: top border + content
+        ])
+        .split(area)
+}
+
+/// Draws one frame of the TUI from `state`: the live app and its tests render
+/// through this.
+pub fn render_frame(f: &mut Frame, state: &TuiState) {
+    let chunks = frame_layout(f.area());
+    f.render_widget(header::render(state, chunks[0].width), chunks[0]);
+    if let Some(buffer) = state.current_iteration() {
+        let mut content_widget = ContentPane::new(buffer);
+        if let Some(query) = &state.search_state.query {
+            content_widget = content_widget.with_search(query);
+        }
+        f.render_widget(content_widget, chunks[1]);
+    }
+    f.render_widget(footer::render(state), chunks[2]);
+    if state.show_help {
+        help::render(f, f.area(), state.autoloop_source);
+    }
+}
 
 /// Dispatches an action to the TuiState.
 ///
@@ -415,17 +445,7 @@ impl<W: AsyncWrite + Unpin + Send + 'static> App<W> {
                 _ = render_tick.tick() => {
                     let frame_size = terminal.size()?;
                     let frame_area = ratatui::layout::Rect::new(0, 0, frame_size.width, frame_size.height);
-                    let chunks = Layout::default()
-                        .direction(Direction::Vertical)
-                        .constraints([
-                            Constraint::Length(2),  // Header: content + bottom border
-                            Constraint::Min(0),     // Content: flexible
-                            Constraint::Length(2),  // Footer: top border + content
-                        ])
-                        .split(frame_area);
-
-                    let content_area = chunks[1];
-                    viewport_height = content_area.height as usize;
+                    viewport_height = frame_layout(frame_area)[1].height as usize;
 
                     let mut state = self.state.lock().unwrap();
 
@@ -443,27 +463,7 @@ impl<W: AsyncWrite + Unpin + Send + 'static> App<W> {
                     }
 
                     let state = state; // Rebind as immutable for rendering
-                    terminal.draw(|f| {
-                        // Render header
-                        f.render_widget(header::render(&state, chunks[0].width), chunks[0]);
-
-                        // Render content
-                        if let Some(buffer) = state.current_iteration() {
-                            let mut content_widget = ContentPane::new(buffer);
-                            if let Some(query) = &state.search_state.query {
-                                content_widget = content_widget.with_search(query);
-                            }
-                            f.render_widget(content_widget, content_area);
-                        }
-
-                        // Render footer
-                        f.render_widget(footer::render(&state), chunks[2]);
-
-                        // Render help overlay if active
-                        if state.show_help {
-                            help::render(f, f.area(), state.autoloop_source);
-                        }
-                    })?;
+                    terminal.draw(|f| render_frame(f, &state))?;
                 }
 
                 // Priority 3: Handle termination signal

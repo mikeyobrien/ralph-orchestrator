@@ -44,7 +44,7 @@ use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::watch;
 use tracing::info;
 
-pub use app::{App, dispatch_action};
+pub use app::{App, dispatch_action, frame_layout, render_frame};
 pub use autoloop_source::{run_autoloop_event_reader, run_autoloop_event_reader_with_journal};
 pub use rpc_client::RpcClient;
 pub use rpc_source::run_rpc_event_reader;
