@@ -454,6 +454,19 @@ pub async fn run_autoloop_engine(
             "core.routing.jev is set, but core.autoloop_preset ({explicit}) is your own preset, which Ralph never rewrites; configure [routing.jev] in that preset's autoloops.toml, or remove core.autoloop_preset so Ralph generates the preset from core.routing.jev"
         );
     }
+    // Topology mode makes Jev the routing authority; hats that still route
+    // must refuse before the backend starts, never quietly keep routing.
+    if let Some(violation) = config.core.routing.topology_mode_violation(&config.hats) {
+        bail!("{violation}");
+    }
+    if let (Some(explicit), Some(_)) = (
+        config.core.autoloop_preset.as_deref(),
+        config.core.routing.enabled_topology_jev(),
+    ) {
+        bail!(
+            "core.routing.topology.jev is set, but core.autoloop_preset ({explicit}) is your own preset, which Ralph never rewrites; remove core.autoloop_preset so Ralph generates the topology-mode preset from your hats"
+        );
+    }
     if let (Some(explicit), Some(_)) = (
         config.core.autoloop_preset.as_deref(),
         config.core.completion.jev.as_ref(),
@@ -530,6 +543,62 @@ pub async fn run_autoloop_engine(
             toml_string(&command)
         ));
         std::fs::write(&path, toml).context("writing the completion judge into the preset")?;
+    }
+
+    // Jev topology mode: the pre_emit hook rewrites step.done to the route
+    // Jev chooses. Inline array form so later dotted keys stay top-level.
+    if let Some(jev) = config.core.routing.enabled_topology_jev()
+        && !explicit_preset
+    {
+        use ralph_core::jev_topology::{RoleOption, RouteSnapshot, TopologySettings};
+        require_engine_at_least("0.11.0", "Jev topology routing")?;
+        let mut roles: Vec<RoleOption> = config
+            .hats
+            .iter()
+            .map(|(id, hat)| RoleOption {
+                id: id.clone(),
+                description: hat
+                    .description
+                    .clone()
+                    .filter(|description| !description.trim().is_empty())
+                    .unwrap_or_else(|| hat.name.clone()),
+            })
+            .collect();
+        roles.sort_by(|a, b| a.id.cmp(&b.id));
+        let snapshot = RouteSnapshot {
+            settings: TopologySettings {
+                model: jev
+                    .model
+                    .clone()
+                    .unwrap_or_else(|| ralph_core::jev_judge::DEFAULT_JUDGE_MODEL.to_string()),
+                min_confidence: jev.min_confidence.unwrap_or(0.8),
+                timeout_ms: jev
+                    .timeout_ms
+                    .unwrap_or(ralph_core::jev_judge::DEFAULT_JUDGE_TIMEOUT_MS),
+            },
+            roles,
+            completion_event: "task.complete".to_string(),
+            journal_file: engine_journal_path(&engine_state_root),
+            record_file: RouteSnapshot::record_path(&engine_state_root),
+        };
+        let snapshot_path = RouteSnapshot::path(&engine_state_root);
+        snapshot
+            .write(&snapshot_path)
+            .context("writing the Jev route snapshot")?;
+        let ralph = std::env::current_exe().context("locating the ralph executable")?;
+        let command = format!(
+            "{} gate jev-route --snapshot {}",
+            shell_quote(&ralph.to_string_lossy()),
+            shell_quote(&snapshot_path.to_string_lossy())
+        );
+        let path = preset.join("autoloops.toml");
+        let mut toml = std::fs::read_to_string(&path)
+            .context("reading the generated preset to add Jev topology routing")?;
+        toml.push_str(&format!(
+            "\nhook = [{{ phase = \"pre_emit\", command = {}, on_error = \"block\", mutate = \"event\" }}]\n",
+            toml_string(&command)
+        ));
+        std::fs::write(&path, toml).context("writing Jev topology routing into the preset")?;
     }
 
     // Configured post.loop hooks ride the engine's finish notification. The
@@ -1014,6 +1083,17 @@ fn format_judge_record(
     record: &ralph_adapters::AutoloopRecord,
     ctx: &HeadlessPrintCtx,
 ) -> Option<String> {
+    if record.topic == "hook.output" && record.field("hook") == Some("pre_emit") {
+        let (routed, text) =
+            ralph_core::jev_topology::describe_hook_output(record.field("output")?)?;
+        let p = ctx.palette;
+        let color = if routed { p.cyan } else { p.yellow };
+        return Some(format!(
+            "{color}\u{21aa} {}{}",
+            sanitize_tui_inline_text(&text),
+            p.reset
+        ));
+    }
     if record.topic != "acceptance.command"
         || !record
             .field("command")

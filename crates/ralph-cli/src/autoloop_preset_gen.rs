@@ -74,6 +74,10 @@ pub fn generate_preset(config: &RalphConfig, dir: &Path) -> io::Result<()> {
     let mut hats: Vec<(&String, &ralph_core::HatConfig)> = config.hats.iter().collect();
     hats.sort_by(|a, b| a.0.cmp(b.0));
 
+    if let Some(jev) = config.core.routing.enabled_topology_jev() {
+        return generate_topology_preset(config, dir, &hats, jev.start.as_deref());
+    }
+
     // Invert triggers -> handoff (event -> roles that consume it), preserving
     // role order per event.
     let mut handoff: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -132,6 +136,62 @@ pub fn generate_preset(config: &RalphConfig, dir: &Path) -> io::Result<()> {
 }
 
 /// Synthesize a single-role preset for a hatless / single-hat ralph config.
+/// Topology mode: Jev picks the next role, so hats carry no routing. Every
+/// role emits `step.done` (rewritten by the `ralph gate jev-route` pre_emit
+/// hook to `route.<role>`), the `route.*` topics the rewrite needs to pass the
+/// engine's allowed-event check, and the completion event. Each `route.<id>`
+/// hands off to exactly `<id>`; `loop.start` goes to `start` (or the first
+/// hat by id).
+fn generate_topology_preset(
+    config: &RalphConfig,
+    dir: &Path,
+    hats: &[(&String, &ralph_core::HatConfig)],
+    start: Option<&str>,
+) -> io::Result<()> {
+    use ralph_core::jev_topology::{STEP_EVENT, route_topic};
+
+    let mut emits = vec![STEP_EVENT.to_string()];
+    emits.extend(hats.iter().map(|(id, _)| route_topic(id)));
+    emits.push(COMPLETION_EVENT.to_string());
+
+    let mut topo = String::new();
+    topo.push_str(&format!("name = {}\n", q("ralph")));
+    topo.push_str(&format!("completion = {}\n\n", q(COMPLETION_EVENT)));
+    for (id, hat) in hats {
+        let role_file = format!("roles/{id}.md");
+        let instructions = format!(
+            "{}\n\nWhen you finish a step, emit `{STEP_EVENT}` with a one-line summary; Jev chooses which role runs next. When the whole objective is done, emit `{COMPLETION_EVENT}`.\n",
+            hat.instructions.trim_end()
+        );
+        fs::write(dir.join(&role_file), instructions.as_bytes())?;
+        topo.push_str("[[role]]\n");
+        topo.push_str(&format!("id = {}\n", q(id)));
+        if !hat.name.is_empty() {
+            topo.push_str(&format!("name = {}\n", q(&hat.name)));
+        }
+        topo.push_str(&format!("emits = {}\n", arr(&emits)));
+        topo.push_str(&format!("prompt_file = {}\n\n", q(&role_file)));
+    }
+    let first = start
+        .map(str::to_owned)
+        .or_else(|| hats.first().map(|(id, _)| (*id).clone()))
+        .unwrap_or_default();
+    topo.push_str("[handoff]\n");
+    topo.push_str(&format!("\"loop.start\" = {}\n", arr(&[first])));
+    for (id, _) in hats {
+        topo.push_str(&format!(
+            "{} = {}\n",
+            q(&route_topic(id)),
+            arr(&[(*id).clone()])
+        ));
+    }
+    fs::write(dir.join("topology.toml"), topo.as_bytes())?;
+
+    write_autoloops(config, dir)?;
+    write_harness(config, dir)?;
+    Ok(())
+}
+
 fn generate_hatless_preset(config: &RalphConfig, dir: &Path) -> io::Result<()> {
     let role_instructions = format!(
         "You are the single autonomous worker for this loop. Work the objective \
@@ -855,6 +915,55 @@ core:
         generate_preset(&pin_backend(cfg), dir.path()).unwrap();
         let auto = fs::read_to_string(dir.path().join("autoloops.toml")).unwrap();
         assert!(!auto.contains("routing"), "{auto}");
+    }
+
+    #[test]
+    fn topology_mode_routes_every_role_through_route_topics() {
+        let cfg: RalphConfig = serde_yaml::from_str(
+            r"
+core:
+  routing:
+    topology:
+      jev:
+        enabled: true
+        start: planner
+hats:
+  planner:
+    name: Planner
+    description: Plans the work
+    instructions: Plan it.
+  builder:
+    name: Builder
+    description: Writes the code
+    instructions: Build it.
+",
+        )
+        .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        generate_preset(&pin_backend(cfg), dir.path()).unwrap();
+
+        let topo = fs::read_to_string(dir.path().join("topology.toml")).unwrap();
+        let emits =
+            "emits = [\"step.done\", \"route.builder\", \"route.planner\", \"task.complete\"]\n";
+        assert_eq!(topo.matches(emits).count(), 2, "{topo}");
+        assert!(topo.contains("\"loop.start\" = [\"planner\"]\n"), "{topo}");
+        assert!(
+            topo.contains("\"route.builder\" = [\"builder\"]\n"),
+            "{topo}"
+        );
+        assert!(
+            topo.contains("\"route.planner\" = [\"planner\"]\n"),
+            "{topo}"
+        );
+        assert!(
+            !topo.contains("\"step.done\" ="),
+            "step.done must have no handoff: {topo}"
+        );
+        let role = fs::read_to_string(dir.path().join("roles/builder.md")).unwrap();
+        assert!(
+            role.starts_with("Build it.") && role.contains("emit `step.done`"),
+            "{role}"
+        );
     }
 
     #[test]

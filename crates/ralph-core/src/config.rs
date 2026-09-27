@@ -1273,14 +1273,102 @@ pub struct JevJudgeConfig {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoutingConfig {
-    /// Jev workflow routing, emitted as the preset's `[routing.jev]`.
+    /// Workflow selection: Jev picks one workflow before the first iteration
+    /// (the preset's `[routing.jev]`). Hats still route between themselves.
     #[serde(default)]
     pub jev: Option<JevRoutingConfig>,
+
+    /// Topology selection: Jev picks which role runs next after every step.
+    /// Hats stop being a routing authority.
+    #[serde(default)]
+    pub topology: Option<TopologyRoutingConfig>,
+}
+
+/// `core.routing.topology`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TopologyRoutingConfig {
+    #[serde(default)]
+    pub jev: Option<JevTopologyConfig>,
+}
+
+/// `core.routing.topology.jev`: after each step (`step.done`), Jev chooses the
+/// next role from the hats' descriptions. Blocks the handoff, with no
+/// fallback, on a missing key, provider failure, `no_match`, or confidence
+/// below `min_confidence`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JevTopologyConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Hat that runs first; defaults to the first hat by id.
+    #[serde(default)]
+    pub start: Option<String>,
+    /// Jev model; default `jev-1.13.0`.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Minimum choice confidence, 0..=1; default 0.8.
+    #[serde(default)]
+    pub min_confidence: Option<f64>,
+    /// Provider timeout in milliseconds; default 10000.
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
 }
 
 impl RoutingConfig {
     fn is_empty(&self) -> bool {
-        self.jev.is_none()
+        self.jev.is_none() && self.topology.is_none()
+    }
+
+    /// The topology-routing block when it is switched on.
+    pub fn enabled_topology_jev(&self) -> Option<&JevTopologyConfig> {
+        self.topology
+            .as_ref()
+            .and_then(|topology| topology.jev.as_ref())
+            .filter(|jev| jev.enabled)
+    }
+
+    /// Why this config cannot run in Jev topology mode, naming the hat and
+    /// field, or `None` when topology mode is off or the hats are compatible.
+    pub fn topology_mode_violation(&self, hats: &HashMap<String, HatConfig>) -> Option<String> {
+        let jev = self.enabled_topology_jev()?;
+        if hats.is_empty() {
+            return Some(
+                "core.routing.topology.jev needs hats to choose between; this config has none"
+                    .to_string(),
+            );
+        }
+        let mut ids: Vec<&String> = hats.keys().collect();
+        ids.sort();
+        for id in ids {
+            let hat = &hats[id];
+            let field = if !hat.triggers.is_empty() {
+                Some("triggers")
+            } else if !hat.publishes.is_empty() {
+                Some("publishes")
+            } else if hat.default_publishes.is_some() {
+                Some("default_publishes")
+            } else if hat.concurrency > 1 {
+                Some("concurrency")
+            } else if hat.aggregate.is_some() {
+                Some("aggregate")
+            } else {
+                None
+            };
+            if let Some(field) = field {
+                return Some(format!(
+                    "hat `{id}` declares `{field}`, but core.routing.topology.jev makes Jev the routing authority; remove `{field}` from hat `{id}` (in topology mode hats only describe themselves, and each step ends with step.done)"
+                ));
+            }
+        }
+        if let Some(start) = &jev.start
+            && !hats.contains_key(start)
+        {
+            return Some(format!(
+                "core.routing.topology.jev.start names hat `{start}`, which is not configured"
+            ));
+        }
+        None
     }
 
     /// The Jev routing block when it is switched on.
@@ -4957,6 +5045,105 @@ hats:
         let sc = hat.scratchpad.as_ref().unwrap();
         assert!(sc.enabled);
         assert_eq!(sc.path, ".ralph/agent/worker.md");
+    }
+
+    fn topology_config(hats: &str) -> RalphConfig {
+        serde_yaml::from_str(&format!(
+            "core:\n  routing:\n    topology:\n      jev:\n        enabled: true\nhats:\n{hats}"
+        ))
+        .unwrap()
+    }
+
+    const DESCRIBED: &str = "  builder:\n    name: Builder\n    description: Writes code\n    instructions: Build it.\n  reviewer:\n    name: Reviewer\n    description: Reviews code\n    instructions: Review it.\n";
+
+    #[test]
+    fn topology_mode_accepts_hats_that_only_describe_themselves() {
+        let config = topology_config(DESCRIBED);
+        assert_eq!(
+            config.core.routing.topology_mode_violation(&config.hats),
+            None
+        );
+        config
+            .validate()
+            .expect("topology-mode hats pass config validation");
+    }
+
+    #[test]
+    fn topology_mode_refuses_each_routing_field_and_names_the_hat() {
+        for (field, yaml) in [
+            ("triggers", "    triggers: [\"work.start\"]\n"),
+            ("publishes", "    publishes: [\"work.done\"]\n"),
+            ("default_publishes", "    default_publishes: work.done\n"),
+            ("concurrency", "    concurrency: 2\n"),
+        ] {
+            let config = topology_config(&format!("{DESCRIBED}{yaml}"));
+            let message = config
+                .core
+                .routing
+                .topology_mode_violation(&config.hats)
+                .unwrap_or_else(|| panic!("{field} must be refused"));
+            assert!(
+                message.starts_with(&format!("hat `reviewer` declares `{field}`")),
+                "{message}"
+            );
+        }
+    }
+
+    #[test]
+    fn topology_mode_checks_start_and_needs_hats() {
+        let mut config = topology_config(DESCRIBED);
+        config
+            .core
+            .routing
+            .topology
+            .as_mut()
+            .unwrap()
+            .jev
+            .as_mut()
+            .unwrap()
+            .start = Some("planner".to_string());
+        let message = config
+            .core
+            .routing
+            .topology_mode_violation(&config.hats)
+            .unwrap();
+        assert!(
+            message.contains("`planner`, which is not configured"),
+            "{message}"
+        );
+
+        let hatless: RalphConfig = serde_yaml::from_str(
+            "core:\n  routing:\n    topology:\n      jev:\n        enabled: true\n",
+        )
+        .unwrap();
+        assert!(
+            hatless
+                .core
+                .routing
+                .topology_mode_violation(&hatless.hats)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn triggers_are_fine_when_topology_mode_is_off_or_workflow_mode_is_on() {
+        let hats = "  builder:\n    name: Builder\n    description: d\n    triggers: [\"work.start\"]\n    publishes: [\"work.done\"]\n    instructions: i\n";
+        let off: RalphConfig = serde_yaml::from_str(&format!(
+            "core:\n  routing:\n    topology:\n      jev:\n        enabled: false\nhats:\n{hats}"
+        ))
+        .unwrap();
+        assert_eq!(off.core.routing.topology_mode_violation(&off.hats), None);
+        let workflow: RalphConfig = serde_yaml::from_str(&format!(
+            "core:\n  routing:\n    jev:\n      enabled: true\n      routes_file: r.json\nhats:\n{hats}"
+        ))
+        .unwrap();
+        assert_eq!(
+            workflow
+                .core
+                .routing
+                .topology_mode_violation(&workflow.hats),
+            None
+        );
     }
 
     // ── Hat concurrency/aggregate config tests ──

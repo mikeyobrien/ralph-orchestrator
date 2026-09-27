@@ -27,6 +27,7 @@ pub mod hooks;
 mod instructions;
 pub mod jev_judge;
 pub mod jev_routing;
+pub mod jev_topology;
 mod landing;
 pub mod loop_completion;
 pub mod loop_context;

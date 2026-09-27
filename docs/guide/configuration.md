@@ -337,6 +337,49 @@ both refuses to start. `ralph doctor` checks the key, the catalog, the
 settings, and that the engine reads `[routing.jev]`. See
 `examples/jev-routing/`.
 
+#### core.routing.topology.jev
+
+Jev topology routing (autoloop >= 0.11.0). After every step, Jev chooses which
+hat runs next. Hats stop being a routing authority: in this mode a hat has a
+`name`, a `description` (which Jev reads to choose), and `instructions`, and
+nothing else.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | boolean | `false` | Turn topology routing on |
+| `start` | string | first hat by id | Hat that runs first |
+| `model` | string | `jev-1.13.0` | Jev model |
+| `min_confidence` | number | `0.8` | Minimum choice confidence, 0 to 1 |
+| `timeout_ms` | integer | `10000` | Provider timeout |
+
+How it runs: every hat ends a step by emitting `step.done`. The engine runs
+Ralph's `pre_emit` hook (`ralph gate jev-route`) before it routes the event.
+The hook asks Jev for the next hat and rewrites the event to `route.<hat>`,
+which the generated handoff sends to exactly that hat. The engine journals the
+hook's decision (`hook.output`, including the chosen hat, confidence, and
+model), the rewritten event, and the hat that then runs, so the journal matches
+what ran. A hat that emits `route.*` itself is blocked. A missing key, a
+provider failure, `no_match`, or confidence below `min_confidence` blocks the
+handoff with no fallback to hat routing.
+
+Ralph refuses to start in this mode when any hat declares `triggers`,
+`publishes`, `default_publishes`, `concurrency`, or `aggregate`, and names the
+hat and the field. The check does not apply when topology mode is off, or when
+only workflow routing (`core.routing.jev`) is on.
+
+**Routing layers and who decides.** autoloop has three layers:
+
+| Layer | What it is | Workflow mode (`core.routing.jev`) | Topology mode (`core.routing.topology.jev`) |
+|---|---|---|---|
+| Topology | Which role runs next inside one loop (`[handoff]`) | Hats' `triggers`/`publishes` | **Jev**, via the `pre_emit` seam |
+| Chains | Presets run in sequence | Preset author | Preset author |
+| Dynamic chains | Agent-emitted `chain.spawn` | The agent; passes through without affecting topology | The agent; passes through without affecting topology |
+
+Workflow mode has Jev choose one workflow's instructions before the first
+iteration and leaves topology to the hats. Both can be on at once. Ralph does
+not fork autoloop's topology to get either: both run at engine-owned seams
+(`[routing.jev]` and the `pre_emit` lifecycle hook).
+
 #### core.completion.jev
 
 A Jev completion judge (autoloop >= 0.11.0). The engine still owns completion:

@@ -656,6 +656,15 @@ fn warning_line(text: &str) -> Line<'static> {
 /// The completion judge's decision, from the engine's `acceptance.command`
 /// record for `ralph gate jev-judge`: one dense line, green when approved.
 fn judge_line(record: &AutoloopRecord) -> Option<Line<'static>> {
+    if record.topic == "hook.output" && record.field("hook") == Some("pre_emit") {
+        let (routed, text) =
+            ralph_core::jev_topology::describe_hook_output(record.field("output")?)?;
+        let color = if routed { Color::Cyan } else { Color::Yellow };
+        return Some(Line::from(vec![
+            Span::styled("\u{21aa} ", Style::default().fg(color)),
+            Span::styled(bounded_inline_text(&text), Style::default().fg(color)),
+        ]));
+    }
     if record.topic != "acceptance.command"
         || !record
             .field("command")
