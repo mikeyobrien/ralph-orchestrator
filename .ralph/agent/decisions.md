@@ -597,3 +597,12 @@ Use this template for new entries:
 - Reasoning: A fail-closed engine behind a silently dropping layer, or an engine that ignores the block, leaves the operator believing routing is on.
 - Reversibility: High.
 - Evidence: `596f321`; the Step 9 section in `progress.md`.
+
+
+## DEC-066 (2026-09-27)
+- Decision: Host the Jev completion judge at the engine's acceptance gate (`acceptance.verify_cmds`), fail closed through marker-fallback provenance, and turn off the metareview while the judge is on.
+- Confidence: 80
+- Alternatives Considered: (A) Typed evidence gate. Rejected because its evidence comes from the agent's own payload, so a Jev verdict there could be forged. (B) A Ralph-side check on `verdict_exit`. Rejected because it would shadow the engine's completion decision, which the charter forbids. (C) Marker fallback that approves when the agent's completion marker is present. Rejected because that would convert an unjudged run into a passed one.
+- Reasoning: The acceptance gate is harness-executed and cannot be faked by a prompt, and the engine holds on failure. The metareview's EXIT bypass is an engine defect, and disabling the reviewer is configuration of the engine rather than a second decision.
+- Reversibility: High.
+- Evidence: `5e11112`; the Step 10 section in `progress.md`; `upstream-issues.md`.

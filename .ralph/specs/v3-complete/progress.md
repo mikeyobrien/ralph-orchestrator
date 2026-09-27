@@ -2,8 +2,9 @@
 
 ## Current Step
 
-Steps 3 through 9 are closed (Step 9 on 2026-09-27). Step 10 (Jev-backed
-completion judge, Phase 2c.2) is next.
+Steps 3 through 10 are closed (Step 10 on 2026-09-27; the real gate pass on
+the live provider still needs the operator's go-ahead for a TypeSafe key).
+Step 11 (topology routing surface and feasibility, Phase 2c.3) is next.
 
 ## Active Wave
 
@@ -4529,5 +4530,84 @@ enforces, so this is left for a deliberate decision.
 ### Gates at `596f321`
 
 `cargo test --workspace` exited 0 with 79 `test result: ok` lines and none
+failed. `cargo clippy --workspace --all-targets -- -D warnings` and
+`cargo fmt --all -- --check` are clean.
+
+
+## 2026-09-27, Step 10 closed: Jev completion judge at an engine-owned seam
+
+Commit `5e11112`.
+
+### Seam verdicts (DEC-066)
+
+| Seam (prompt order) | Verdict | Evidence |
+|---|---|---|
+| 1. Typed evidence gate (`[[gate]] evidence`) | cannot express it | `autoloop-core/dist/evidence.js` validates keys in the payload the agent emits (`parseEvidenceEntry`), and `requires` checks prior events. A Jev producer would have to be the agent writing its own verdict, which can be forged. |
+| 2. Completion-gate acceptance (`acceptance.verify_cmds`, `resolveCompletionClaim`) | used | `autoloop-harness/dist/acceptance.js`: "The HARNESS executes each verifyCmds entry in a clean shell … so the pass/fail status is captured harness-side and cannot be faked by a prompt". `provisional.js` `resolveProvisional` holds unless acceptance passes. Present in 0.11.0 and 0.12.0. |
+| 3. Phase hook | not needed | Seam 2 fits. |
+
+### Judgment
+
+`ralph_core::jev_judge` sends one System One request to the fixed
+`https://api.typesafe.ai/v1/systemone` with redirects rejected. It asks for a
+`noul` on `completion_verified` and a `choice` `verdict` over
+approved/rejected/needs_more. The response shapes come from
+`docs.typesafe.ai/api.md` (`{type:"noul", noul}`, and
+`{type:"choice", choice, probabilities, confidence}`). It approves only when the
+verdict is `approved` and the noul is at least `COMPLETION_VERIFIED_THRESHOLD`
+(0.8, configurable). A failure to obtain a judgment holds completion with
+`marker_fallback` provenance. Telemetry goes to `.ralph/autoloop/jev-judge.jsonl`
+(values, model, provenance), and one output line is journaled by the engine
+(`acceptance.command.output_tail`); neither contains the key, the objective, or
+the instructions (tested).
+
+### Real gate stop (autoloop 0.11.0, claude backend, no key)
+
+The first attempt ended `loop.complete reason=verdict_exit` after
+`completion.held`, because the metareview's EXIT bypassed the gate (upstream
+issue 1 in `upstream-issues.md`). With `review.enabled = false` now written
+alongside the judge, the journal reads:
+
+```
+1 completion.provisional reason=completion_event
+1 acceptance.command exit_code=1 output_tail="jev judge held: TYPESAFE_API_KEY is not set; decided via marker fallback, not a Jev approval"
+1 acceptance.result passed=False
+1 completion.held
+2 completion.provisional reason=completion_event
+2 acceptance.command exit_code=1 (same line)
+2 acceptance.result passed=False
+2 completion.held
+  loop.stop reason=max_iterations
+```
+
+Ralph exited 2 (`Maximum iterations reached`), and headless printed
+`⚖ jev judge held: …` twice.
+
+### Tests
+
+- Replay fixtures (`crates/ralph-core/tests/fixtures/jev/`): approved,
+  rejected, needs_more, low confidence (approved verdict with noul 0.55),
+  malformed, verdict outside the set, and verdict not the most probable; plus
+  injected timeout, HTTP 503, and a missing credential (no request is made).
+- The telemetry test asserts that the key, objective, and instructions are
+  absent.
+- `integration_jev_judge`: the judge becomes an acceptance command and turns off
+  the metareview; when disabled it writes nothing and needs no credential; an
+  explicit preset refuses; an engine at 0.10.0 refuses; a direct
+  `ralph gate jev-judge` without a key exits 1 with the fallback line and a
+  record that carries `run_id` but no objective.
+- Doctor: `judge:credential`, `judge:threshold`, and `judge:engine`, present only
+  when the judge is enabled.
+- Opt-in live smoke: `jev_judge_live_smoke` (`#[ignore]`).
+
+### Pending operator decision
+
+The real gate pass, and the live smoke, need a TypeSafe key. A credential file
+exists at `~/.config/jev-browser-use/credentials.env`, but it belongs to another
+tool and has not been read or used.
+
+### Gates at `5e11112`
+
+`cargo test --workspace` exited 0 with 80 `test result: ok` lines and none
 failed. `cargo clippy --workspace --all-targets -- -D warnings` and
 `cargo fmt --all -- --check` are clean.
