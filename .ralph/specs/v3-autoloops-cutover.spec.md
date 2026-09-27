@@ -1,7 +1,7 @@
 ---
 status: "migrated (implementation); release-gated by v3-ga-readiness.spec.md"
 created: 2026-06-23
-updated: 2026-07-19
+updated: 2026-09-27
 bead: ralph-orchestrator-v3-autoloops-backend-a7e
 related:
   - feature-parity.spec.md
@@ -78,7 +78,7 @@ ralph already *consumes* autoloop TOML presets via `preset_source.rs:TomlPresetS
 - `hatless_ralph.rs` (`HatlessRalph`/`HatTopology` routing + prompt assembly), `loop_completion.rs`
 - `wave_detection.rs`, `wave_prompt.rs`, `wave_tracker.rs`
 - `event_parser.rs` agent-output routing portions
-- `ralph-proto/src/event_bus.rs` + `hat_registry.rs` (routing core, superseded by autoloop topology)
+- `ralph-proto/src/event_bus.rs` + `hat_registry.rs` (routing core, superseded by autoloop topology). Outcome: `event_bus.rs` deleted (`8c71400`); `HatRegistry` moved into the `ralph hats` command at `crates/ralph-cli/src/hats/registry.rs` and `hat_registry.rs` deleted (`96b7bb1`).
 
 **Keep (ralph's thin layer; autoloop verifiably lacks these):**
 - `worktree.rs` + `workspace.rs`; `merge_queue.rs`; `loop_registry.rs` + `loop_lock.rs` + `loop_history.rs` + `loop_name.rs`
@@ -224,7 +224,7 @@ Each step must `cargo build`/`cargo test` green and be committed.
 **A — decouple survivors from `loop_runner` (additive, low-risk): ✅ DONE**
 - [x] `merge_processing` extracted (commit `9e41d7c`) — queue draining no longer lives in `loop_runner`.
 - [x] `RunStats` (commit `4f80f21`) — `SummaryWriter`/`print_termination` take a tiny engine-agnostic stats struct instead of the engine `LoopState`; the keepers (`completion_coord`/`autoloop_engine`) no longer build a `LoopState`.
-- [x] Verified `completion_coord`/`autoloop_engine`/`autoloop_preset_gen`/`merge_processing` have **zero** `EventLoop`/`hatless_ralph`/`wave_*`/`event_bus` imports (only `config.event_loop.*` config fields + keeper coordination types). The autoloop engine path is fully decoupled from the in-house engine internals. (Deferred to Phase C: `TerminationReason` re-export currently lives in the `event_loop` module — a mechanical move when that module is deleted.)
+- [x] Verified `completion_coord`/`autoloop_engine`/`autoloop_preset_gen`/`merge_processing` have **zero** `EventLoop`/`hatless_ralph`/`wave_*`/`event_bus` imports (only `config.event_loop.*` config fields + keeper coordination types). The autoloop engine path is fully decoupled from the in-house engine internals. (Deferred to Phase C: `TerminationReason` re-export lived in the `event_loop` module. Done: it lives in `crates/ralph-core/src/termination.rs`, and `event_loop/` is gone.)
 
 **B — rewire/descope the legacy-engine callers: ✅ DONE (commit `21e6d89`)**
 - [x] `ralph run`: `run_autoloop_engine` is the sole path; TUI/RPC branches removed (descoped → #342/#343).
@@ -235,7 +235,7 @@ Each step must `cargo build`/`cargo test` green and be committed.
 
 **C — delete the dead engine + tests: ✅ DONE (commits `919024d`/`4c00366`/`7c32810`/`10455e5`)**
 - [x] Deleted `loop_runner.rs` (run_loop_impl + run_subprocess_tui), `wave.rs`, `rpc_stdin.rs` (ralph-cli).
-- [x] Deleted `event_loop/` (mod + tests + loop_state), `hatless_ralph.rs`, `wave_tracker/detection/prompt.rs`, `LoopState` (ralph-core). KEPT `hat_registry.rs` (live `ralph hats` consumer) and `event_bus.rs` (re-exported; orphaned dead code, low-priority cleanup).
+- [x] Deleted `event_loop/` (mod + tests + loop_state), `hatless_ralph.rs`, `wave_tracker/detection/prompt.rs`, `LoopState` (ralph-core). `hat_registry.rs` and `event_bus.rs` were kept at this snapshot and removed later under `a7e.10`: `HatRegistry` moved into `crates/ralph-cli/src/hats/registry.rs` (`96b7bb1`) and `event_bus.rs` was deleted (`8c71400`).
 - [x] Deleted obsolete tests: `event_loop_ralph.rs`, `smoke_runner.rs`, the EventLoop diagnostics tests, `integration_events_isolation.rs`, `integration_resume.rs`, 5 legacy behavioral tests in `integration_run.rs`.
 - [x] `core.engine` is now inert (autoloop unconditional); field retained for config compatibility.
 

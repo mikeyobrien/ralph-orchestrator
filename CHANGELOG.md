@@ -4,13 +4,14 @@ All notable changes to ralph-orchestrator are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.0.0] - 2026-07-19
+## [3.0.0] - Unreleased
 
 The v3 major: the in-house orchestration engine (~31K lines) is replaced by
 the [autoloop](https://github.com/mikeyobrien/autoloop) runtime (>= 0.10.0)
 running as a subprocess. Ralph is now the TUI frontend and
 observation/coordination plane; autoloop owns loop execution, role dispatch,
-completion, and budgets. See docs/migration/v3-autoloop-engine.md.
+completion, and budgets. See docs/migration/v3-autoloop-engine.md. The
+release gate is `.ralph/specs/v3-ga-readiness.spec.md`.
 
 ### Added
 - First-run autoloop engine provisioning, with `RALPH_AUTO_INSTALL_ENGINE` opt-in for CI and other non-interactive environments.
@@ -21,24 +22,49 @@ completion, and budgets. See docs/migration/v3-autoloop-engine.md.
   preflight on run/resume/bot, pinned minimum engine version.
 - No-Node channel: `ralph doctor --install-engine` downloads the
   SHA256-verified standalone engine binary to `~/.ralph/engine/`.
+- Engine state is Ralph-owned under `.ralph/autoloop`; the engine never
+  writes a top-level `.autoloop`.
+- `post.loop.complete` and `post.loop.error` hooks delivered through the
+  engine's finish notification.
+- Opt-in Jev integrations: workflow routing (`core.routing.jev`, autoloop
+  >= 0.12.0), a completion judge (`core.completion.jev`), and topology
+  routing (`core.routing.topology.jev`). All fail closed without
+  `TYPESAFE_API_KEY`.
+- `ralph resume` continues an interrupted engine run, including one that
+  never persisted its run id.
+- RObot HITL: autoloop `ask.pending` relayed through Telegram or the web
+  service; answers and guidance go back through `autoloop control`.
 - Fake-autoloop replay fixture substrate; revived `ralph-e2e --mock` driving
-  the real engine path.
+  the real engine path; TUI frame tests from a recorded live run.
 
 ### Changed
 - Backend selection, budgets, tasks/memories, and merge coordination are
   forwarded to/delegated to the engine; unmappable configuration fails fast
   instead of being silently ignored.
+- A stop sent to Ralph (`ralph loops stop`, SIGINT/SIGTERM/SIGHUP) is
+  forwarded to the engine, and Ralph waits for it, so the run stays
+  resumable and nothing is orphaned.
+- Merge-queue children run the current `ralph` executable with the
+  project's backend settings.
+- Landing commits only files the run created or changed; untracked files
+  that predate the run stay untracked.
+- `ralph run --rpc` maps the engine's `--events` stream onto `RpcEvent`
+  lines.
 - Docs, shipped presets, and compiled-in agent instructions rewritten for
   the v3 architecture.
 
 ### Removed
 - In-house engine (`event_loop`, `hatless_ralph`, waves, `loop_runner`),
-  `ralph wave` CLI, `--rpc` JSON-lines mode, `--record-session`, the v2
-  smoke corpus. `core.engine` is inert.
+  `ralph wave` CLI (now a migration message), the TUI wave view,
+  `--record-session`, the v2 smoke corpus, and the dashboard's legacy event
+  observation. `core.engine` accepts only `autoloop`.
 
-### Known gaps (tracked)
-- Telegram RObot HITL inactive during runs pending engine relay (#345);
-  RPC mode (#343).
+### Known gaps
+- `event_loop.max_consecutive_failures` is not enforced (no engine
+  equivalent); preflight warns.
+- TUI guidance keys are inert under the engine; use RObot.
+- Five engine defects are mitigated in Ralph and drafted for upstream
+  (`.ralph/specs/v3-complete/upstream-issues.md`).
 
 
 ## [2.10.1] - 2026-06-22

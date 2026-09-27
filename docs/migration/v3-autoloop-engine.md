@@ -55,6 +55,9 @@ runtime state: Ralph launches autoloop with a Ralph-owned state root at
   generation; limits then live in the preset.
 - Parallel worktree loops, merge queue, `ralph loops`, landing: unchanged
   surfaces, now coordinated around the engine's journal/summary contracts.
+  `features.auto_merge` defaults to off, so a finished worktree loop is listed
+  as `unmerged` until `ralph loops merge`. Merge children run the same
+  `ralph` executable with the project's backend settings.
 - Tasks and memories: `.ralph/current-loop-id` semantics, `--loop-id`,
   `--continue`. Completion judgment is the engine's; open ralph tasks at
   completion produce a loud warning.
@@ -63,7 +66,19 @@ runtime state: Ralph launches autoloop with a Ralph-owned state root at
 
 - TUI and headless runs both render the engine's `--events` stream live.
 - `ralph run --rpc` emits the same `--events` stream as Ralph `RpcEvent` JSON lines.
-- `ralph resume` persists Autoloop `run_id` under `.ralph/autoloop/current-run-id` and invokes `autoloop resume <run_id>`.
+- `ralph resume` invokes `autoloop resume` for the run in
+  `.ralph/autoloop/current-run-id`, or for the latest run in the engine
+  journal when an interrupted run never persisted one. The engine only looks
+  runs up under `<dir>/.autoloop`, so Ralph points that lookup at
+  `.ralph/autoloop-resume/.autoloop`, a link to `.ralph/autoloop`. Resume
+  also takes no `--set`, so the generated preset carries the state paths; an
+  explicit `core.autoloop_preset` must set `core.state_dir`,
+  `core.journal_file`, `core.memory_file`, and `core.tasks_file` to the
+  `.ralph/autoloop` paths, and `ralph resume` names the lines to add if it
+  does not.
+- Stopping Ralph (`ralph loops stop`, Ctrl-C, SIGTERM, SIGHUP) forwards the
+  stop to the engine and waits. The engine marks the run `stopped`, and it
+  can be resumed.
 - Engine state: the run journal is at `.ralph/autoloop/journal.jsonl`, with
   run-scoped state under `.ralph/autoloop/runs/`.
 - Ralph's coordination stores remain separate under `.ralph/agent/`, and its

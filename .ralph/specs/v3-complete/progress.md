@@ -2,8 +2,9 @@
 
 ## Current Step
 
-Steps 3 through 13 are closed (Step 13 on 2026-09-27). Step 14 (GA gate,
-close the epic, final suites, push) is next.
+All steps are closed (Step 14 on 2026-09-27). The GA gate is met on
+`v3/complete`; releasing is the maintainer's decision
+(`.ralph/specs/v3-ga-readiness.spec.md`).
 
 ## Active Wave
 
@@ -4812,4 +4813,42 @@ It passed 10 of 10 repeated runs.
   production caller. `integration_snapshots` and the header unit tests still
   drive state through them, so they are not evidence for the v3 path;
   `autoloop_frames` is. Step 14 records this in the GA R-matrix.
+
+## 2026-09-27, Step 14 closed: GA gate, epic closed
+
+- `.ralph/specs/v3-ga-readiness.spec.md` written: acceptance rows A1 to A14
+  with evidence, known gaps with mitigations, the R-matrix mapping all 26
+  legacy E2E scenarios to v3 coverage (three memory chaos scenarios have no
+  replacement and are marked so), and the gate verdict.
+- `ralph-e2e --mock` `engine-completion` was failing. Its fixture still
+  reported pre-Step-3 `.autoloop` summary paths, which Ralph rightly
+  rejects, had no version-probe line, and asserted a `run_id=` line Ralph no
+  longer prints. Nothing in `cargo test` runs it, which is why it rotted; the
+  gate spec now lists the command. Fixed and passing.
+- `.ralph/specs/v3-autoloops-cutover.spec.md:81`, `:227`, and `:238` now
+  record that `hat_registry.rs` moved into `ralph-cli` (`96b7bb1`),
+  `event_bus.rs` was deleted (`8c71400`), and `TerminationReason` lives in
+  `ralph-core/src/termination.rs`.
+- CHANGELOG `[3.0.0]` is marked Unreleased and corrected: `--rpc` and RObot
+  HITL work, and it lists resume, stop forwarding, hooks, Jev, landing scope,
+  and merge children. The migration guide covers resume, explicit-preset
+  state keys, stop forwarding, `auto_merge`, and merge children.
+- Bead `ralph-orchestrator-v3-autoloops-backend-a7e` closed against its
+  acceptance. No non-closed beads remain.
+- Found and recorded, not changed: `ralph-core` `testing::smoke_runner`
+  (feature `recording`) is an orphaned v2 replay runner.
+
+### Gates
+
+`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D
+warnings`, `cargo test --workspace` (83 suites, 2922 passed, 0 failed), and
+`ralph-e2e --mock` (1 passed, 25 legacy skipped) all pass. `origin/main` is
+untouched at `edc2b32`.
+
+### Left to the maintainer
+
+- Release 3.0.0 (merge `v3/complete`, tag).
+- A live Jev pass (needs `TYPESAFE_API_KEY`) and a live Telegram relay pass.
+- Filing upstream issues 1 to 5.
+- Upgrading the global engine to 0.12.0.
 
