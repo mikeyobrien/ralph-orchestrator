@@ -187,7 +187,10 @@ impl TestScenario for EngineCompletionScenario {
 
         let assertions = vec![
             Assertions::exit_code(&execution, 0),
-            Assertions::output_contains(&execution, "autoloop engine: run_id="),
+            Assertions::output_contains(
+                &execution,
+                "Iteration 1 finished | worker | emitted task.complete",
+            ),
             self.summary_file_exists(workspace),
             self.completion_history_exists(workspace),
         ];
