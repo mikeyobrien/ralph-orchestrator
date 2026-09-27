@@ -665,6 +665,19 @@ pub async fn run_autoloop_engine(
         resolve_autoloop_prompt(&workspace, &config.event_loop)?
     };
 
+    // Loop history backs `ralph loops` (prompt, unmerged status) and merge
+    // recovery; the engine does not write Ralph's history, so Ralph does.
+    let history = ralph_core::LoopHistory::from_context(&identity_context);
+    let recorded = if launch.continue_mode || launch.native_resume {
+        let last = history.last_iteration().ok().flatten().unwrap_or(0);
+        history.record_resumed(last)
+    } else {
+        history.record_started(&prompt)
+    };
+    if let Err(error) = recorded {
+        tracing::warn!(%error, "Could not record the loop start in its history");
+    }
+
     // Structured event sink beneath the owned engine root — the preferred
     // observability channel. The root was prepared before any run state.
     let events_path = engine_state_root.join("events.ndjson");
@@ -678,18 +691,30 @@ pub async fn run_autoloop_engine(
     // journal/memory/tasks paths. Environment exports are absolute so child cwd
     // handling cannot re-anchor them; `--set` overrides are workspace-relative
     // because autoloop joins them onto its work dir.
+    if launch.native_resume && explicit_preset {
+        require_resumable_preset(&preset)?;
+    }
     let mut runner = AutoloopRunner::new(preset, prompt.clone(), workspace.clone())
         .bin(autoloop_bin)
         .events_path(events_path.clone());
     if launch.native_resume {
+        // An interrupted run exits before Ralph persists its run_id, but the
+        // engine journaled it, so fall back to the latest run in the journal.
         let run_id = read_current_run_id(&engine_state_root)
             .context("reading the persisted Autoloop run_id")?
+            .or_else(|| latest_journal_run_id(&engine_state_root))
             .ok_or_else(|| {
                 anyhow::anyhow!(
                     "Ralph has no persisted Autoloop run_id. Start a loop with `ralph run` before `ralph resume`."
                 )
             })?;
-        runner = runner.resume(run_id);
+        runner = runner.resume(run_id).env(
+            "AUTOLOOP_PROJECT_DIR",
+            resume_lookup_dir(&workspace, &engine_state_root)
+                .context("preparing the Autoloop resume lookup directory")?
+                .to_string_lossy()
+                .into_owned(),
+        );
     }
     for (key, value) in engine_env(&engine_state_root) {
         runner = runner.env(key, value);
@@ -830,14 +855,23 @@ pub async fn run_autoloop_engine(
             };
             (reason, state, None)
         }
-        AutoloopOutcome::Stopped => (
-            TerminationReason::Stopped,
-            RunStats {
-                elapsed: start.elapsed(),
-                ..RunStats::default()
-            },
-            None,
-        ),
+        AutoloopOutcome::Stopped => {
+            // A stopped engine still reports how far it got.
+            let (iterations, cost_usd) = read_events(&events_path)
+                .iter()
+                .rev()
+                .find_map(AutoloopEvent::run_result)
+                .map_or((0, 0.0), |result| (result.iterations, result.cost_usd));
+            (
+                TerminationReason::Stopped,
+                RunStats {
+                    iterations,
+                    elapsed: start.elapsed(),
+                    cost_usd,
+                },
+                None,
+            )
+        }
         AutoloopOutcome::Failed(error) => {
             let recovery = recover_failed_run(&read_events(&events_path));
             let (reason, iterations, cost_usd) = recovery
@@ -1155,10 +1189,11 @@ async fn run_autoloop_headless(
 
     // Positioned before the engine starts, so this run's records are read.
     let mut journal = headless_journal_tailer(&events_path);
-    // Headless intentionally leaves autoloop in Ralph's process group. Unlike
-    // the interactive TUI path, there is no local quit action requiring Ralph
-    // to kill a separately-owned subprocess tree.
+    // Headless leaves autoloop in Ralph's process group, so a terminal Ctrl-C
+    // or a kill of Ralph's group reaches the engine directly; a stop aimed at
+    // Ralph's pid alone is forwarded.
     let child = runner.spawn().context("spawning the autoloop subprocess")?;
+    let stop = EngineStopForwarder::start(child.id(), EngineGroup::Shared);
     let (terminated_tx, mut terminated_rx) = watch::channel(false);
 
     let reader_handle = tokio::spawn(async move {
@@ -1215,7 +1250,81 @@ async fn run_autoloop_headless(
         .await
         .context("headless autoloop event reader task failed")?;
 
-    Ok(interpret_autoloop_result(summary, false))
+    Ok(interpret_autoloop_result(summary, stop.finish()))
+}
+
+/// The most recent run the engine journaled (`loop.start`), persisted so a
+/// later resume finds it directly. `None` for an unsafe or absent id.
+fn latest_journal_run_id(engine_state_root: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(engine_journal_path(engine_state_root)).ok()?;
+    let run_id = ralph_adapters::replay_journal(&content)
+        .ok()?
+        .into_iter()
+        .rev()
+        .find(|record| record.topic == "loop.start")
+        .map(|record| record.run)?;
+    ralph_core::engine_run_dir(engine_state_root, &run_id)?;
+    let _ = persist_current_run_id(engine_state_root, &run_id);
+    Some(run_id)
+}
+
+/// Refuses to resume through an explicit preset that does not name Ralph's
+/// state paths. `autoloop resume` takes no `--set`; it reads these from the
+/// preset, so without them the resumed run would use other state files.
+fn require_resumable_preset(preset: &Path) -> Result<()> {
+    let file = if preset.is_dir() {
+        preset.join("autoloops.toml")
+    } else {
+        preset.to_path_buf()
+    };
+    let toml: toml::Value = std::fs::read_to_string(&file)
+        .ok()
+        .and_then(|text| toml::from_str(&text).ok())
+        .unwrap_or(toml::Value::Table(toml::map::Map::new()));
+    let missing: Vec<String> = engine_config_overrides()
+        .into_iter()
+        .filter(|(key, value)| {
+            let field = key.trim_start_matches("core.");
+            toml.get("core")
+                .and_then(|core| core.get(field))
+                .and_then(toml::Value::as_str)
+                != Some(value.as_str())
+        })
+        .map(|(key, value)| format!("{key} = {}", toml_string(&value)))
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    bail!(
+        "ralph resume reads the engine state paths from core.autoloop_preset, which Ralph does not edit; add to {}:\n  {}",
+        file.display(),
+        missing.join("\n  ")
+    )
+}
+
+/// A Ralph-owned directory whose `.autoloop` points at the engine state root.
+///
+/// `autoloop resume` looks runs up in `$AUTOLOOP_PROJECT_DIR/.autoloop` and
+/// ignores `AUTOLOOP_STATE_DIR` (autoloop 0.11/0.12), so it cannot find runs
+/// kept under `.ralph/autoloop`. Pointing only the resume lookup here keeps the
+/// state where it is; the resumed run takes its own paths from its record.
+fn resume_lookup_dir(workspace: &Path, engine_state_root: &Path) -> Result<PathBuf> {
+    let dir = workspace.join(".ralph").join("autoloop-resume");
+    std::fs::create_dir_all(&dir)?;
+    let link = dir.join(".autoloop");
+    let target = std::path::absolute(engine_state_root)?;
+    if std::fs::read_link(&link).ok().as_deref() != Some(target.as_path()) {
+        match std::fs::symlink_metadata(&link) {
+            Ok(meta) if meta.is_dir() => std::fs::remove_dir_all(&link)?,
+            Ok(_) => std::fs::remove_file(&link)?,
+            Err(_) => {}
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &link)?;
+        #[cfg(not(unix))]
+        anyhow::bail!("ralph resume needs symlink support");
+    }
+    Ok(dir)
 }
 
 fn persist_run_id_from_outcome(engine_state_root: &Path, events_path: &Path) {
@@ -1241,6 +1350,7 @@ async fn run_autoloop_rpc(
     use tokio::sync::watch;
 
     let child = runner.spawn().context("spawning the autoloop subprocess")?;
+    let stop = EngineStopForwarder::start(child.id(), EngineGroup::Shared);
     let (terminated_tx, mut terminated_rx) = watch::channel(false);
 
     let reader_handle = tokio::spawn(async move {
@@ -1309,7 +1419,7 @@ async fn run_autoloop_rpc(
         .await
         .context("RPC autoloop event reader task failed")?;
 
-    Ok(interpret_autoloop_result(summary, false))
+    Ok(interpret_autoloop_result(summary, stop.finish()))
 }
 
 fn take_requested_termination(workspace: &Path) -> Option<TerminationReason> {
@@ -1345,6 +1455,7 @@ async fn run_autoloop_with_robot(
     let runner = runner.own_process_group(true);
     let mut journal = headless_journal_tailer(&events_path);
     let child = runner.spawn().context("spawning the autoloop subprocess")?;
+    let stop = EngineStopForwarder::start(child.id(), EngineGroup::Own);
     let done = Arc::new(AtomicBool::new(false));
     let robot_shutdown = service.shutdown_flag();
     let mut process_guard =
@@ -1416,9 +1527,12 @@ async fn run_autoloop_with_robot(
             let _ = printer_handle.await;
             let summary = summary
                 .context("autoloop wait task panicked")?
-                .context("autoloop run failed")?;
-            bridge_result?;
-            Ok(interpret_autoloop_result(Ok(summary), false))
+                .context("autoloop run failed");
+            let stopped = stop.finish();
+            if !stopped {
+                bridge_result?;
+            }
+            Ok(interpret_autoloop_result(summary, stopped))
         }
         bridge = &mut bridge_handle => {
             process_guard.terminate();
@@ -1554,6 +1668,7 @@ async fn run_autoloop_with_tui(
     let runner = runner.own_process_group(true);
     let child = runner.spawn().context("spawning the autoloop subprocess")?;
     let child_pid = child.id();
+    let stop = EngineStopForwarder::start(child_pid, EngineGroup::Own);
 
     // Block on the subprocess in a worker thread, freeing the async runtime for
     // the TUI + reader. wait_with_summary mirrors run()'s success/error contract.
@@ -1594,7 +1709,102 @@ async fn run_autoloop_with_tui(
     let _ = reader_handle.await;
     tui_result.context("TUI render loop failed")?;
 
-    Ok(interpret_autoloop_result(summary, killed_by_ralph))
+    Ok(interpret_autoloop_result(
+        summary,
+        stop.finish() || killed_by_ralph,
+    ))
+}
+
+/// Whether the engine leads its own process group or shares Ralph's.
+#[derive(Clone, Copy)]
+enum EngineGroup {
+    /// Signal the engine's whole group (engine and agent).
+    Own,
+    /// Signal the engine alone; its group is Ralph's.
+    Shared,
+}
+
+/// Forwards a stop aimed at Ralph (SIGINT, SIGTERM, SIGHUP) to the engine
+/// while the engine runs.
+///
+/// `ralph loops stop` and service managers signal Ralph's pid alone, so
+/// without this Ralph would die and orphan the engine and its agent. The first
+/// stop sends SIGTERM, which autoloop turns into an orderly abort that leaves
+/// the run resumable; a further stop sends SIGKILL. Ralph keeps waiting for
+/// the engine, so completion coordination still runs.
+struct EngineStopForwarder {
+    requested: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    task: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl EngineStopForwarder {
+    fn start(pid: u32, group: EngineGroup) -> Self {
+        let requested = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        #[cfg(unix)]
+        let task = {
+            use nix::sys::signal::{Signal, kill, killpg};
+            use nix::unistd::Pid;
+            use tokio::signal::unix::{SignalKind, signal};
+            let requested = std::sync::Arc::clone(&requested);
+            let listeners = (
+                signal(SignalKind::interrupt()),
+                signal(SignalKind::terminate()),
+                signal(SignalKind::hangup()),
+            );
+            match listeners {
+                (Ok(mut interrupt), Ok(mut terminate), Ok(mut hangup)) => {
+                    Some(tokio::spawn(async move {
+                        let target = Pid::from_raw(pid as i32);
+                        loop {
+                            tokio::select! {
+                                _ = interrupt.recv() => {}
+                                _ = terminate.recv() => {}
+                                _ = hangup.recv() => {}
+                            }
+                            let first = !requested.swap(true, std::sync::atomic::Ordering::SeqCst);
+                            let signal = if first {
+                                Signal::SIGTERM
+                            } else {
+                                Signal::SIGKILL
+                            };
+                            let _ = match group {
+                                EngineGroup::Own => killpg(target, signal),
+                                EngineGroup::Shared => kill(target, signal),
+                            };
+                        }
+                    }))
+                }
+                _ => {
+                    tracing::warn!(
+                        "Ralph could not listen for stop signals; a stop may orphan the engine"
+                    );
+                    None
+                }
+            }
+        };
+        #[cfg(not(unix))]
+        let task = {
+            let _ = (pid, group);
+            None
+        };
+        Self { requested, task }
+    }
+
+    /// Stops forwarding and reports whether a stop was forwarded.
+    fn finish(mut self) -> bool {
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+        self.requested.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+impl Drop for EngineStopForwarder {
+    fn drop(&mut self) {
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+    }
 }
 
 /// Stop the autoloop subprocess tree: SIGTERM the whole process group, then
@@ -1796,6 +2006,87 @@ mod tests {
             ]
         );
         assert!(lines.iter().all(|line| !line.contains("unknown")));
+    }
+
+    #[test]
+    fn resume_falls_back_to_the_latest_journaled_run_and_persists_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(
+            engine_journal_path(root),
+            concat!(
+                r#"{"run":"old-run","topic":"loop.start","fields":{}}"#,
+                "\n",
+                r#"{"run":"full-queue","topic":"loop.start","fields":{}}"#,
+                "\n",
+                r#"{"run":"full-queue","iteration":"1","topic":"iteration.finish","fields":{}}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+        assert_eq!(latest_journal_run_id(root).as_deref(), Some("full-queue"));
+        assert_eq!(
+            read_current_run_id(root).unwrap().as_deref(),
+            Some("full-queue")
+        );
+
+        std::fs::write(
+            engine_journal_path(root),
+            r#"{"run":"../escape","topic":"loop.start","fields":{}}"#,
+        )
+        .unwrap();
+        let other = tempfile::tempdir().unwrap();
+        std::fs::copy(engine_journal_path(root), engine_journal_path(other.path())).unwrap();
+        assert_eq!(
+            latest_journal_run_id(other.path()),
+            None,
+            "unsafe ids are refused"
+        );
+    }
+
+    #[test]
+    fn resume_through_an_explicit_preset_needs_the_state_paths_in_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("autoloops.toml");
+        std::fs::write(&file, "event_loop.max_iterations = 3\n").unwrap();
+        let error = require_resumable_preset(dir.path())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("core.memory_file = \".ralph/autoloop/memory.jsonl\""),
+            "{error}"
+        );
+
+        let mut lines = String::new();
+        for (key, value) in engine_config_overrides() {
+            lines.push_str(&format!("{key} = {}\n", toml_string(&value)));
+        }
+        std::fs::write(&file, lines).unwrap();
+        require_resumable_preset(dir.path()).unwrap();
+    }
+
+    #[test]
+    fn resume_lookup_dir_points_the_engine_registry_at_ralph_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = dir.path();
+        let engine_root = workspace.join(".ralph").join("autoloop");
+        std::fs::create_dir_all(&engine_root).unwrap();
+        std::fs::write(engine_root.join("registry.jsonl"), "{}\n").unwrap();
+
+        let lookup = resume_lookup_dir(workspace, &engine_root).unwrap();
+        assert_eq!(lookup, workspace.join(".ralph/autoloop-resume"));
+        assert_eq!(
+            std::fs::read_to_string(lookup.join(".autoloop/registry.jsonl")).unwrap(),
+            "{}\n"
+        );
+        assert!(!workspace.join(".autoloop").exists());
+
+        // Idempotent, and a stale link is repointed.
+        resume_lookup_dir(workspace, &engine_root).unwrap();
+        let moved = workspace.join("other");
+        std::fs::create_dir_all(&moved).unwrap();
+        resume_lookup_dir(workspace, &moved).unwrap();
+        assert_eq!(std::fs::read_link(lookup.join(".autoloop")).unwrap(), moved);
     }
 
     #[test]

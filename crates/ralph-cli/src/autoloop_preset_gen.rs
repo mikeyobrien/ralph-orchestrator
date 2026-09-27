@@ -492,6 +492,12 @@ fn write_autoloops(config: &RalphConfig, dir: &Path) -> io::Result<()> {
     // mixed formats. autoloop therefore keeps its canonical task store and
     // remains the sole authority for its completion gate; Ralph only warns
     // observationally about its separate open tasks after engine completion.
+    // `autoloop resume` rebuilds config from this file and takes no `--set`,
+    // so the Ralph-owned state paths are written here as well as passed as
+    // overrides; otherwise a resumed run would look for its memory elsewhere.
+    for (key, value) in ralph_core::engine_state::engine_config_overrides() {
+        auto.push_str(&format!("{key} = {}\n", q(&value)));
+    }
     auto.push_str(&format!(
         "event_loop.max_iterations = {}\n",
         el.effective_max_iterations()
@@ -974,8 +980,24 @@ hats:
         generate_preset(&cfg, dir.path()).unwrap();
 
         let auto = fs::read_to_string(dir.path().join("autoloops.toml")).unwrap();
-        assert!(!auto.contains("core.tasks_file"));
+        assert!(auto.contains("core.tasks_file = \".ralph/autoloop/tasks.jsonl\""));
         assert!(!auto.contains(".ralph/agent/tasks.jsonl"));
+    }
+
+    #[test]
+    fn writes_the_ralph_owned_state_paths_so_resume_finds_them() {
+        let cfg = pin_backend(RalphConfig::default());
+        let dir = tempfile::tempdir().unwrap();
+
+        generate_preset(&cfg, dir.path()).unwrap();
+
+        let auto = fs::read_to_string(dir.path().join("autoloops.toml")).unwrap();
+        for (key, value) in ralph_core::engine_state::engine_config_overrides() {
+            assert!(
+                auto.contains(&format!("{key} = \"{value}\"")),
+                "{key}: {auto}"
+            );
+        }
     }
 
     #[test]

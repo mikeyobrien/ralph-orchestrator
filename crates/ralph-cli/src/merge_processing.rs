@@ -71,47 +71,7 @@ fn process_pending_merges_with_command(repo_root: &Path, ralph_cmd: &OsStr) {
         "Processing pending merges from queue"
     );
 
-    // Get the merge-loop preset content
-    let preset = match crate::presets::get_preset("merge-loop") {
-        Some(p) => p,
-        None => {
-            warn!("merge-loop preset not found, pending merges will remain queued");
-            return;
-        }
-    };
-
-    // Write a core-only merge config once (shared by all merge loops).
-    let mut core_value: serde_yaml::Value = match serde_yaml::from_str(preset.content) {
-        Ok(value) => value,
-        Err(e) => {
-            warn!(
-                error = %e,
-                "Failed to parse merge-loop preset, pending merges will remain queued"
-            );
-            return;
-        }
-    };
-
-    if let Some(mapping) = core_value.as_mapping_mut() {
-        let hats_key = serde_yaml::Value::String("hats".to_string());
-        let events_key = serde_yaml::Value::String("events".to_string());
-        mapping.remove(&hats_key);
-        mapping.remove(&events_key);
-    }
-
-    let core_yaml = match serde_yaml::to_string(&core_value) {
-        Ok(yaml) => yaml,
-        Err(e) => {
-            warn!(
-                error = %e,
-                "Failed to serialize core-only merge config, pending merges will remain queued"
-            );
-            return;
-        }
-    };
-
-    let config_path = repo_root.join(".ralph/merge-loop-config.yml");
-    if let Err(e) = fs::write(&config_path, core_yaml) {
+    if let Err(e) = write_merge_loop_config(repo_root) {
         warn!(
             error = %e,
             "Failed to write merge config, pending merges will remain queued"
@@ -208,9 +168,56 @@ fn create_merge_subprocess_log_file(
     Ok((file, log_path))
 }
 
-/// Drain the merge queue using the `ralph` binary on `PATH`.
+/// Drain the merge queue with this same `ralph` executable.
 pub(crate) fn process_pending_merges(repo_root: &Path) {
-    process_pending_merges_with_command(repo_root, OsStr::new("ralph"));
+    process_pending_merges_with_command(repo_root, &ralph_executable());
+}
+
+/// The running `ralph` executable, so merge children run this version rather
+/// than whatever `ralph` happens to be first on `PATH` (which may be an older
+/// install with the removed in-house engine).
+pub(crate) fn ralph_executable() -> std::ffi::OsString {
+    std::env::current_exe()
+        .map(std::path::PathBuf::into_os_string)
+        .unwrap_or_else(|_| std::ffi::OsString::from("ralph"))
+}
+
+/// Writes `.ralph/merge-loop-config.yml`: the project's own config (backend,
+/// args, guardrails) with the merge-loop preset's `event_loop`/`core` layered
+/// on top. Only the first `-c` source is read, so the merge child must get
+/// the project settings through this one file.
+pub(crate) fn write_merge_loop_config(repo_root: &Path) -> anyhow::Result<PathBuf> {
+    use anyhow::Context;
+    let preset = crate::presets::get_preset("merge-loop").context("merge-loop preset not found")?;
+    let mut merge_value: serde_yaml::Value =
+        serde_yaml::from_str(preset.content).context("parsing the merge-loop preset")?;
+    if let Some(mapping) = merge_value.as_mapping_mut() {
+        mapping.remove(serde_yaml::Value::String("hats".to_string()));
+        mapping.remove(serde_yaml::Value::String("events".to_string()));
+    }
+    let project_value = match crate::config_resolution::find_workspace_config_path(repo_root) {
+        Some(path) => {
+            let content =
+                fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+            let mut value =
+                crate::config_resolution::parse_yaml_value(&content, &path.display().to_string())?;
+            // The merge loop runs its own hats; the project's hats must not leak in.
+            if let Some(mapping) = value.as_mapping_mut() {
+                mapping.remove(serde_yaml::Value::String("hats".to_string()));
+                mapping.remove(serde_yaml::Value::String("events".to_string()));
+            }
+            value
+        }
+        None => serde_yaml::Value::Mapping(serde_yaml::Mapping::new()),
+    };
+    let merged = crate::config_resolution::merge_config_layers(project_value, merge_value)?;
+    let config_path = repo_root.join(".ralph/merge-loop-config.yml");
+    fs::write(
+        &config_path,
+        serde_yaml::to_string(&merged).context("serializing the merge config")?,
+    )
+    .context("writing the merge config")?;
+    Ok(config_path)
 }
 
 /// Public wrapper for CLI invocation of [`process_pending_merges`].
@@ -332,6 +339,37 @@ mod tests {
             .expect("list queued");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].loop_id, "loop-9999");
+    }
+
+    #[test]
+    fn merge_config_keeps_the_project_backend_and_takes_the_merge_loop_budget() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let repo_root = temp_dir.path();
+        std::fs::create_dir_all(repo_root.join(".ralph")).unwrap();
+        std::fs::write(
+            repo_root.join("ralph.yml"),
+            "cli:\n  backend: claude\n  args: []\nevent_loop:\n  max_iterations: 4\nhats:\n  builder:\n    name: B\n",
+        )
+        .unwrap();
+
+        let path = write_merge_loop_config(repo_root).expect("merge config");
+        let merged: serde_yaml::Value =
+            serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(merged["cli"]["backend"], "claude");
+        assert_eq!(merged["event_loop"]["completion_promise"], "MERGE_COMPLETE");
+        assert_eq!(merged["event_loop"]["max_iterations"], 15);
+        assert!(
+            merged.get("hats").is_none(),
+            "project hats must not leak into the merge loop"
+        );
+    }
+
+    #[test]
+    fn merge_children_run_this_executable() {
+        assert_eq!(
+            ralph_executable(),
+            std::env::current_exe().unwrap().into_os_string()
+        );
     }
 
     #[test]

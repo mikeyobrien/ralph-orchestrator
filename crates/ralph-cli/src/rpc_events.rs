@@ -21,6 +21,12 @@ pub struct RpcEventMapper {
     iteration_started_at: Option<u64>,
     loop_started: bool,
     last_cost_usd: f64,
+    /// The last iteration an `IterationEnd` was emitted for. The engine can
+    /// report several `progress` events per iteration (for example a routed
+    /// completion then its acceptance), and a consumer must see one end.
+    ended_iteration: Option<u32>,
+    /// `loop.finish` and `summary` both carry the terminal result; emit one.
+    terminated: bool,
 }
 
 impl RpcEventMapper {
@@ -42,6 +48,8 @@ impl RpcEventMapper {
             iteration_started_at: None,
             loop_started: false,
             last_cost_usd: 0.0,
+            ended_iteration: None,
+            terminated: false,
         }
     }
 
@@ -123,18 +131,22 @@ impl RpcEventMapper {
             .outcome
             .as_deref()
             .is_some_and(|outcome| outcome.starts_with("complete"));
-        let mut out = vec![RpcEvent::IterationEnd {
-            iteration,
-            duration_ms,
-            cost_usd: event.cost_usd.unwrap_or(0.0),
-            input_tokens: 0,
-            output_tokens: 0,
-            cache_read_tokens: 0,
-            cache_write_tokens: 0,
-            context_window: 0,
-            context_tokens: 0,
-            loop_complete_triggered,
-        }];
+        let mut out = Vec::new();
+        if self.ended_iteration != Some(iteration) {
+            self.ended_iteration = Some(iteration);
+            out.push(RpcEvent::IterationEnd {
+                iteration,
+                duration_ms,
+                cost_usd: event.cost_usd.unwrap_or(0.0),
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+                context_window: 0,
+                context_tokens: 0,
+                loop_complete_triggered,
+            });
+        }
         if let Some(topic) = event.emitted_topic.as_deref() {
             out.push(RpcEvent::OrchestrationEvent {
                 topic: topic.to_string(),
@@ -170,6 +182,10 @@ impl RpcEventMapper {
 
     fn map_terminal(&mut self, event: &AutoloopEvent) -> Vec<RpcEvent> {
         let mut out = Vec::new();
+        if self.terminated {
+            return out;
+        }
+        self.terminated = true;
         if !self.loop_started {
             out.push(self.ensure_loop_started());
         }
@@ -297,6 +313,43 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn emits_one_iteration_end_and_one_termination_per_run() {
+        let events = parse_events(concat!(
+            r#"{"type":"iteration.start","runId":"r1","iteration":1,"maxIterations":2}"#,
+            "\n",
+            r#"{"type":"progress","runId":"r1","iteration":1,"emittedTopic":"task.complete","outcome":"complete:completion_event"}"#,
+            "\n",
+            r#"{"type":"progress","runId":"r1","iteration":1,"outcome":"continue"}"#,
+            "\n",
+            r#"{"type":"loop.finish","runId":"r1","iterations":1,"stopReason":"completed","costUsd":0.1}"#,
+            "\n",
+            r#"{"type":"summary","runId":"r1","iterations":1,"stopReason":"completed","costUsd":0.1}"#,
+            "\n",
+        ));
+        let mut mapper = mapper();
+        let mapped: Vec<RpcEvent> = events.iter().flat_map(|event| mapper.map(event)).collect();
+        let ends: Vec<_> = mapped
+            .iter()
+            .filter_map(|event| match event {
+                RpcEvent::IterationEnd {
+                    loop_complete_triggered,
+                    ..
+                } => Some(*loop_complete_triggered),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ends, [true], "one end per iteration: {mapped:?}");
+        assert_eq!(
+            mapped
+                .iter()
+                .filter(|event| matches!(event, RpcEvent::LoopTerminated { .. }))
+                .count(),
+            1,
+            "loop.finish and summary are one termination: {mapped:?}"
+        );
     }
 
     #[test]

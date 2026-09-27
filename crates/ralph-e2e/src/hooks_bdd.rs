@@ -1280,7 +1280,17 @@ mod tests {
             .expect("workspace should be created");
 
         let sleep_backend = harness
-            .write_hook_script(&workspace_dir, "sleep-backend", "#!/bin/sh\nsleep 3600\n")
+            .write_hook_script(
+                &workspace_dir,
+                "sleep-backend",
+                // Autoloop starts its backend in a separate process group, so
+                // the harness's group kill misses it. Stop once the engine
+                // that launched the wrapping shell is gone.
+                "#!/bin/sh\nwrapper=$PPID\ni=0\nwhile [ $i -lt 3600 ]; do\n  \
+                 engine=$(ps -o ppid= -p \"$wrapper\" | tr -d ' ')\n  \
+                 if [ -z \"$engine\" ] || [ \"$engine\" = 1 ]; then exit 0; fi\n  \
+                 sleep 1\n  i=$((i + 1))\ndone\n",
+            )
             .expect("should write sleep backend");
         let sleep_backend = sleep_backend
             .to_string_lossy()

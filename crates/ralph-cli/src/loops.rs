@@ -423,18 +423,31 @@ fn list_loops(args: ListArgs, use_colors: bool) -> Result<()> {
         }
     }
 
-    // Add orphan worktrees (not in registry or merge queue)
+    // Worktrees outside the registry and merge queue: a loop that finished
+    // and was preserved for a manual merge (auto_merge off) is `unmerged`,
+    // not an orphan; only one with no recorded completion is an orphan.
     for wt in &worktrees {
         if let Some(loop_id) = ralph_core::worktree::loop_id_from_branch(&wt.branch) {
             let already_listed = rows.iter().any(|r| r.id.contains(loop_id));
             if !already_listed {
+                let history = worktree_history(&wt.path);
+                let completed = history.is_completed().unwrap_or(false);
                 rows.push(LoopRow {
                     id: loop_id.to_string(),
-                    status: "orphan".to_string(),
+                    status: if completed { "unmerged" } else { "orphan" }.to_string(),
                     location: shorten_path(&wt.path.to_string_lossy()),
-                    prompt: String::new(),
+                    prompt: if completed {
+                        history
+                            .get_prompt()
+                            .ok()
+                            .flatten()
+                            .map(|prompt| truncate_with_ellipsis(&prompt, 40))
+                            .unwrap_or_default()
+                    } else {
+                        String::new()
+                    },
                     age: None,
-                    merge: None,
+                    merge: completed.then(|| "manual".to_string()),
                 });
             }
         }
@@ -471,6 +484,7 @@ fn list_loops(args: ListArgs, use_colors: bool) -> Result<()> {
         "merged",
         "discarded",
         "crashed",
+        "unmerged",
         "orphan",
     ]
     .iter()
@@ -546,10 +560,15 @@ fn colorize_status(status: &str, p: &crate::display::Palette) -> String {
         "merged" => p.blue,
         "needs-review" | "crashed" => p.red,
         "orphan" | "discarded" => p.gray,
-        "queued" => p.cyan,
+        "queued" | "unmerged" => p.cyan,
         _ => return status.to_string(),
     };
     format!("{color}{status}{}", p.reset)
+}
+
+/// The loop history a worktree loop keeps under its own `.ralph/`.
+fn worktree_history(worktree: &std::path::Path) -> ralph_core::LoopHistory {
+    ralph_core::LoopHistory::new(worktree.join(".ralph").join("history.jsonl"))
 }
 
 fn shorten_path(path: &str) -> String {
@@ -934,7 +953,10 @@ fn prune_stale() -> Result<()> {
     for wt in worktrees {
         if let Some(loop_id) = ralph_core::worktree::loop_id_from_branch(&wt.branch) {
             let in_registry = loop_entries.iter().any(|e| e.id.contains(loop_id));
-            if !in_registry {
+            // A completed loop preserved for manual merge is finished work,
+            // not an orphan to discard.
+            let completed = worktree_history(&wt.path).is_completed().unwrap_or(false);
+            if !in_registry && !completed {
                 println!(
                     "Found orphan worktree: {} (branch: {})",
                     wt.path.display(),
@@ -1587,12 +1609,21 @@ fn merge_loop(args: MergeArgs) -> Result<()> {
             );
             // We need a prompt for the queue entry. Since it's an orphan, we might not have it easily.
             // Try to read it from the worktree's loop lock if available, or use a placeholder.
+            // The worktree's own history carries its prompt; its loop.lock
+            // can resolve to the primary loop's lock, so it is the fallback.
             let prompt = if let Some(wt_path) = worktree_path {
                 use ralph_core::LoopLock;
-                LoopLock::read_existing(std::path::Path::new(&wt_path))
+                let wt_path = std::path::Path::new(&wt_path);
+                worktree_history(wt_path)
+                    .get_prompt()
                     .ok()
                     .flatten()
-                    .map(|m| m.prompt)
+                    .or_else(|| {
+                        LoopLock::read_existing(wt_path)
+                            .ok()
+                            .flatten()
+                            .map(|m| m.prompt)
+                    })
                     .unwrap_or_else(|| "Orphan loop (recovered)".to_string())
             } else {
                 "Orphan loop (recovered)".to_string()
@@ -1612,27 +1643,13 @@ fn merge_loop(args: MergeArgs) -> Result<()> {
 
 /// Helper to spawn merge-ralph
 fn spawn_merge_ralph(cwd: &std::path::Path, loop_id: &str) -> Result<()> {
-    // Get the merge-loop preset and write a core-only config file.
-    let preset = crate::presets::get_preset("merge-loop").context("merge-loop preset not found")?;
-
-    let mut core_value: serde_yaml::Value =
-        serde_yaml::from_str(preset.content).context("Failed to parse merge-loop preset YAML")?;
-    if let Some(mapping) = core_value.as_mapping_mut() {
-        let hats_key = serde_yaml::Value::String("hats".to_string());
-        let events_key = serde_yaml::Value::String("events".to_string());
-        mapping.remove(&hats_key);
-        mapping.remove(&events_key);
-    }
-    let core_yaml = serde_yaml::to_string(&core_value)
-        .context("Failed to serialize core-only merge-loop config")?;
-
-    let config_path = cwd.join(".ralph/merge-loop-config.yml");
-    std::fs::write(&config_path, core_yaml).context("Failed to write merge config file")?;
+    crate::merge_processing::write_merge_loop_config(cwd)?;
 
     // Spawn merge-ralph
     println!("Spawning merge-ralph for loop '{}'...", loop_id);
 
-    let status = Command::new("ralph")
+    let status = Command::new(crate::merge_processing::ralph_executable())
+        .current_dir(cwd)
         .args([
             "run",
             "-c",

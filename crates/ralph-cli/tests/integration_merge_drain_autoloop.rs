@@ -59,14 +59,18 @@ impl Harness {
         let bin_dir = workspace.path().join("bin");
         fs::create_dir(&bin_dir).expect("create fake bin dir");
         let spawn_log = workspace.path().join("ralph-spawns.log");
+        // Merge children run this same executable, so count them by the engine
+        // runs they start rather than by a `ralph` on PATH.
         write_executable(
-            &bin_dir.join("ralph"),
+            &bin_dir.join("autoloop"),
             r#"#!/bin/sh
 set -eu
-: "${REAL_RALPH:?REAL_RALPH must be set}"
+: "${FAKE_AUTOLOOP:?FAKE_AUTOLOOP must be set}"
 : "${SPAWN_LOG:?SPAWN_LOG must be set}"
-printf 'RALPH_MERGE_LOOP_ID=%s %s\n' "${RALPH_MERGE_LOOP_ID:-}" "$*" >> "$SPAWN_LOG"
-exec "$REAL_RALPH" "$@"
+if [ "${1:-}" != "--version" ]; then
+  printf 'RALPH_MERGE_LOOP_ID=%s %s\n' "${RALPH_MERGE_LOOP_ID:-}" "$*" >> "$SPAWN_LOG"
+fi
+exec "$FAKE_AUTOLOOP" "$@"
 "#,
         );
 
@@ -90,10 +94,7 @@ exec "$REAL_RALPH" "$@"
 
     fn process_queue(&self) -> Output {
         let inherited_path = std::env::var_os("PATH").unwrap_or_default();
-        let mut paths = vec![
-            self.bin_dir.clone(),
-            self.fake_autoloop.bin_dir().to_path_buf(),
-        ];
+        let mut paths = vec![self.bin_dir.clone()];
         paths.extend(std::env::split_paths(&inherited_path));
         let path = std::env::join_paths(paths).expect("construct PATH");
 
@@ -103,7 +104,10 @@ exec "$REAL_RALPH" "$@"
             .env("PATH", path)
             .env("HOME", self.home.path())
             .env("USERPROFILE", self.home.path())
-            .env("REAL_RALPH", env!("CARGO_BIN_EXE_ralph"))
+            .env(
+                "FAKE_AUTOLOOP",
+                self.fake_autoloop.bin_dir().join("autoloop"),
+            )
             .env("SPAWN_LOG", &self.spawn_log)
             .env_remove("RALPH_CONFIG")
             .env_remove("RALPH_WORKSPACE_ROOT")
