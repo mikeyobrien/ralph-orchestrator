@@ -14,7 +14,11 @@ fn project_backend_does_not_inherit_user_backend_args() {
         "cli:\n  backend: pi\n  args: [\"--provider\", \"spark\", \"--model\", \"GLM-5.3-Flash-EXL3\"]\n",
     )
     .unwrap();
-    fs::write(workspace.path().join("ralph.yml"), "cli:\n  backend: claude\n").unwrap();
+    fs::write(
+        workspace.path().join("ralph.yml"),
+        "cli:\n  backend: claude\n",
+    )
+    .unwrap();
     let git = Command::new("git")
         .args(["init", "--quiet"])
         .current_dir(workspace.path())

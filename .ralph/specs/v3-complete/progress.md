@@ -2,9 +2,8 @@
 
 ## Current Step
 
-Steps 3 through 8b are closed (Step 8b on 2026-09-27). Step 9 (Jev routing
-parity, no silent drop, plus the carried `cli.backend`/`cli.args` layer defect)
-is next.
+Steps 3 through 9 are closed (Step 9 on 2026-09-27). Step 10 (Jev-backed
+completion judge, Phase 2c.2) is next.
 
 ## Active Wave
 
@@ -4459,5 +4458,76 @@ writable-directory message. They now surface as written.
 ### Gates at `f067c35`
 
 `cargo test --workspace` exited 0 with 77 `test result: ok` lines and none
+failed. `cargo clippy --workspace --all-targets -- -D warnings` and
+`cargo fmt --all -- --check` are clean.
+
+## 2026-09-27, Step 9 closed: Jev routing parity, no silent drop
+
+Commits `8118517` (carried config-layer defect) and `596f321` (routing).
+
+### Engine premise changed
+
+The audit recorded that autoloop 0.11.0 has no `[routing.jev]` reader (memory
+at `memories.md:50`, `:158`). `npm view @mobrienv/autoloop version` now reports
+0.12.0 (published 2026-09-27T01:06Z), and it ships
+`autoloop-harness/dist/jev-routing.js` (`readJevRoutingConfig`,
+`resolveJevRouting`). It was verified from a scratchpad install
+(`npm install --prefix <scratch> @mobrienv/autoloop@0.12.0`) and driven through
+`RALPH_ENGINE_DIR`. The operator's global engine is still 0.11.0 and was not
+changed. The engine contract read from source: keys `enabled` (default false),
+`routes_file` (relative to the preset dir), `model` (default `jev-1.13.0`),
+`min_confidence` (default 0.8, 0..1), and `timeout_ms` (default 2000, integer
+1..60000). The catalog holds 1 to 64 routes; ids match `^[a-z][a-z0-9_-]{0,63}$`,
+are unique, and are never `no_match`; descriptions and instructions are
+nonempty. `TYPESAFE_API_KEY` comes from the environment. Config leaves are
+stringified by `getPath`, so TOML booleans and numbers are read correctly.
+
+### Paths confirmed by execution first (0.12.0, no `TYPESAFE_API_KEY`)
+
+| Path | Before | After |
+|---|---|---|
+| `core.autoloop_preset` with `[routing.jev]` | engine fails closed: `loop.stop` detail `Jev routing: TYPESAFE_API_KEY is required when enabled; no fallback was attempted`, 0 backend starts | unchanged, plus an engine-version gate |
+| `-H preset` (dir) with `[routing.jev]` | block dropped: the run reached the backend and completed (`backend.start` 1, `loop.complete`), and the generated preset has no `routing` line | refuses: "enables [routing.jev], which a hats overlay (-H) cannot carry; run it with core.autoloop_preset … or move the routing into core.routing.jev" |
+| `core.routing.jev` in `ralph.yml` | parsed and silently ignored (`run --dry-run` exit 0) | emitted into the generated preset. Live on 0.12.0 with no key: the engine read it and failed closed with the same detail and 0 backend starts |
+
+Extra refusals: `core.routing.jev` combined with an explicit preset (which is
+never rewritten), and any enabled routing on an engine older than 0.12.0
+(`require_jev_routing_engine`; also covers explicit presets).
+
+### Doctor
+
+`jev:credential`, `jev:catalog`, `jev:settings`, and `jev:engine`, only when
+routing is on (`ralph_core::jev_routing` mirrors the engine rules). On
+`examples/jev-routing/`: with no key and the global 0.11.0, credential and
+engine FAIL while catalog (3 routes) and settings pass; with a key and
+`RALPH_ENGINE_DIR` pointing at 0.12.0, all four pass.
+
+### Tests
+
+These are fake-engine replay fixtures only, with no provider call.
+`integration_jev_routing` covers the generated block on a 0.12.0 fake, the
+refusal on a 0.11.0 fake, the explicit-preset engine gate, the
+explicit-plus-core refusal, and the `-H` refusal. There are unit tests in
+`jev_routing` (every catalog rule, ranges, and path resolution for explicit and
+generated), the preset generator (block emitted, absent when off), and doctor
+(absent, all pass, three failures).
+
+### Carried defect `mem-1790103346-2b0f` (DEC-064)
+
+Config layers now merge through `merge_config_layers`: a lower layer's
+`cli.args` are dropped when a higher layer selects a different `cli.backend`
+without args. `integration_config_layers` reproduces the operator's own setup
+(user `pi` plus spark args, project `claude`) through `run --dry-run`.
+
+### Not done, recorded
+
+Ralph's banner for an engine-side stop still says `Engine error: error`; the
+precise reason is in the journal's `loop.stop.detail`. Surfacing it would cross
+the failure-output privacy boundary that `integration_autoloop_failure_reporting`
+enforces, so this is left for a deliberate decision.
+
+### Gates at `596f321`
+
+`cargo test --workspace` exited 0 with 79 `test result: ok` lines and none
 failed. `cargo clippy --workspace --all-targets -- -D warnings` and
 `cargo fmt --all -- --check` are clean.

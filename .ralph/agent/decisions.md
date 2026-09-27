@@ -581,3 +581,19 @@ Use this template for new entries:
 - Reasoning: This reuses Ralph's hook executor and guardrails. The payload and environment are what existing scripts expect, and the engine journals delivery.
 - Reversibility: High.
 - Evidence: `f067c35`; the Step 8b section in `progress.md`; `~/.ralph/logs/pushover-hook.log` lines at 2026-09-27T04:42:36Z and 04:42:51Z.
+
+## DEC-064 (2026-09-27)
+- Decision: Resolve the `cli.backend`/`cli.args` layer conflict by dropping the lower layer's args, not by failing closed as the plan suggested.
+- Confidence: 85
+- Alternatives Considered: (A) Fail with a message naming the layer conflict. Rejected because the operator's own user config (`pi` plus spark args) would make every project that selects another backend unrunnable.
+- Reasoning: Args are written for a specific backend. A higher layer choosing a different backend without args is not a conflict; it is a replacement.
+- Reversibility: High.
+- Evidence: `8118517`; `integration_config_layers`.
+
+## DEC-065 (2026-09-27)
+- Decision: Treat Jev routing as needing autoloop >= 0.12.0, gated at run start for every path, and validate against the 0.12.0 engine from a scratchpad install without upgrading the operator's global engine.
+- Confidence: 85
+- Alternatives Considered: (A) Upgrade the global engine to 0.12.0. Deferred because it changes the operator's environment for other runs, so it is reported instead. (B) Trust the engine to fail closed. Rejected because 0.11.0 silently ignores the block.
+- Reasoning: A fail-closed engine behind a silently dropping layer, or an engine that ignores the block, leaves the operator believing routing is on.
+- Reversibility: High.
+- Evidence: `596f321`; the Step 9 section in `progress.md`.
