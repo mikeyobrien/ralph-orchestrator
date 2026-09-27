@@ -34,7 +34,9 @@ use crate::display::Palette;
 // Keep this test guard synchronized with autoloop's canonical
 // packages/harness/src/types.ts STOP_REASONS list.
 #[cfg(test)]
-const KNOWN_STOP_REASONS: [&str; 25] = [
+/// Every `STOP_REASONS` entry of autoloop 0.11.0 and 0.12.0 (`waiting` in
+/// both, `no_event` added in 0.12.0).
+const KNOWN_STOP_REASONS: [&str; 27] = [
     "completed",
     "completion_event",
     "completion_promise",
@@ -60,6 +62,8 @@ const KNOWN_STOP_REASONS: [&str; 25] = [
     "parallel_wave_timeout",
     "parallel_wave_failed",
     "parallel_wave_invalid",
+    "waiting",
+    "no_event",
 ];
 
 fn engine_stop_error(reason: &str) -> TerminationReason {
@@ -172,9 +176,11 @@ fn map_stop_reason(reason: &str) -> TerminationReason {
         "max_iterations" => TerminationReason::MaxIterations,
         "max_runtime" => TerminationReason::MaxRuntime,
         "cost_budget" => TerminationReason::MaxCost,
-        "stalled" => TerminationReason::LoopStale,
+        // `no_event` (0.12.0): consecutive iterations without an event.
+        "stalled" | "no_event" => TerminationReason::LoopStale,
         "interrupted" => TerminationReason::Interrupted,
-        "suspended" => TerminationReason::Suspended,
+        // `waiting`: the run parked on a durable `wait.request`; resumable.
+        "suspended" | "waiting" => TerminationReason::Suspended,
         "completion_held" => TerminationReason::CompletionHeld,
         "error"
         | "backend_failed"
@@ -2200,6 +2206,8 @@ mod tests {
             TerminationReason::Interrupted
         );
         assert_eq!(map_stop_reason("suspended"), TerminationReason::Suspended);
+        assert_eq!(map_stop_reason("waiting"), TerminationReason::Suspended);
+        assert_eq!(map_stop_reason("no_event"), TerminationReason::LoopStale);
         assert_eq!(
             map_stop_reason("completion_held"),
             TerminationReason::CompletionHeld
@@ -2225,10 +2233,9 @@ mod tests {
             assert_eq!(map_stop_reason(reason), engine_stop_error(reason));
         }
 
+        // The exact fallback `map_stop_reason` returns for an unmapped reason.
+        let unknown_fallback = map_stop_reason("not-a-real-stop-reason");
         for reason in KNOWN_STOP_REASONS {
-            let unknown_fallback = TerminationReason::EngineError {
-                detail: Some(format!("unknown engine stop reason: {reason}")),
-            };
             assert_ne!(
                 map_stop_reason(reason),
                 unknown_fallback,

@@ -188,10 +188,10 @@ mod tests {
     }
 
     #[test]
-    fn coordinate_without_context_writes_nothing_and_does_not_panic() {
+    fn coordinate_without_context_does_not_panic() {
         // No loop context => no registry / merge-queue participation and no
-        // `.ralph/agent` home, so no summary file is written relative to the
-        // process cwd. Only the banner runs. Should not panic.
+        // `.ralph/agent` home. Only the banner runs. What this asserts is that
+        // it does not panic; the absence of writes is not asserted here.
         let state = RunStats::default();
         coordinate_completion(
             &TerminationReason::MaxIterations,

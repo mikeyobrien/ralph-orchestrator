@@ -292,15 +292,18 @@ impl AutoloopRunner {
         let (program, _) = self.program_and_prefix();
         let args = self.control_args(args);
         let command = self.control_command_display(verb);
-        let output = Command::new(&program)
-            .args(&args)
-            .current_dir(&self.working_dir)
-            .envs(self.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-            .output()
-            .map_err(|source| AutoloopRunError::Spawn {
-                command: command.clone(),
-                source,
-            })?;
+        // The engine may be a just-written file (a PATH-first fixture or a
+        // fresh install); ride out a transient ETXTBSY like the health probe.
+        let output = ralph_core::utils::output_with_busy_retry(
+            Command::new(&program)
+                .args(&args)
+                .current_dir(&self.working_dir)
+                .envs(self.env.iter().map(|(k, v)| (k.as_str(), v.as_str()))),
+        )
+        .map_err(|source| AutoloopRunError::Spawn {
+            command: command.clone(),
+            source,
+        })?;
 
         if !output.status.success() {
             return Err(AutoloopRunError::NonZeroExit {
@@ -375,7 +378,13 @@ impl AutoloopRunner {
             cmd.process_group(0);
         }
 
-        cmd.spawn().map_err(|source| AutoloopRunError::Spawn {
+        // A just-written engine file can be ETXTBSY for another thread's
+        // fork-to-exec window; the retry is bounded and a real fault surfaces.
+        ralph_core::utils::spawn_with_busy_retry(
+            &mut cmd,
+            ralph_core::utils::EXEC_BUSY_RETRY_BUDGET,
+        )
+        .map_err(|source| AutoloopRunError::Spawn {
             command: self.command_display(),
             source,
         })
