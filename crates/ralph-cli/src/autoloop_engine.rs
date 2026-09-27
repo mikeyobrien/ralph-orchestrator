@@ -68,6 +68,56 @@ fn engine_stop_error(reason: &str) -> TerminationReason {
     }
 }
 
+/// `notify.*` settings that route the engine's finish notification to the
+/// configured `post.loop.*` hooks through `ralph hooks notify`. Empty when no
+/// such hook is configured, so the preset gets no notify block.
+fn notify_hook_settings(
+    config: &RalphConfig,
+    context: &LoopContext,
+    loop_id: &str,
+    engine_state_root: &Path,
+) -> Result<Vec<(&'static str, String)>> {
+    use ralph_core::hooks::engine_notify::{NotifySnapshot, notify_classes};
+
+    let Some(classes) = notify_classes(&config.hooks) else {
+        return Ok(Vec::new());
+    };
+    let snapshot = NotifySnapshot {
+        loop_id: loop_id.to_string(),
+        is_primary: context.is_primary(),
+        workspace: context.workspace().to_path_buf(),
+        repo_root: context.repo_root().to_path_buf(),
+        max_iterations: config.event_loop.effective_max_iterations(),
+        hooks: config.hooks.clone(),
+    };
+    let snapshot_path = NotifySnapshot::path(engine_state_root);
+    snapshot
+        .write(&snapshot_path)
+        .context("writing the hook snapshot for the engine's finish notification")?;
+    let ralph = std::env::current_exe().context("locating the ralph executable for hooks")?;
+    let command = format!(
+        "{} hooks notify --snapshot {}",
+        shell_quote(&ralph.to_string_lossy()),
+        shell_quote(&snapshot_path.to_string_lossy())
+    );
+    Ok(vec![
+        ("notify.command", command),
+        ("notify.on", classes),
+        ("notify.timeout_ms", snapshot.timeout_ms().to_string()),
+    ])
+}
+
+/// A TOML basic string.
+fn toml_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// Single-quote `value` for a POSIX shell (autoloop runs `notify.command` with
+/// `shell: true`).
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 /// Map an autoloop `stopReason` onto ralph's [`TerminationReason`].
 fn map_stop_reason(reason: &str) -> TerminationReason {
     match reason {
@@ -319,6 +369,9 @@ pub async fn run_autoloop_engine(
     launch: AutoloopLaunch,
 ) -> Result<TerminationReason> {
     let workspace = config.core.workspace_root.clone();
+    // Hooks the engine cannot fire refuse the run before anything starts.
+    ralph_core::hooks::engine_notify::validate_engine_hooks(&config.hooks)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
     let engine_state_root =
         prepare_engine_state_root(&workspace).context("preparing Ralph-owned Autoloop state")?;
     let identity_context = context
@@ -360,15 +413,50 @@ pub async fn run_autoloop_engine(
         }
         None => {
             let preset = workspace.join(".ralph").join("autoloop-preset");
-            crate::autoloop_preset_gen::generate_preset(&config, &preset).map_err(|_| {
-                anyhow::anyhow!(
-                    "could not generate Ralph's Autoloop preset; verify the workspace state directory is writable"
-                )
+            crate::autoloop_preset_gen::generate_preset(&config, &preset).map_err(|error| {
+                // A rejected configuration explains itself; only I/O faults
+                // fall back to the generic writable-directory hint.
+                if error.kind() == std::io::ErrorKind::InvalidInput {
+                    anyhow::anyhow!("{error}")
+                } else {
+                    anyhow::anyhow!(
+                        "could not generate Ralph's Autoloop preset; verify the workspace state directory is writable"
+                    )
+                }
             })?;
             tracing::debug!("engine=autoloop: generated preset from hats config");
             (preset, false)
         }
     };
+
+    // Configured post.loop hooks ride the engine's finish notification. The
+    // engine reads `notify.*` from the preset file only (`--set` is ignored for
+    // it), so Ralph writes them into the preset it generates.
+    let notify = notify_hook_settings(&config, &identity_context, &loop_id, &engine_state_root)?;
+    if !notify.is_empty() {
+        if explicit_preset {
+            let lines: Vec<String> = notify
+                .iter()
+                .map(|(key, value)| format!("{key} = {}", toml_string(value)))
+                .collect();
+            let message = format!(
+                "hooks are configured, but core.autoloop_preset points at your own preset, which Ralph does not edit; they will not fire unless its autoloops.toml contains:\n  {}",
+                lines.join("\n  ")
+            );
+            tracing::warn!("{message}");
+            eprintln!("warning: {message}");
+        } else {
+            let path = preset.join("autoloops.toml");
+            let mut toml = std::fs::read_to_string(&path)
+                .context("reading the generated preset to add hook notifications")?;
+            toml.push('\n');
+            for (key, value) in &notify {
+                toml.push_str(&format!("{key} = {}\n", toml_string(value)));
+            }
+            std::fs::write(&path, toml)
+                .context("writing hook notifications into the generated preset")?;
+        }
+    }
 
     // Generated presets use Ralph's hat IDs as engine role IDs. Explicit
     // presets define their own role namespace, so their IDs are already the

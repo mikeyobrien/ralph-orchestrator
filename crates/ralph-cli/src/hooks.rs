@@ -3,7 +3,7 @@
 //! This command surface validates hook configuration and command wiring
 //! without starting loop execution.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use ralph_core::RalphConfig;
 use ralph_core::preflight::{hook_path_override, resolve_hook_command, resolve_hook_cwd};
@@ -23,6 +23,21 @@ pub struct HooksArgs {
 pub enum HooksCommands {
     /// Validate hooks configuration and command wiring
     Validate(ValidateArgs),
+
+    /// Run configured post.loop hooks from the engine's finish notification.
+    ///
+    /// Invoked by autoloop as `notify.command`, with its finish payload on
+    /// stdin; not meant to be run by hand.
+    #[command(hide = true)]
+    Notify(NotifyArgs),
+}
+
+/// Arguments for the engine-invoked `ralph hooks notify`.
+#[derive(Parser, Debug)]
+pub struct NotifyArgs {
+    /// Hook snapshot Ralph wrote when the run started.
+    #[arg(long)]
+    pub snapshot: std::path::PathBuf,
 }
 
 /// Output format for `ralph hooks validate`.
@@ -102,7 +117,64 @@ pub async fn execute(
         HooksCommands::Validate(validate_args) => {
             execute_validate(config_sources, hats_source, validate_args, use_colors).await
         }
+        HooksCommands::Notify(notify_args) => execute_notify(&notify_args),
     }
+}
+
+/// Runs the hooks mapped to the engine's stop reason. Exits non-zero when any
+/// hook fails, so the engine journals `notify.failed` instead of `notify.sent`.
+fn execute_notify(args: &NotifyArgs) -> Result<()> {
+    use ralph_core::hooks::HookExecutor;
+    use ralph_core::hooks::engine_notify::{EngineFinishPayload, NotifySnapshot, dispatch};
+    use std::io::Read;
+
+    let snapshot = NotifySnapshot::read(&args.snapshot)
+        .with_context(|| format!("reading hook snapshot {}", args.snapshot.display()))?;
+    let mut stdin = String::new();
+    std::io::stdin()
+        .read_to_string(&mut stdin)
+        .context("reading the engine finish payload")?;
+    let finish: EngineFinishPayload =
+        serde_json::from_str(&stdin).context("parsing the engine finish payload")?;
+
+    let (event, outcomes) = dispatch(&snapshot, &finish, &HookExecutor::new());
+    let mut failed = 0;
+    for outcome in &outcomes {
+        match &outcome.result {
+            Ok(run) if outcome.succeeded() => {
+                eprintln!(
+                    "{} hook {}: ok ({} ms)",
+                    event.as_str(),
+                    outcome.name,
+                    run.duration_ms
+                );
+            }
+            Ok(run) => {
+                failed += 1;
+                let status = if run.timed_out {
+                    "timed out".to_string()
+                } else {
+                    format!(
+                        "exit {}",
+                        run.exit_code.map_or("?".to_string(), |c| c.to_string())
+                    )
+                };
+                eprintln!("{} hook {}: {status}", event.as_str(), outcome.name);
+            }
+            Err(error) => {
+                failed += 1;
+                eprintln!("{} hook {}: {error}", event.as_str(), outcome.name);
+            }
+        }
+    }
+    if failed > 0 {
+        anyhow::bail!(
+            "{failed} of {} {} hooks failed",
+            outcomes.len(),
+            event.as_str()
+        );
+    }
+    Ok(())
 }
 
 async fn execute_validate(

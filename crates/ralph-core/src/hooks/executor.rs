@@ -31,6 +31,10 @@ pub struct HookRunRequest {
     /// Optional per-hook environment variable overrides.
     pub env: HashMap<String, String>,
 
+    /// Inherited environment variables to drop before `env` is applied.
+    #[serde(default)]
+    pub env_remove: Vec<String>,
+
     /// Hook timeout guardrail in seconds.
     pub timeout_seconds: u64,
 
@@ -233,6 +237,9 @@ impl HookExecutorContract for HookExecutor {
         let mut command = Command::new(&resolved_command);
         command.args(request.command.iter().skip(1));
         command.current_dir(&resolved_cwd);
+        for key in &request.env_remove {
+            command.env_remove(key);
+        }
         command.envs(&request.env);
 
         // Step 3.3 wires JSON stdin payload delivery.
@@ -644,10 +651,34 @@ mod tests {
             workspace_root: workspace_root.to_path_buf(),
             cwd: None,
             env: HashMap::new(),
+            env_remove: Vec::new(),
             timeout_seconds: 2,
             max_output_bytes: 1024,
             stdin_payload: json!({"schema_version": 1, "phase_event": "pre.loop.start"}),
         }
+    }
+
+    #[test]
+    fn env_remove_drops_inherited_variables_before_overrides_apply() {
+        let temp_dir = tempdir().expect("tempdir");
+        let script_path = write_executable_script(
+            &temp_dir,
+            "env.sh",
+            "printf '%s|%s' \"${HOME-unset}\" \"${PATH_PROBE-unset}\"",
+        );
+
+        let mut request = request_with_command(
+            temp_dir.path(),
+            vec![script_path.to_string_lossy().into_owned()],
+        );
+        request.env_remove = vec!["HOME".to_string(), "PATH_PROBE".to_string()];
+        request
+            .env
+            .insert("PATH_PROBE".to_string(), "kept".to_string());
+
+        let result = HookExecutor::new().run(request).expect("hook run succeeds");
+
+        assert_eq!(result.stdout.content, "unset|kept");
     }
 
     #[test]

@@ -352,6 +352,11 @@ When `features.preflight.enabled: true`, `ralph run` uses the default preflight 
 
 Lifecycle hooks for orchestrator phase-events (v1).
 
+> **v3 autoloop engine:** only `post.loop.complete` and `post.loop.error` fire,
+> once, when the loop ends; any other event, `mutate.enabled`, or
+> `on_error: block|suspend` refuses the run. See
+> [the v3 migration guide](../migration/v3-autoloop-engine.md).
+
 Hooks can be defined in either the user-level `~/.ralph/config.yml` or the workspace `ralph.yml`. Ralph loads the user config first, then overlays the project config on top. That means hooks in the user config apply globally unless the project config replaces the same event mapping.
 
 | Option | Type | Default | Description |

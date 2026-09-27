@@ -1,6 +1,7 @@
 //! Lifecycle hook runtime contracts and orchestration primitives.
 
 mod engine;
+pub mod engine_notify;
 mod executor;
 mod suspend_state;
 
