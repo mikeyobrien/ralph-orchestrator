@@ -565,3 +565,11 @@ Use this template for new entries:
 - Reasoning: "Paths the loop touched" is exactly "untracked now and not untracked at start", plus tracked changes. The baseline costs one `git ls-files` per run. A missing baseline fails safe: tracked changes only, with a warning.
 - Reversibility: High.
 - Evidence: `5200d16`; the Step 6 section in `progress.md`; `logs/step06-red.log`; `logs/step06-integration-red.log`.
+
+## DEC-062 (2026-09-27)
+- Decision: Replace the header's fixed width breakpoints with a priority fitter shared by the header and footer, and read the per-iteration harness from the journal.
+- Confidence: 85
+- Alternatives Considered: (A) Keep the breakpoints and add a 52-56 column tier. Rejected because it still clips assembled strings, which Phase 2b forbids. (B) Take the harness from `loop.start`. Rejected because that is the run-level command, not the kind, and it misses per-role backend overrides.
+- Reasoning: pi-tidy asks for item forms chosen by the real width, with warnings replacing lower-priority content. A greedy upgrade in priority order is the smallest mechanism that does this. The journal's `backend.start` is the one engine record that names the harness kind per iteration.
+- Reversibility: High.
+- Evidence: `3e812db`; the Step 8 section in `progress.md`.

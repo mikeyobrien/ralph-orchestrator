@@ -72,6 +72,17 @@ terminal.
      per iteration, make header and footer width-priority based, keep the
      headless line Ralph-native.
 
+8b. Step 8b - Hook parity under the engine (Phase 2, added 2026-09-27)
+   - Demo: configured `post.loop.complete` / `post.loop.error` hooks become the
+     engine's `notify.command` with the right `notify.on` classes, a real run
+     journals `notify.sent`, existing hook scripts still receive Ralph's payload
+     or fail loudly with a migration message, every unsupported event (`pre.*`,
+     mutating hooks) refuses to start naming the event, and the migration guide
+     lists hooks under "What breaks".
+   - Wave: map the events, choose the payload strategy, refuse unsupported
+     events, add the preset tests, verify with the Pushover hook live, document.
+   - Note: this Phase 2 item was missing from the original plan.
+
 9. Step 9 - Jev routing parity, no silent drop (Phase 2c.1)
    - Demo: all three translation paths agree. `core.routing.jev` generates a
      working `[routing.jev]` block. No path drops routing silently. Doctor

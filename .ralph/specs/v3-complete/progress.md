@@ -2,8 +2,9 @@
 
 ## Current Step
 
-Steps 3 through 7 are closed (Step 6 on 2026-09-27). Step 8 (progress display,
-pi-tidy ethos, Phase 2b) is next and has no runtime wave yet.
+Steps 3 through 8 are closed (Step 8 on 2026-09-27). Step 8b (hook parity under
+the engine), which was missing from the plan and has now been added, is next.
+Step 9 follows it.
 
 ## Active Wave
 
@@ -4320,3 +4321,77 @@ backends from the e2e timeout test were killed after the run.
 ### Queue
 
 Step 6 closed. Bead `landing-untracked-sweep-yxv` closed. Step 8 is next.
+
+## 2026-09-27, Step 8 closed: progress display, pi-tidy ethos (Phase 2b)
+
+Commits `51fbb42` (drops surfaced) and `3e812db` (priority fitting and the
+harness per iteration).
+
+### Dropped progress is named, not swallowed
+
+- `AutoloopEventTailer` counts skipped malformed lines and bytes
+  (`dropped()`) and reports an unterminated trailing line
+  (`unterminated_bytes()`).
+- The TUI shows one replaceable warning per iteration, for example
+  `⚠ 1 unreadable engine event skipped (8 B): view incomplete, journal intact`,
+  and `⚠ last engine event cut off (17 B): final progress missing, journal intact`
+  after the final drain.
+- The bare `… N bytes skipped …` backpressure line now states what survives:
+  `text restored at end, gap tools unlisted` while live,
+  `final text intact, gap tools unlisted` after `backend.output`, or
+  `no final output: transcript incomplete`.
+- Every warning fits one 80-column row unclipped, as asserted by
+  `render_under_load_keeps_one_truthful_status_and_newest_lines`.
+- Headless prints the same facts once per new drop
+  (`integration_autoloop_headless_drops`). Completion still fails closed on a
+  malformed stream (`c1fb58b`), and the live warning now precedes that verdict.
+
+### Bounded live view
+
+The rollup bounding port (`5fd8828`, Step 2) is proven by the existing
+rendered-cell test `render_under_load_keeps_one_truthful_status_and_newest_lines`,
+which still passes with the new status wording.
+
+### Harness per iteration; no wave mode
+
+The `--events` stream carries no per-iteration backend, but the journal's
+`backend.start` record does (`backend_kind`). The TUI reader tails the journal
+from a position taken before the engine launches
+(`AutoloopJournalTailer::from_end`, passed through
+`run_autoloop_event_reader_with_journal`), so earlier runs in the shared journal
+never label this one. The header renders `Builder @pi`
+(`header_names_the_harness_from_the_journal_for_this_run_only`), and
+`header_has_no_wave_mode_in_any_state` asserts no `WAVE` or `worker` label
+at any width or mode.
+
+### Priority-based width
+
+`widgets/fit.rs` fits items with full, compact, and minimal forms to the real
+width in priority order: required items keep their smallest form, and optional
+items upgrade by priority. The header's new attention slot (`TuiState::attention`)
+ranks just below the iteration counter.
+`header_warning_displaces_lower_priority_items_at_52_to_56_columns` renders
+52 through 56 columns and asserts `⚠ 3 engine events skipped` whole while the
+hat, time, idle, branch, and help items give way.
+`header_warning_falls_back_to_compact_form_before_clipping` covers 40 columns.
+The footer keeps `■ DONE` / `◉ ACTIVE` whole and ellipsises a human-ask
+question behind a whole `⚠ HUMAN ASK:` label (tests at 52 through 56 columns).
+Snapshots changed only where the fitter shows items the old breakpoints hid
+despite free room, and in the footer indicator's alignment (the old layout sized
+it by byte length).
+
+### Headless voice
+
+Headless drop lines use the same dense, reason-first voice and are not raw
+engine passthrough.
+
+### Gates at `3e812db`
+
+`cargo test --workspace` exited 0 with 76 `test result: ok` lines and none
+failed. `cargo clippy --workspace --all-targets -- -D warnings` and
+`cargo fmt --all -- --check` are clean.
+
+### Plan change
+
+The prompt's Phase 2 "Hook parity under the engine" item had no plan step. It
+is added as Step 8b, before Step 9.
