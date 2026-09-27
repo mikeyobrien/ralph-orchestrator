@@ -557,3 +557,11 @@ Use this template for new entries:
 - Reasoning: Operator decision ("retired the dashboard"). Retiring a view means removing every surface that would silently show nothing, and telling users where to look instead.
 - Reversibility: Medium; the deleted UI is in git before `efaadbd`.
 - Evidence: `efaadbd`; the Step 5 section in `progress.md`.
+
+## DEC-061 (2026-09-27)
+- Decision: Scope the landing auto-commit with an untracked baseline recorded at run start.
+- Confidence: 88
+- Alternatives Considered: (A) Commit tracked changes only. Rejected because loops create new files that must reach the merge. (B) An allowlist of paths. Rejected because loops write arbitrary paths, so an allowlist either leaks or blocks real work. (C) Rely on `.gitignore`. Rejected because the incident file was not ignored and operators should not have to ignore their own files.
+- Reasoning: "Paths the loop touched" is exactly "untracked now and not untracked at start", plus tracked changes. The baseline costs one `git ls-files` per run. A missing baseline fails safe: tracked changes only, with a warning.
+- Reversibility: High.
+- Evidence: `5200d16`; the Step 6 section in `progress.md`; `logs/step06-red.log`; `logs/step06-integration-red.log`.

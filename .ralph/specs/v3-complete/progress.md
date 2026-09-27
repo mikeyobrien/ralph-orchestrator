@@ -2,9 +2,8 @@
 
 ## Current Step
 
-Steps 3, 4, 5, and 7 are closed (2026-09-23). Step 5 retired the dashboard's
-live loop view on the operator's decision. Step 6 (`landing-untracked-sweep-yxv`,
-scope the landing auto-commit) is next and has no runtime wave yet.
+Steps 3 through 7 are closed (Step 6 on 2026-09-27). Step 8 (progress display,
+pi-tidy ethos, Phase 2b) is next and has no runtime wave yet.
 
 ## Active Wave
 
@@ -4258,3 +4257,66 @@ retired and point to `ralph loops` and the TUI.
 ### Queue
 
 Step 5 closed. Bead `ga3-c4-dashboard-dead-svf` closed. Step 6 is next.
+
+## 2026-09-27, Step 6 closed: landing auto-commit scoped to files the loop created
+
+Commit `5200d16`. Bead `landing-untracked-sweep-yxv`.
+
+### Cause
+
+`auto_commit_changes` (`crates/ralph-core/src/git_ops.rs`) ran `git add -A`, so
+landing (`LandingHandler::land`) and the worktree merge path
+(`LoopCompletionHandler::handle_completion`) staged every untracked,
+non-ignored file. For worktree loops that includes operator files
+`sync_working_directory_to_worktree` copies in at creation, which is how
+`ralph.fable-sol.yml` reached a branch.
+
+### Fix
+
+- `run_autoloop_engine` calls `record_untracked_baseline` after
+  `prepare_loop_identity`. It writes the untracked paths present at run start to
+  `LoopContext::landing_baseline_path()`
+  (`.ralph/landing-untracked-baseline.json`), and the list includes the file
+  itself. A `--continue` or native resume run keeps an existing baseline. If
+  recording fails, the run only warns.
+- `auto_commit_changes` takes an `UntrackedScope` (`All`,
+  `ExceptPreexisting(&set)`, or `None`). It always stages tracked changes with
+  `git add -u`, then only the untracked files the scope allows.
+- `landing::commit_loop_changes` is used by both landing and the worktree
+  merge path. It applies `ExceptPreexisting(baseline)`, or `None` with a
+  warning when no baseline exists, so a missing baseline never falls back to
+  sweeping everything.
+
+### RED, then GREEN
+
+- Unit tests `landing::tests::test_landing_does_not_commit_untracked_files_that_predate_the_loop`
+  and `loop_completion::tests::test_worktree_merge_commit_skips_untracked_files_synced_before_the_loop`
+  were written against a no-op `record_untracked_baseline` stub. Both failed,
+  showing `ralph.operator.yml` and `ralph.fable-sol.yml` in the commit
+  (`logs/step06-red.log`), and both pass after the fix.
+- Integration test `crates/ralph-cli/tests/integration_landing_scope.rs`
+  (fixture `landing_scope.jsonl`) drives a real `ralph run` with the fake
+  engine. It plants `ralph.operator.yml` before the run, and the engine creates
+  `feature.txt` during it. Run against the pre-fix `HEAD` (`6bbcb5d`) in a
+  throwaway worktree, it failed with "an untracked file that predates the run
+  was swept into the landing commit" (`logs/step06-integration-red.log`). After
+  the fix it passes: `feature.txt` is committed, and `ralph.operator.yml` stays
+  `??`.
+- Added tests: `test_landing_without_baseline_commits_tracked_changes_only`
+  and `test_baseline_lists_itself_when_ralph_dir_is_not_ignored`. Two existing
+  tests now record a baseline first, as a real run does.
+
+Found on the way: `ralph run` probes `autoloop --version` before the run, and
+the probe consumes a fake-autoloop invocation line. This is documented in the
+fixtures README.
+
+### Gates at `5200d16`
+
+`cargo test --workspace` exited 0 with 75 `test result: ok` lines and none
+failed. `cargo clippy --workspace --all-targets -- -D warnings` and
+`cargo fmt --all -- --check` are clean. The known orphaned `sleep 3600`
+backends from the e2e timeout test were killed after the run.
+
+### Queue
+
+Step 6 closed. Bead `landing-untracked-sweep-yxv` closed. Step 8 is next.
