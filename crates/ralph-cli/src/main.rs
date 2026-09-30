@@ -675,6 +675,11 @@ struct RunArgs {
     #[arg(short, long, conflicts_with = "no_tui")]
     autonomous: bool,
 
+    /// RPC mode: emit ralph's JSON-RPC RpcEvent contract on stdout (#343).
+    /// stdout is reserved for the protocol stream; logs go to stderr.
+    #[arg(long, conflicts_with = "no_tui")]
+    rpc: bool,
+
     // ─────────────────────────────────────────────────────────────────────────
     // Multi-Loop Concurrency Options
     // ─────────────────────────────────────────────────────────────────────────
@@ -1112,6 +1117,7 @@ async fn main() -> Result<()> {
                 loop_id: None,
                 no_tui: false, // TUI enabled by default
                 autonomous: false,
+                rpc: false,
                 exclusive: false,
                 no_auto_merge: false,
                 skip_preflight: false,
@@ -2622,7 +2628,6 @@ mod tests {
     #[test]
     fn test_r8_removed_run_flags_are_rejected() {
         let removed_arguments = [
-            vec!["--rpc"],
             vec!["--record-session", "session.jsonl"],
             vec!["-q"],
             vec!["--quiet"],
@@ -2642,7 +2647,6 @@ mod tests {
     #[test]
     fn test_r8_removed_resume_flags_are_rejected() {
         let removed_arguments = [
-            vec!["--rpc"],
             vec!["--record-session", "session.jsonl"],
             vec!["-q"],
             vec!["--quiet"],
@@ -3465,6 +3469,7 @@ core:
             loop_id: None,
             no_tui: true,
             autonomous: false,
+            rpc: false,
             exclusive: false,
             no_auto_merge: false,
             skip_preflight: true,
