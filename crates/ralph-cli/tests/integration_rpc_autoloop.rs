@@ -248,7 +248,7 @@ fn rpc_run_emits_the_contracted_event_lifecycle() {
             ("STOP_REASON", "completed"),
         ],
     );
-    let out = wait_with_timeout(child, Duration::from_secs(60));
+    let out = wait_with_timeout(child, Duration::from_mins(1));
 
     assert!(
         out.status.success(),
