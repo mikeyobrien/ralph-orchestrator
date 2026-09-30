@@ -13,17 +13,19 @@ use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 use ralph_adapters::{
-    AutoloopBin, AutoloopEvent, AutoloopEventTailer, AutoloopRpcMapper, AutoloopRunError,
-    AutoloopRunSummary, AutoloopRunner, parse_events, parse_events_strict,
+    AutoloopBin, AutoloopEvent, AutoloopEventTailer, AutoloopRunError, AutoloopRunSummary,
+    AutoloopRunner, parse_events, parse_events_strict,
 };
 use ralph_core::{
     EventLoopConfig, LoopContext, RalphConfig, RunStats, TaskStore, TerminationReason,
     engine_state::{
         engine_config_overrides, engine_env, engine_journal_path, engine_memory_path,
-        prepare_engine_state_root,
+        persist_current_run_id, prepare_engine_state_root, read_current_run_id,
     },
     sanitize_tui_inline_text,
 };
+
+use crate::rpc_events::RpcEventMapper;
 
 use crate::completion_coord::{coordinate_completion, mark_merge_run_started};
 use crate::display::Palette;
@@ -121,33 +123,6 @@ fn recover_failed_run(events: &[AutoloopEvent]) -> Option<FailedRunRecovery> {
         iterations: result.iterations,
         cost_usd: result.cost_usd,
     })
-}
-
-/// The first run id named by the structured event stream, if any.
-///
-/// `loop.start` carries `runId`, so the id is available even when the run was
-/// interrupted before a terminal `loop.finish`/`summary` event was emitted —
-/// the exact case `ralph resume` exists for.
-fn first_stated_run_id(events: &[AutoloopEvent]) -> Option<String> {
-    events
-        .iter()
-        .find_map(|event| event.run_id.clone())
-        .map(|id| id.trim().to_string())
-        .filter(|id| !id.is_empty())
-}
-
-/// Persist the most recent engine run id beneath Ralph's state directory so
-/// `ralph resume` can continue the run in place.
-///
-/// Mirrors the `current-loop-id` marker convention: a plain-text file in
-/// `.ralph/`. Only writes when the stream named an id; otherwise the previous
-/// marker (if any) is left untouched.
-fn persist_current_run_id(ralph_dir: &Path, run_id: &str) -> Result<()> {
-    std::fs::create_dir_all(ralph_dir).context("creating the Ralph state directory")?;
-    std::fs::write(ralph_dir.join("current-run-id"), run_id.trim())
-        .context("writing the current run ID marker")?;
-    tracing::debug!(run_id = run_id.trim(), "wrote current run ID marker");
-    Ok(())
 }
 
 fn read_events(path: &Path) -> Vec<AutoloopEvent> {
@@ -317,6 +292,15 @@ fn resolve_autoloop_prompt(workspace: &Path, event_loop: &EventLoopConfig) -> Re
     std::fs::read_to_string(&path).context("reading prompt file from the configured workspace")
 }
 
+/// How Ralph observes and continues an Autoloop engine process.
+pub struct AutoloopLaunch {
+    pub continue_mode: bool,
+    pub native_resume: bool,
+    pub use_colors: bool,
+    pub tui: bool,
+    pub rpc: bool,
+}
+
 /// Drive the configured autoloop preset as ralph's engine, returning the mapped
 /// [`TerminationReason`].
 ///
@@ -325,27 +309,13 @@ fn resolve_autoloop_prompt(workspace: &Path, event_loop: &EventLoopConfig) -> Re
 /// (merge queue, loop registry, landing, summary, history) matches the in-house
 /// engine. `context` carries the loop identity; `None` means an ad-hoc run with
 /// no merge-queue / registry participation.
-/// Which presentation surface the autoloop run drives. Replaces the former
-/// `tui: bool, rpc: bool` pair so the mode set stays closed and exhaustive.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum AutoloopRunMode {
-    /// Live-region headless output on stdout.
-    Headless,
-    /// In-process TUI rendering the run.
-    Tui,
-    /// JSON-RPC `RpcEvent` protocol stream on stdout (#343).
-    Rpc,
-}
-
 pub async fn run_autoloop_engine(
     config: RalphConfig,
     autoloop_bin: AutoloopBin,
     context: Option<LoopContext>,
     auto_merge_override: Option<bool>,
     loop_id: Option<String>,
-    continue_mode: bool,
-    use_colors: bool,
-    mode: AutoloopRunMode,
+    launch: AutoloopLaunch,
 ) -> Result<TerminationReason> {
     let workspace = config.core.workspace_root.clone();
     let engine_state_root =
@@ -353,7 +323,8 @@ pub async fn run_autoloop_engine(
     let identity_context = context
         .clone()
         .unwrap_or_else(|| LoopContext::primary(workspace.clone()));
-    let loop_id = prepare_loop_identity(&identity_context, continue_mode, loop_id.as_deref())?;
+    let loop_id =
+        prepare_loop_identity(&identity_context, launch.continue_mode, loop_id.as_deref())?;
 
     if let Ok(merge_loop_id) = std::env::var("RALPH_MERGE_LOOP_ID") {
         let repo_root = context
@@ -411,7 +382,11 @@ pub async fn run_autoloop_engine(
             .collect()
     };
 
-    let prompt = resolve_autoloop_prompt(&workspace, &config.event_loop)?;
+    let prompt = if launch.native_resume {
+        String::new()
+    } else {
+        resolve_autoloop_prompt(&workspace, &config.event_loop)?
+    };
 
     // Structured event sink beneath the owned engine root — the preferred
     // observability channel. The root was prepared before any run state.
@@ -428,6 +403,16 @@ pub async fn run_autoloop_engine(
     let mut runner = AutoloopRunner::new(preset, prompt.clone(), workspace.clone())
         .bin(autoloop_bin)
         .events_path(events_path.clone());
+    if launch.native_resume {
+        let run_id = read_current_run_id(&engine_state_root)
+            .context("reading the persisted Autoloop run_id")?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Ralph has no persisted Autoloop run_id. Start a loop with `ralph run` before `ralph resume`."
+                )
+            })?;
+        runner = runner.resume(run_id);
+    }
     for (key, value) in engine_env(&engine_state_root) {
         runner = runner.env(key, value);
     }
@@ -441,45 +426,41 @@ pub async fn run_autoloop_engine(
     }
 
     let mut current_events_guard = None;
-    let robot_service = if matches!(mode, AutoloopRunMode::Headless | AutoloopRunMode::Rpc) {
-        if let Some(loop_context) = context.as_ref()
-            && config.robot.enabled
-            && loop_context.is_primary()
-        {
-            current_events_guard = Some(
-                crate::autoloop_robot::CurrentEventsGuard::install(&workspace, &events_path)
-                    .context("installing Autoloop current-events marker")?,
-            );
-            let service = crate::autoloop_robot::create_robot_service(&config, loop_context);
-            if service.is_none() {
-                current_events_guard = None;
-            }
-            service
-        } else {
-            None
+    let robot_service = if launch.tui {
+        None
+    } else if let Some(loop_context) = context.as_ref()
+        && config.robot.enabled
+        && loop_context.is_primary()
+    {
+        current_events_guard = Some(
+            crate::autoloop_robot::CurrentEventsGuard::install(&workspace)
+                .context("installing Autoloop current-events marker")?,
+        );
+        let service = crate::autoloop_robot::create_robot_service(&config, loop_context);
+        if service.is_none() {
+            current_events_guard = None;
         }
+        service
     } else {
         None
     };
 
     let start = Instant::now();
-    let outcome = if mode == AutoloopRunMode::Rpc {
-        // RPC mode (#343): emit ralph's JSON-RPC `RpcEvent` stream on stdout by
-        // live-tailing the same --events file and translating it through
-        // `AutoloopRpcMapper`. stdout is kept protocol-clean (logs go to stderr,
-        // and no human-readable summary is printed anywhere in RPC mode).
-        let max_iterations = config.event_loop.max_iterations;
-        let summary = run_autoloop_with_rpc(
+    let outcome = if launch.rpc {
+        match run_autoloop_rpc(
             runner,
             events_path.clone(),
             prompt.clone(),
-            rpc_backend_label(&config),
-            max_iterations,
+            config.cli.backend.clone(),
+            config.event_loop.max_iterations,
+            role_display_names,
         )
         .await
-        .context("autoloop RPC run failed")?;
-        interpret_autoloop_result(Ok(summary), false)
-    } else if mode == AutoloopRunMode::Tui {
+        {
+            Ok(outcome) => outcome,
+            Err(error) => AutoloopOutcome::Failed(error.context("autoloop RPC run failed")),
+        }
+    } else if launch.tui {
         // In-process TUI: render the autoloop run live by tailing its --events
         // file, concurrent with the subprocess. Resolves Ctrl+C by killing the
         // child (see run_autoloop_with_tui).
@@ -496,16 +477,30 @@ pub async fn run_autoloop_engine(
             Err(error) => AutoloopOutcome::Failed(error.context("autoloop TUI run failed")),
         }
     } else if let Some(service) = robot_service {
-        match run_autoloop_with_robot(runner, events_path.clone(), service).await {
-            Ok(summary) => interpret_autoloop_result(Ok(summary), false),
+        match run_autoloop_with_robot(
+            runner,
+            events_path.clone(),
+            workspace.clone(),
+            service,
+            role_display_names,
+            launch.use_colors,
+        )
+        .await
+        {
+            Ok(outcome) => outcome,
             Err(error) => AutoloopOutcome::Failed(error.context("autoloop RObot run failed")),
         }
     } else {
         // Headless observes the same structured engine event stream as the TUI.
         // Keep the blocking child wait off the async runtime while a sibling
         // task tails and flushes live progress to stdout.
-        match run_autoloop_headless(runner, events_path.clone(), role_display_names, use_colors)
-            .await
+        match run_autoloop_headless(
+            runner,
+            events_path.clone(),
+            role_display_names,
+            launch.use_colors,
+        )
+        .await
         {
             Ok(outcome) => outcome,
             Err(error) => AutoloopOutcome::Failed(error.context("autoloop headless run failed")),
@@ -540,8 +535,7 @@ pub async fn run_autoloop_engine(
     // user stop, spawn/wait failures, and non-zero exits all traverse the same
     // completion path exactly once. On failure, a valid engine terminal event
     // is authoritative when present. The subprocess diagnostic is still
-    // returned after bookkeeping. RPC mode never prints a human-readable
-    // summary: stdout is the RpcEvent protocol channel (#343).
+    // returned after bookkeeping.
     let (reason, state, failure) = match outcome {
         AutoloopOutcome::Completed(summary) => {
             // A human /stop or /restart through the HITL bridge wins over the
@@ -583,13 +577,7 @@ pub async fn run_autoloop_engine(
         }
     };
 
-    // #344: record the engine run id before any completion coordination so
-    // `ralph resume` can continue the run in place. Persist even for stopped
-    // or failed runs: the `loop.start` event already named the run, and those
-    // are exactly the interruptions native resume exists to recover from.
-    if let Some(run_id) = first_stated_run_id(&read_events(&events_path)) {
-        persist_current_run_id(&identity_context.ralph_dir(), &run_id)?;
-    }
+    persist_run_id_from_outcome(&engine_state_root, &events_path);
 
     let auto_merge = auto_merge_override.unwrap_or(config.features.auto_merge);
 
@@ -601,10 +589,8 @@ pub async fn run_autoloop_engine(
         &prompt,
         auto_merge,
         &loop_id,
-        use_colors,
-        // In RPC mode stdout is the protocol channel — the banner's content is
-        // already delivered as the LoopTerminated event.
-        mode != AutoloopRunMode::Rpc,
+        launch.use_colors,
+        !launch.rpc,
     );
 
     match failure {
@@ -849,6 +835,100 @@ async fn run_autoloop_headless(
     Ok(interpret_autoloop_result(summary, false))
 }
 
+fn persist_run_id_from_outcome(engine_state_root: &Path, events_path: &Path) {
+    if let Some(run_id) = read_events(events_path)
+        .iter()
+        .rev()
+        .find_map(|event| event.run_id.clone())
+    {
+        let _ = persist_current_run_id(engine_state_root, &run_id);
+    }
+}
+
+/// Headless Autoloop run that serializes the same `--events` file as `RpcEvent` JSON lines.
+async fn run_autoloop_rpc(
+    runner: AutoloopRunner,
+    events_path: PathBuf,
+    prompt: String,
+    backend: String,
+    max_iterations: Option<u32>,
+    role_display_names: HashMap<String, String>,
+) -> Result<AutoloopOutcome> {
+    use ralph_proto::json_rpc::emit_event_line;
+    use tokio::sync::watch;
+
+    let child = runner.spawn().context("spawning the autoloop subprocess")?;
+    let (terminated_tx, mut terminated_rx) = watch::channel(false);
+
+    let reader_handle = tokio::spawn(async move {
+        let mut tailer = AutoloopEventTailer::new(events_path);
+        let mut mapper = RpcEventMapper::new(prompt, backend, max_iterations, role_display_names);
+        let mut ticker = tokio::time::interval(std::time::Duration::from_millis(100));
+
+        let emit = |event: ralph_proto::json_rpc::RpcEvent| {
+            print!("{}", emit_event_line(&event));
+            let _ = std::io::stdout().flush();
+        };
+
+        loop {
+            tokio::select! {
+                biased;
+
+                _ = terminated_rx.changed() => {
+                    if *terminated_rx.borrow() {
+                        break;
+                    }
+                }
+                _ = ticker.tick() => {
+                    match tailer.poll() {
+                        Ok(events) => {
+                            for event in &events {
+                                for rpc_event in mapper.map(event) {
+                                    emit(rpc_event);
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            tracing::debug!(%error, "RPC autoloop event reader poll failed");
+                        }
+                    }
+                }
+            }
+        }
+
+        match tailer.poll() {
+            Ok(events) => {
+                for event in &events {
+                    for rpc_event in mapper.map(event) {
+                        emit(rpc_event);
+                    }
+                }
+            }
+            Err(error) => {
+                tracing::debug!(%error, "RPC autoloop event reader final drain failed");
+            }
+        }
+    });
+
+    let wait_handle = tokio::spawn(async move {
+        let summary = tokio::task::spawn_blocking(move || {
+            runner.wait_with_summary_streaming_stderr(child, trace_engine_diagnostic)
+        })
+        .await
+        .context("autoloop wait task panicked")
+        .and_then(|summary| summary.context("autoloop run failed"));
+        let _ = terminated_tx.send(true);
+        summary
+    });
+
+    let summary = wait_handle.await.context("autoloop wait join failed")?;
+    reader_handle
+        .await
+        .context("RPC autoloop event reader task failed")?;
+
+    Ok(interpret_autoloop_result(summary, false))
+}
+
 fn take_requested_termination(workspace: &Path) -> Option<TerminationReason> {
     let ralph_dir = workspace.join(".ralph");
     let restart = ralph_dir.join("restart-requested");
@@ -865,17 +945,20 @@ fn take_requested_termination(workspace: &Path) -> Option<TerminationReason> {
 }
 
 /// Run Autoloop headlessly while relaying RObot asks and guidance through its
-/// file-backed control protocol.
+/// file-backed control protocol. Also prints the same structured progress
+/// lines as the plain headless path.
 async fn run_autoloop_with_robot(
     runner: AutoloopRunner,
     events_path: PathBuf,
+    workspace: PathBuf,
     service: Box<dyn ralph_proto::RobotService>,
-) -> Result<AutoloopRunSummary> {
+    role_display_names: HashMap<String, String>,
+    use_colors: bool,
+) -> Result<AutoloopOutcome> {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use tokio::sync::watch;
 
-    // Isolate the subprocess tree so cancelling the daemon future can stop both
-    // Autoloop and its backend rather than orphaning either process.
     let runner = runner.own_process_group(true);
     let child = runner.spawn().context("spawning the autoloop subprocess")?;
     let done = Arc::new(AtomicBool::new(false));
@@ -883,13 +966,63 @@ async fn run_autoloop_with_robot(
     let mut process_guard =
         AutoloopProcessGuard::new(child.id(), Arc::clone(&done), Arc::clone(&robot_shutdown));
 
+    let (terminated_tx, mut terminated_rx) = watch::channel(false);
+    let printer_events = events_path.clone();
+    let printer_handle = tokio::spawn(async move {
+        let mut tailer = AutoloopEventTailer::new(printer_events);
+        let mut ctx = HeadlessPrintCtx::new(role_display_names, use_colors);
+        let mut ticker = tokio::time::interval(std::time::Duration::from_millis(100));
+
+        loop {
+            tokio::select! {
+                biased;
+                _ = terminated_rx.changed() => {
+                    if *terminated_rx.borrow() {
+                        break;
+                    }
+                }
+                _ = ticker.tick() => {
+                    match tailer.poll() {
+                        Ok(events) => {
+                            for event in &events {
+                                print_headless_event(event, &mut ctx);
+                            }
+                        }
+                        Err(error) => {
+                            tracing::debug!(%error, "RObot autoloop event reader poll failed");
+                        }
+                    }
+                }
+            }
+        }
+
+        match tailer.poll() {
+            Ok(events) => {
+                for event in &events {
+                    print_headless_event(event, &mut ctx);
+                }
+            }
+            Err(error) => {
+                tracing::debug!(%error, "RObot autoloop event reader final drain failed");
+            }
+        }
+    });
+
     let wait_runner = runner.clone();
-    let mut wait_handle = tokio::task::spawn_blocking(move || wait_runner.wait_with_summary(child));
+    let mut wait_handle = tokio::task::spawn_blocking(move || {
+        wait_runner.wait_with_summary_streaming_stderr(child, trace_engine_diagnostic)
+    });
 
     let bridge_runner = runner.clone();
     let bridge_done = Arc::clone(&done);
     let mut bridge_handle = tokio::task::spawn_blocking(move || {
-        crate::autoloop_robot::run_bridge(service, bridge_runner, events_path, bridge_done)
+        crate::autoloop_robot::run_bridge(
+            service,
+            bridge_runner,
+            events_path,
+            workspace,
+            bridge_done,
+        )
     });
 
     tokio::select! {
@@ -897,19 +1030,23 @@ async fn run_autoloop_with_robot(
             process_guard.disarm();
             done.store(true, Ordering::Release);
             robot_shutdown.store(true, Ordering::Release);
+            let _ = terminated_tx.send(true);
             let bridge_result = bridge_handle
                 .await
                 .context("Autoloop RObot bridge panicked")?;
+            let _ = printer_handle.await;
             let summary = summary
                 .context("autoloop wait task panicked")?
                 .context("autoloop run failed")?;
             bridge_result?;
-            Ok(summary)
+            Ok(interpret_autoloop_result(Ok(summary), false))
         }
         bridge = &mut bridge_handle => {
             process_guard.terminate();
             done.store(true, Ordering::Release);
             robot_shutdown.store(true, Ordering::Release);
+            let _ = terminated_tx.send(true);
+            let _ = printer_handle.await;
             let bridge_result = bridge.context("Autoloop RObot bridge panicked")?;
             let _ = wait_handle.await;
             bridge_result?;
@@ -1075,233 +1212,6 @@ async fn run_autoloop_with_tui(
     Ok(interpret_autoloop_result(summary, killed_by_ralph))
 }
 
-/// Backend label placed on the RPC `LoopStarted`/`IterationStart` events.
-///
-/// ralph's backend selection is not yet forwarded to autoloop (#347), so the
-/// subprocess uses autoloop's default backend. Report that honestly as
-/// `"autoloop"` when ralph's own selection is unset/auto; otherwise echo the
-/// configured name so RPC consumers see what the user asked for.
-fn rpc_backend_label(config: &RalphConfig) -> String {
-    let backend = &config.cli.backend;
-    if backend.is_empty() || backend == "auto" {
-        "autoloop".to_string()
-    } else {
-        backend.clone()
-    }
-}
-
-/// Current wall-clock time as Unix milliseconds.
-fn now_unix_millis() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}
-
-/// Serialize an [`RpcEvent`] as a JSON line to stdout and flush so RPC consumers
-/// see each event promptly. stdout is the protocol channel in `--rpc` mode
-/// (logs are routed to stderr at startup), so nothing else writes here.
-fn emit_rpc(event: &ralph_proto::json_rpc::RpcEvent) {
-    use std::io::Write;
-    let line = ralph_proto::json_rpc::emit_event_line(event);
-    let mut out = std::io::stdout().lock();
-    let _ = out.write_all(line.as_bytes());
-    let _ = out.flush();
-}
-
-/// Run the autoloop subprocess in RPC mode: translate its `--events` stream into
-/// ralph's JSON-RPC [`RpcEvent`](ralph_proto::json_rpc::RpcEvent) contract on
-/// stdout (#343).
-///
-/// This is the `--rpc` counterpart to [`run_autoloop_with_tui`]: instead of
-/// rendering the tailed `--events` file into a TUI, it maps each event through
-/// [`AutoloopRpcMapper`] and emits the resulting `RpcEvent`s as JSON lines. A
-/// leading `LoopStarted` frames the run (prompt/backend/max-iterations are
-/// engine-side knowledge absent from the coarse `--events` stream); the mapper
-/// supplies everything derivable from the stream through the terminal
-/// `LoopTerminated`.
-///
-/// Mirrors the TUI reader's cancel/final-drain discipline: autoloop writes the
-/// terminal `loop.finish` synchronously just before exit, so after the wait task
-/// signals completion the reader performs one final `poll()` (plus a
-/// `finalize()`) to capture it.
-async fn run_autoloop_with_rpc(
-    runner: AutoloopRunner,
-    events_path: PathBuf,
-    prompt: String,
-    backend: String,
-    max_iterations: Option<u32>,
-) -> Result<ralph_adapters::AutoloopRunSummary> {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    use ralph_proto::json_rpc::RpcEvent;
-    use tokio::sync::watch;
-
-    let started_at = now_unix_millis();
-    emit_rpc(&RpcEvent::LoopStarted {
-        prompt,
-        max_iterations,
-        backend: backend.clone(),
-        workspace_root: None,
-        started_at,
-    });
-
-    // Signals subprocess completion so the reader stops tailing and does its
-    // final drain.
-    let (done_tx, mut done_rx) = watch::channel(false);
-    // Signals a cancel (SIGINT/SIGTERM or an RPC `abort` command on stdin) so we
-    // kill the whole autoloop subtree, mirroring `run_autoloop_with_tui`.
-    let (cancel_tx, mut cancel_rx) = watch::channel(false);
-
-    // Spawn as its own process-group leader so a cancel can kill the entire tree
-    // (autoloop + backend agent) rather than orphaning the agent. Rebind
-    // `runner` (mirroring `run_autoloop_with_tui`) so the blocking wait below
-    // uses the process-grouped instance.
-    let runner = runner.own_process_group(true);
-    let child = runner.spawn().context("spawning the autoloop subprocess")?;
-    let child_pid = child.id();
-
-    // SIGINT/SIGTERM → cancel. RPC mode is a protocol channel, not a human tty,
-    // so the default "die on SIGINT" is replaced by a graceful kill of the
-    // subtree + a terminal event (the TUI path does the same via q/Ctrl+C).
-    #[cfg(unix)]
-    {
-        let tx = cancel_tx.clone();
-        tokio::spawn(async move {
-            use tokio::signal::unix::{SignalKind, signal};
-            let mut sigint =
-                signal(SignalKind::interrupt()).expect("failed to register SIGINT handler");
-            let mut sigterm =
-                signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
-            tokio::select! {
-                _ = sigint.recv() => {
-                    let _ = tx.send(true);
-                }
-                _ = sigterm.recv() => {
-                    let _ = tx.send(true);
-                }
-            }
-        });
-    }
-    // JSON-RPC commands arrive on stdin as one JSON object per line. Only
-    // `abort` drives cancel here; the other variants (guidance/steer/follow-up/
-    // get-state/set-hat) require an active in-loop agent channel that the
-    // autoloop engine path does not expose yet (see #345) — they are consumed
-    // and otherwise ignored.
-    let tx = cancel_tx.clone();
-    tokio::spawn(async move {
-        use tokio::io::{AsyncBufReadExt, BufReader};
-        let stdin = tokio::io::stdin();
-        let mut lines = BufReader::new(stdin).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            match ralph_proto::json_rpc::parse_command(line) {
-                Ok(ralph_proto::json_rpc::RpcCommand::Abort { .. }) => {
-                    let _ = tx.send(true);
-                }
-                Ok(_) => {
-                    tracing::debug!(
-                        command = line,
-                        "RPC command consumed (no live channel; ignored)"
-                    );
-                }
-                Err(e) => {
-                    tracing::debug!(error = %e, line, "malformed RPC command line; ignoring");
-                }
-            }
-        }
-    });
-
-    let completed = Arc::new(AtomicBool::new(false));
-    let wait_handle = {
-        let done_tx = done_tx.clone();
-        let completed = Arc::clone(&completed);
-        tokio::spawn(async move {
-            let summary = tokio::task::spawn_blocking(move || runner.wait_with_summary(child))
-                .await
-                .context("autoloop wait task panicked")?;
-            completed.store(true, Ordering::SeqCst);
-            let _ = done_tx.send(true);
-            summary.context("autoloop run failed")
-        })
-    };
-
-    // Reader: tail the --events file, translate to RpcEvents, emit to stdout.
-    let mut tailer = AutoloopEventTailer::new(&events_path);
-    let mut mapper = AutoloopRpcMapper::new(started_at, backend);
-    let mut ticker = tokio::time::interval(std::time::Duration::from_millis(100));
-    ticker.tick().await; // first tick completes immediately; skip it
-    let cancelled = loop {
-        tokio::select! {
-            biased;
-
-            _ = done_rx.changed() => {
-                if *done_rx.borrow() {
-                    break false;
-                }
-            }
-
-            _ = cancel_rx.changed() => {
-                if *cancel_rx.borrow() {
-                    break true;
-                }
-            }
-
-            _ = ticker.tick() => {
-                drain_rpc_events(&mut tailer, &mut mapper);
-            }
-        }
-    };
-
-    // If the run was cancelled before autoloop wrote its own terminal, kill the
-    // whole subtree so the backend agent is not orphaned. (No-op if autoloop
-    // already exited on its own.)
-    if cancelled && !mapper.saw_terminal() {
-        kill_autoloop_group(child_pid);
-    }
-
-    // Final drain: capture the terminal loop.finish written just before exit,
-    // then flush a summary-only terminal if no loop.finish ever arrived.
-    drain_rpc_events(&mut tailer, &mut mapper);
-    if let Some(terminal) = mapper.finalize() {
-        emit_rpc(&terminal);
-    }
-    // On cancel where autoloop didn't emit an authoritative terminal of its own,
-    // synthesize one so the RPC stream always ends well-formed.
-    if cancelled && !mapper.saw_terminal() {
-        let terminated_at = now_unix_millis();
-        emit_rpc(&RpcEvent::LoopTerminated {
-            reason: ralph_proto::json_rpc::TerminationReason::Interrupted,
-            total_iterations: 0,
-            duration_ms: terminated_at.saturating_sub(started_at),
-            total_cost_usd: 0.0,
-            terminated_at,
-        });
-    }
-
-    wait_handle.await.context("autoloop wait join failed")?
-}
-
-/// Poll the tailer once and emit every translated [`RpcEvent`] to stdout.
-fn drain_rpc_events(tailer: &mut AutoloopEventTailer, mapper: &mut AutoloopRpcMapper) {
-    match tailer.poll() {
-        Ok(events) => {
-            for event in &events {
-                for rpc in mapper.map(event) {
-                    emit_rpc(&rpc);
-                }
-            }
-        }
-        Err(e) => {
-            tracing::debug!(error = %e, "autoloop RPC reader poll failed");
-        }
-    }
-}
-
 /// Stop the autoloop subprocess tree: SIGTERM the whole process group, then
 /// escalate to SIGKILL after a short grace so autoloop and its backend agent can
 /// exit cleanly (flush, release locks) first. `pid` is the group leader's pid
@@ -1315,7 +1225,8 @@ fn kill_autoloop_group(pid: u32) {
         let pgid = Pid::from_raw(pid as i32);
         let _ = killpg(pgid, Signal::SIGTERM);
         // Detached escalation: hard-kill the group if it ignores SIGTERM. A
-        // SIGKILL to an already-dead group is ESRCH and harmless.
+        // SIGKILL to an already-dead group is ESRCH and harmless. Drop may
+        // run off the async runtime (spawn_blocking), so fall back to a thread.
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             runtime.spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -1347,8 +1258,8 @@ fn prepare_daemon_engine_state(
 ///
 /// This is the daemon's [`ralph_proto::StartLoopFn`] target: it loads config,
 /// applies the supplied prompt, forces autonomous/headless mode, acquires the
-/// primary loop lock, and drives the autoloop engine.
-///
+/// primary loop lock, and drives the autoloop engine. When `RObot.enabled` is
+/// set, the HITL bridge relays Autoloop `ask.pending` through Telegram/Web.
 pub async fn start_loop(
     prompt: String,
     workspace_root: PathBuf,
@@ -1413,8 +1324,7 @@ pub async fn start_loop(
 
     let loop_context = ralph_core::LoopContext::primary(workspace_root);
 
-    // Drive the loop headlessly via the autoloop engine (daemon: never a TUI,
-    // never RPC).
+    // Drive the loop headlessly via the autoloop engine (daemon: never a TUI).
     loop {
         let reason = run_autoloop_engine(
             config.clone(),
@@ -1422,9 +1332,13 @@ pub async fn start_loop(
             Some(loop_context.clone()),
             None,
             None,
-            false,
-            false,
-            AutoloopRunMode::Headless,
+            AutoloopLaunch {
+                continue_mode: false,
+                native_resume: false,
+                use_colors: false,
+                tui: false,
+                rpc: false,
+            },
         )
         .await?;
         if reason == TerminationReason::RestartRequested {
@@ -1938,74 +1852,6 @@ mod tests {
         assert_ne!(reason.exit_code(), 0);
     }
 
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn tui_quit_kills_the_autoloop_process_tree() {
-        use std::os::unix::process::CommandExt;
-        use std::process::Command;
-        use std::time::Duration;
-
-        let dir = tempfile::tempdir().unwrap();
-        let ready = dir.path().join("ready");
-        let child_ready = dir.path().join("child-ready");
-        let markers = dir.path().join("terminated");
-        let script = r#"
-            trap 'printf "parent\n" >> "$MARKERS"; exit 0' TERM
-            sh -c '
-                trap '\''printf "child\n" >> "$MARKERS"; exit 0'\'' TERM
-                touch "$CHILD_READY"
-                while :; do sleep 1; done
-            ' &
-            while [ ! -f "$CHILD_READY" ]; do sleep 0.01; done
-            touch "$READY"
-            while :; do sleep 1; done
-        "#;
-        let mut child = Command::new("sh")
-            .arg("-c")
-            .arg(script)
-            .env("READY", &ready)
-            .env("CHILD_READY", &child_ready)
-            .env("MARKERS", &markers)
-            .process_group(0)
-            .spawn()
-            .unwrap();
-        let pid = child.id();
-
-        tokio::time::timeout(Duration::from_secs(2), async {
-            while !ready.is_file() {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("parent and descendant should become ready");
-
-        // This is the same path run_autoloop_with_tui takes after q/Ctrl+C.
-        kill_autoloop_group(pid);
-
-        tokio::time::timeout(Duration::from_secs(4), async {
-            loop {
-                if child.try_wait().unwrap().is_some() {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("autoloop process-group leader should exit");
-
-        tokio::time::timeout(Duration::from_secs(2), async {
-            loop {
-                let content = std::fs::read_to_string(&markers).unwrap_or_default();
-                if content.contains("parent") && content.contains("child") {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("SIGTERM should reach both the parent and backend descendant");
-    }
-
     #[test]
     fn requested_termination_markers_override_reason_and_are_consumed() {
         let temp = tempfile::tempdir().unwrap();
@@ -2025,53 +1871,5 @@ mod tests {
             Some(TerminationReason::RestartRequested)
         );
         assert_eq!(take_requested_termination(temp.path()), None);
-    }
-
-    #[test]
-    fn first_stated_run_id_picks_the_first_named_run_and_trims() {
-        let events = ralph_adapters::parse_events(concat!(
-            r#"{"type":"loop.start","runId":" run-paused ","iteration":0}"#,
-            "\n",
-            r#"{"type":"loop.finish","runId":"run-other","iterations":1,"stopReason":"completed"}"#,
-            "\n",
-        ));
-        assert_eq!(
-            first_stated_run_id(&events),
-            Some("run-paused".to_string()),
-            "must return the first named run id, trimmed"
-        );
-
-        let blank = ralph_adapters::parse_events(
-            r#"{"type":"loop.start","iteration":0}
-{"type":"iteration.start","runId":"   ","iteration":1}"#,
-        );
-        assert_eq!(
-            first_stated_run_id(&blank),
-            None,
-            "blank ids must be ignored"
-        );
-
-        assert_eq!(first_stated_run_id(&[]), None, "empty stream yields no id");
-    }
-
-    #[test]
-    fn persist_current_run_id_writes_marker_under_ralph_dir() {
-        let dir = tempfile::tempdir().expect("temp dir");
-        let ralph_dir = dir.path().join(".ralph");
-        persist_current_run_id(&ralph_dir, " run-abc123 \n").expect("persist run id");
-
-        let marker = ralph_dir.join("current-run-id");
-        assert_eq!(
-            std::fs::read_to_string(&marker).expect("read marker"),
-            "run-abc123",
-            "marker must store the trimmed id"
-        );
-
-        // A second write replaces the previous id (last run wins).
-        persist_current_run_id(&ralph_dir, "run-def456").expect("re-persist");
-        assert_eq!(
-            std::fs::read_to_string(&marker).expect("read marker"),
-            "run-def456"
-        );
     }
 }

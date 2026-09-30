@@ -1,9 +1,10 @@
 //! Bridge Ralph's RObot services to Autoloop's subprocess control protocol.
 //!
-//! Autoloop emits `ask.pending` on its structured event stream and blocks until
-//! `autoloop control respond` supplies an answer. Ralph keeps that stream as the
-//! active `.ralph/current-events` file so Telegram/Web inbound messages land in
-//! the same append-only file as `human.response` / `human.guidance` events.
+//! Autoloop emits `ask.pending` on its structured `--events` stream and blocks
+//! until `autoloop control respond` supplies an answer. Human replies and
+//! proactive guidance stay on a dedicated Ralph file so they cannot corrupt
+//! Autoloop's structured stream (which `parse_events_strict` requires to be
+//! well-typed Autoloop events).
 
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
@@ -21,6 +22,7 @@ use tracing::{info, warn};
 use crate::web_robot_service::WebRobotService;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
+const HUMAN_EVENTS_REL: &str = ".ralph/human-events.jsonl";
 
 /// Restores the prior active-events marker when an Autoloop run ends.
 pub(crate) struct CurrentEventsGuard {
@@ -29,19 +31,28 @@ pub(crate) struct CurrentEventsGuard {
 }
 
 impl CurrentEventsGuard {
-    pub(crate) fn install(workspace: &Path, events_path: &Path) -> Result<Self> {
+    pub(crate) fn install(workspace: &Path) -> Result<Self> {
         let ralph_dir = workspace.join(".ralph");
         fs::create_dir_all(&ralph_dir)
             .with_context(|| format!("creating {}", ralph_dir.display()))?;
+        let human_events = workspace.join(HUMAN_EVENTS_REL);
+        if !human_events.exists() {
+            File::create(&human_events).with_context(|| {
+                format!(
+                    "creating dedicated human-events file {}",
+                    human_events.display()
+                )
+            })?;
+        }
         let marker = ralph_dir.join("current-events");
         let previous = fs::read(&marker).ok();
-        let target = events_path
-            .strip_prefix(workspace)
-            .unwrap_or(events_path)
-            .to_string_lossy();
-        fs::write(&marker, format!("{target}\n"))
+        fs::write(&marker, format!("{HUMAN_EVENTS_REL}\n"))
             .with_context(|| format!("writing {}", marker.display()))?;
         Ok(Self { marker, previous })
+    }
+
+    pub(crate) fn human_events_path(workspace: &Path) -> PathBuf {
+        workspace.join(HUMAN_EVENTS_REL)
     }
 }
 
@@ -126,9 +137,10 @@ pub(crate) fn run_bridge(
     service: Box<dyn RobotService>,
     runner: AutoloopRunner,
     events_path: PathBuf,
+    workspace: PathBuf,
     done: Arc<AtomicBool>,
 ) -> Result<()> {
-    let result = run_bridge_inner(service.as_ref(), &runner, &events_path, &done);
+    let result = run_bridge_inner(service.as_ref(), &runner, &events_path, &workspace, &done);
     service.stop();
     result
 }
@@ -137,80 +149,91 @@ fn run_bridge_inner(
     service: &dyn RobotService,
     runner: &AutoloopRunner,
     events_path: &Path,
+    workspace: &Path,
     done: &AtomicBool,
 ) -> Result<()> {
-    let mut position = 0;
+    let human_events = CurrentEventsGuard::human_events_path(workspace);
+    let ralph_dir = workspace.join(".ralph");
+    let mut autoloop_pos = 0;
+    let mut human_pos = fs::metadata(&human_events)
+        .map(|meta| meta.len())
+        .unwrap_or(0);
     let mut run_id: Option<String> = None;
+    let mut pending_guidance = Vec::new();
     let mut handled_questions = std::collections::HashSet::new();
     let mut stop_forwarded = false;
     let mut restart_forwarded = false;
 
     loop {
-        let lines = read_complete_lines(events_path, &mut position)?;
-        let had_lines = !lines.is_empty();
-        for line in lines {
-            if let Ok(event) = serde_json::from_str::<AutoloopEvent>(&line) {
-                if let Some(id) = event.run_id.as_ref() {
-                    run_id = Some(id.clone());
-                }
-                if let Some(ask) = event.ask_pending()
-                    && handled_questions.insert(ask.question_id.clone())
-                {
-                    let response_start = fs::metadata(events_path).map(|m| m.len()).unwrap_or(0);
-                    service.send_question(&ask.question).with_context(|| {
-                        format!("sending Autoloop question {}", ask.question_id)
-                    })?;
-                    if let Some(answer) = wait_for_response_or_control(
-                        service,
-                        runner,
-                        events_path,
-                        &ask.run_id,
-                        response_start,
-                        done,
-                        &mut stop_forwarded,
-                        &mut restart_forwarded,
-                    )
-                    .with_context(|| format!("waiting for Autoloop question {}", ask.question_id))?
-                    {
-                        runner
-                            .respond(&ask.run_id, &ask.question_id, &answer)
-                            .with_context(|| {
-                                format!("responding to Autoloop question {}", ask.question_id)
-                            })?;
-                    }
-                }
+        let autoloop_lines = read_complete_lines(events_path, &mut autoloop_pos)?;
+        let human_lines = read_complete_lines(&human_events, &mut human_pos)?;
+        let had_lines = !autoloop_lines.is_empty() || !human_lines.is_empty();
+
+        for line in autoloop_lines {
+            let Ok(event) = serde_json::from_str::<AutoloopEvent>(&line) else {
+                continue;
+            };
+            if let Some(id) = event.run_id.as_ref() {
+                run_id = Some(id.clone());
+            }
+            let Some(ask) = event.ask_pending() else {
+                continue;
+            };
+            if !handled_questions.insert(ask.question_id.clone()) {
                 continue;
             }
+            let response_start = fs::metadata(&human_events).map(|m| m.len()).unwrap_or(0);
+            service
+                .send_question(&ask.question)
+                .with_context(|| format!("sending Autoloop question {}", ask.question_id))?;
+            if let Some(answer) = wait_for_response_or_control(
+                service,
+                runner,
+                &human_events,
+                workspace,
+                &ask.run_id,
+                response_start,
+                done,
+                &mut stop_forwarded,
+                &mut restart_forwarded,
+            )
+            .with_context(|| format!("waiting for Autoloop question {}", ask.question_id))?
+            {
+                runner
+                    .respond(&ask.run_id, &ask.question_id, &answer)
+                    .with_context(|| {
+                        format!("responding to Autoloop question {}", ask.question_id)
+                    })?;
+            }
+        }
 
+        for line in human_lines {
             let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) else {
                 continue;
             };
             if event.get("topic").and_then(|value| value.as_str()) == Some("human.guidance")
-                && let Some(id) = run_id.as_deref()
                 && let Some(message) = event.get("payload").and_then(|value| value.as_str())
             {
+                pending_guidance.push(message.to_string());
+            }
+        }
+        if let Some(id) = run_id.as_deref() {
+            for message in pending_guidance.drain(..) {
                 runner
-                    .guide(id, message)
+                    .guide(id, &message)
                     .context("forwarding human guidance to Autoloop")?;
             }
         }
 
         if let Some(id) = run_id.as_deref() {
-            let ralph_dir = events_path
-                .parent()
-                .context("Autoloop events path has no .ralph parent")?;
-            if !stop_forwarded && ralph_dir.join("stop-requested").exists() {
-                runner
-                    .interrupt(id, "Ralph stop requested")
-                    .context("forwarding stop request to Autoloop")?;
-                stop_forwarded = true;
-            }
-            if !restart_forwarded && ralph_dir.join("restart-requested").exists() {
-                runner
-                    .interrupt(id, "Ralph restart requested")
-                    .context("forwarding restart request to Autoloop")?;
-                restart_forwarded = true;
-            }
+            forward_control_markers(
+                runner,
+                &ralph_dir,
+                id,
+                &mut stop_forwarded,
+                &mut restart_forwarded,
+                None,
+            )?;
         }
 
         if done.load(Ordering::Acquire) {
@@ -228,7 +251,8 @@ fn run_bridge_inner(
 fn wait_for_response_or_control(
     service: &dyn RobotService,
     runner: &AutoloopRunner,
-    events_path: &Path,
+    human_events: &Path,
+    workspace: &Path,
     run_id: &str,
     response_start: u64,
     done: &AtomicBool,
@@ -236,26 +260,18 @@ fn wait_for_response_or_control(
     restart_forwarded: &mut bool,
 ) -> Result<Option<String>> {
     let shutdown = service.shutdown_flag();
+    let ralph_dir = workspace.join(".ralph");
     std::thread::scope(|scope| {
-        let waiter = scope.spawn(|| service.wait_for_response(events_path, Some(response_start)));
+        let waiter = scope.spawn(|| service.wait_for_response(human_events, Some(response_start)));
         while !waiter.is_finished() {
-            let ralph_dir = events_path
-                .parent()
-                .context("Autoloop events path has no .ralph parent")?;
-            if !*stop_forwarded && ralph_dir.join("stop-requested").exists() {
-                runner
-                    .interrupt(run_id, "Ralph stop requested")
-                    .context("forwarding stop request to Autoloop")?;
-                *stop_forwarded = true;
-                shutdown.store(true, Ordering::Release);
-            }
-            if !*restart_forwarded && ralph_dir.join("restart-requested").exists() {
-                runner
-                    .interrupt(run_id, "Ralph restart requested")
-                    .context("forwarding restart request to Autoloop")?;
-                *restart_forwarded = true;
-                shutdown.store(true, Ordering::Release);
-            }
+            forward_control_markers(
+                runner,
+                &ralph_dir,
+                run_id,
+                stop_forwarded,
+                restart_forwarded,
+                Some(&shutdown),
+            )?;
             if done.load(Ordering::Acquire) {
                 shutdown.store(true, Ordering::Release);
             }
@@ -265,6 +281,35 @@ fn wait_for_response_or_control(
             .join()
             .map_err(|_| anyhow::anyhow!("RObot response waiter panicked"))?
     })
+}
+
+fn forward_control_markers(
+    runner: &AutoloopRunner,
+    ralph_dir: &Path,
+    run_id: &str,
+    stop_forwarded: &mut bool,
+    restart_forwarded: &mut bool,
+    shutdown: Option<&AtomicBool>,
+) -> Result<()> {
+    if !*stop_forwarded && ralph_dir.join("stop-requested").exists() {
+        runner
+            .interrupt(run_id, "Ralph stop requested")
+            .context("forwarding stop request to Autoloop")?;
+        *stop_forwarded = true;
+        if let Some(flag) = shutdown {
+            flag.store(true, Ordering::Release);
+        }
+    }
+    if !*restart_forwarded && ralph_dir.join("restart-requested").exists() {
+        runner
+            .interrupt(run_id, "Ralph restart requested")
+            .context("forwarding restart request to Autoloop")?;
+        *restart_forwarded = true;
+        if let Some(flag) = shutdown {
+            flag.store(true, Ordering::Release);
+        }
+    }
+    Ok(())
 }
 
 fn read_complete_lines(path: &Path, position: &mut u64) -> Result<Vec<String>> {
@@ -381,14 +426,11 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn relays_pending_ask_response_and_guidance_through_control_cli_once() {
+    fn fake_control_bin(dir: &Path) -> (PathBuf, PathBuf) {
         use std::os::unix::fs::PermissionsExt;
 
-        let temp = tempfile::tempdir().unwrap();
-        let events_path = temp.path().join("events.ndjson");
-        let control_log = temp.path().join("control.log");
-        let fake_bin = temp.path().join("fake-autoloop.sh");
+        let control_log = dir.join("control.log");
+        let fake_bin = dir.join("fake-autoloop.sh");
         fs::write(
             &fake_bin,
             "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CONTROL_LOG\"\n",
@@ -397,8 +439,20 @@ mod tests {
         let mut permissions = fs::metadata(&fake_bin).unwrap().permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&fake_bin, permissions).unwrap();
+        (fake_bin, control_log)
+    }
 
-        let runner = AutoloopRunner::new(temp.path(), "prompt", temp.path())
+    #[cfg(unix)]
+    #[test]
+    fn relays_pending_ask_response_and_guidance_through_control_cli_once() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path();
+        fs::create_dir_all(workspace.join(".ralph")).unwrap();
+        let events_path = workspace.join(".ralph/autoloop-events.ndjson");
+        let human_events = CurrentEventsGuard::human_events_path(workspace);
+        let (fake_bin, control_log) = fake_control_bin(workspace);
+
+        let runner = AutoloopRunner::new(workspace, "prompt", workspace)
             .bin(ralph_adapters::AutoloopBin::Explicit(fake_bin))
             .env("CONTROL_LOG", control_log.to_string_lossy().into_owned());
         let state = Arc::new(FakeState::default());
@@ -410,8 +464,9 @@ mod tests {
 
         let bridge_done = done.clone();
         let bridge_events = events_path.clone();
+        let bridge_workspace = workspace.to_path_buf();
         let bridge = std::thread::spawn(move || {
-            run_bridge(robot, runner, bridge_events, bridge_done).unwrap();
+            run_bridge(robot, runner, bridge_events, bridge_workspace, bridge_done).unwrap();
         });
 
         let mut events = File::create(&events_path).unwrap();
@@ -422,16 +477,20 @@ mod tests {
         .unwrap();
         writeln!(
             events,
-            r#"{{"topic":"human.guidance","payload":"check cancellation"}}"#
-        )
-        .unwrap();
-        writeln!(
-            events,
             r#"{{"type":"ask.pending","runId":"run-9","iteration":1,"questionId":"ask-9","question":"A or B?"}}"#
         )
         .unwrap();
         events.flush().unwrap();
-        let response_path = events_path.clone();
+
+        let mut human = File::create(&human_events).unwrap();
+        writeln!(
+            human,
+            r#"{{"topic":"human.guidance","payload":"check cancellation"}}"#
+        )
+        .unwrap();
+        human.flush().unwrap();
+
+        let response_path = human_events.clone();
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(100));
             let mut file = fs::OpenOptions::new()
@@ -461,27 +520,24 @@ mod tests {
         assert_eq!(log.matches("control respond run-9 ask-9 Use A").count(), 1);
         assert_eq!(state.questions.lock().unwrap().as_slice(), ["A or B?"]);
         assert!(state.stopped.load(Ordering::Acquire));
+        assert!(
+            !fs::read_to_string(&events_path)
+                .unwrap()
+                .contains("human.response"),
+            "human replies must not mix into Autoloop's structured event stream"
+        );
     }
 
     #[cfg(unix)]
     #[test]
-    fn restart_interrupts_an_pending_ask_without_waiting_for_hitl_timeout() {
-        use std::os::unix::fs::PermissionsExt;
-
+    fn restart_interrupts_a_pending_ask_from_ralph_dir_without_waiting() {
         let temp = tempfile::tempdir().unwrap();
-        let events_path = temp.path().join("events.ndjson");
-        let control_log = temp.path().join("control.log");
-        let fake_bin = temp.path().join("fake-autoloop.sh");
-        fs::write(
-            &fake_bin,
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CONTROL_LOG\"\n",
-        )
-        .unwrap();
-        let mut permissions = fs::metadata(&fake_bin).unwrap().permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&fake_bin, permissions).unwrap();
+        let workspace = temp.path();
+        fs::create_dir_all(workspace.join(".ralph")).unwrap();
+        let events_path = workspace.join(".ralph/autoloop-events.ndjson");
+        let (fake_bin, control_log) = fake_control_bin(workspace);
 
-        let runner = AutoloopRunner::new(temp.path(), "prompt", temp.path())
+        let runner = AutoloopRunner::new(workspace, "prompt", workspace)
             .bin(ralph_adapters::AutoloopBin::Explicit(fake_bin))
             .env("CONTROL_LOG", control_log.to_string_lossy().into_owned());
         let state = Arc::new(FakeState::default());
@@ -502,12 +558,13 @@ mod tests {
         .unwrap();
 
         let bridge_done = done.clone();
-        let bridge_events = events_path.clone();
+        let bridge_events = events_path;
+        let bridge_workspace = workspace.to_path_buf();
         let bridge = std::thread::spawn(move || {
-            run_bridge(robot, runner, bridge_events, bridge_done).unwrap();
+            run_bridge(robot, runner, bridge_events, bridge_workspace, bridge_done).unwrap();
         });
         std::thread::sleep(Duration::from_millis(100));
-        fs::write(temp.path().join("restart-requested"), "").unwrap();
+        fs::write(workspace.join(".ralph/restart-requested"), "").unwrap();
 
         let deadline = std::time::Instant::now() + Duration::from_secs(1);
         while std::time::Instant::now() < deadline {
@@ -531,20 +588,91 @@ mod tests {
         assert!(!log.contains("control respond"));
     }
 
+    #[cfg(unix)]
     #[test]
-    fn current_events_guard_restores_previous_marker() {
+    fn ignores_guidance_written_before_the_bridge_starts() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path();
+        fs::create_dir_all(workspace.join(".ralph")).unwrap();
+        let events_path = workspace.join(".ralph/autoloop-events.ndjson");
+        let human_events = CurrentEventsGuard::human_events_path(workspace);
+        let (fake_bin, control_log) = fake_control_bin(workspace);
+        fs::write(
+            &human_events,
+            concat!(
+                r#"{"topic":"human.guidance","payload":"stale leftover"}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+
+        fs::write(
+            &events_path,
+            concat!(
+                r#"{"type":"iteration.start","runId":"run-9","iteration":1}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+
+        let runner = AutoloopRunner::new(workspace, "prompt", workspace)
+            .bin(ralph_adapters::AutoloopBin::Explicit(fake_bin))
+            .env("CONTROL_LOG", control_log.to_string_lossy().into_owned());
+        let robot: Box<dyn RobotService> = Box::new(FakeRobot {
+            state: Arc::new(FakeState::default()),
+            shutdown: Arc::new(AtomicBool::new(false)),
+        });
+        let done = Arc::new(AtomicBool::new(false));
+
+        let bridge_done = done.clone();
+        let bridge_events = events_path;
+        let bridge_workspace = workspace.to_path_buf();
+        let bridge = std::thread::spawn(move || {
+            run_bridge(robot, runner, bridge_events, bridge_workspace, bridge_done).unwrap();
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        let mut human = fs::OpenOptions::new()
+            .append(true)
+            .open(&human_events)
+            .unwrap();
+        writeln!(
+            human,
+            r#"{{"topic":"human.guidance","payload":"fresh this run"}}"#
+        )
+        .unwrap();
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while std::time::Instant::now() < deadline {
+            if fs::read_to_string(&control_log)
+                .unwrap_or_default()
+                .contains("control guide run-9 fresh this run")
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        done.store(true, Ordering::Release);
+        bridge.join().unwrap();
+
+        let log = fs::read_to_string(&control_log).unwrap_or_default();
+        assert!(!log.contains("stale leftover"));
+        assert_eq!(log.matches("control guide run-9 fresh this run").count(), 1);
+    }
+
+    #[test]
+    fn current_events_guard_points_at_dedicated_human_events_and_restores() {
         let temp = tempfile::tempdir().unwrap();
         let marker = temp.path().join(".ralph/current-events");
         fs::create_dir_all(marker.parent().unwrap()).unwrap();
         fs::write(&marker, ".ralph/old.jsonl\n").unwrap();
-        let events = temp.path().join(".ralph/autoloop-events.ndjson");
 
         {
-            let _guard = CurrentEventsGuard::install(temp.path(), &events).unwrap();
+            let _guard = CurrentEventsGuard::install(temp.path()).unwrap();
             assert_eq!(
                 fs::read_to_string(&marker).unwrap(),
-                ".ralph/autoloop-events.ndjson\n"
+                ".ralph/human-events.jsonl\n"
             );
+            assert!(CurrentEventsGuard::human_events_path(temp.path()).is_file());
         }
 
         assert_eq!(fs::read_to_string(marker).unwrap(), ".ralph/old.jsonl\n");

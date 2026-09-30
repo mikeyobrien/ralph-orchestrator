@@ -1,15 +1,9 @@
 # ralph-telegram
 
-> [!WARNING]
-> **Telegram HITL relay is INACTIVE under the v3 autoloop engine (pending
-> autoloop#345).** Bot setup, `status`, `test`, and the standalone daemon still
-> work, as do the daemon's informational bot commands. Agent questions are not
-> relayed to Telegram, and Telegram replies or proactive guidance are not
-> connected to running autoloop loops.
-
-This crate retains Ralph's Telegram bot surfaces and the reserved design for
-human-in-the-loop orchestration. The relay design described below is not
-current v3 runtime behavior.
+This crate is Ralph's Telegram bot surface for human-in-the-loop
+orchestration. When `RObot.enabled` is set, the Autoloop engine path relays
+`ask.pending` questions through this crate and returns answers via
+`autoloop control respond`.
 
 ## Setup
 
@@ -71,8 +65,8 @@ Available commands while the standalone daemon is running:
 - `/tail` — last 20 retained events
 - `/model` — current backend/model (runtime or config fallback)
 - `/models` — configured model options found in `ralph*.yml`
-- `/restart` — reports that restart is unsupported under the autoloop engine
-- `/stop` — reports that stop is unsupported under the autoloop engine
+- `/restart` — write `.ralph/restart-requested` when a loop is running
+- `/stop` — write `.ralph/stop-requested` when a loop is running
 - `/help` — list available commands
 
 ## Reserved Relay Design (Not Current v3 Behavior)

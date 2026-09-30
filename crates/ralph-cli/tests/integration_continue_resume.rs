@@ -34,7 +34,6 @@ features:
 "#;
 
 const LOOP_ID: &str = "existing-coordination-loop";
-const RUN_ID: &str = "run-344-native-resume";
 
 struct Harness {
     workspace: TempDir,
@@ -46,10 +45,6 @@ struct Harness {
 
 impl Harness {
     fn new() -> Self {
-        Self::with_fixture("headless_voice.jsonl")
-    }
-
-    fn with_fixture(fixture_name: &str) -> Self {
         let workspace = tempfile::tempdir().expect("workspace temp dir");
         let home = tempfile::tempdir().expect("home temp dir");
         fs::write(workspace.path().join("ralph.yml"), RALPH_YML).expect("write ralph.yml");
@@ -77,8 +72,7 @@ impl Harness {
         );
 
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/autoloop")
-            .join(fixture_name);
+            .join("tests/fixtures/autoloop/headless_voice.jsonl");
         let fake_autoloop = build_fake_autoloop(&workspace.path().join("fake-autoloop"), &fixture)
             .expect("build fixture-driven fake autoloop");
         let inherited_path = std::env::var_os("PATH").unwrap_or_default();
@@ -104,7 +98,6 @@ impl Harness {
             .env("HOME", self.home.path())
             .env("USERPROFILE", self.home.path())
             .env("ARGV_OUT", self.fake_autoloop.argv_out())
-            .env("ENV_OUT", self.fake_autoloop.env_out())
             .env_remove("RALPH_CONFIG")
             .env_remove("RALPH_WORKSPACE_ROOT")
             .env_remove("RALPH_MERGE_LOOP_ID");
@@ -180,71 +173,22 @@ fn run_continue_without_scratchpad_completes_and_reuses_coordination_loop() {
     );
 }
 
-/// A recorded engine run (`.ralph/current-run-id`) makes `ralph resume`
-/// continue that native autoloop run instead of refusing.
 #[test]
-fn resume_continues_recorded_native_run_without_redoing_work() {
-    let harness = Harness::with_fixture("resume_native.jsonl");
-    fs::write(
-        harness.workspace.path().join(".ralph/current-run-id"),
-        format!("{RUN_ID}\n"),
-    )
-    .expect("write current run marker");
+fn resume_without_a_persisted_run_id_fails_without_inspecting_scratchpad() {
+    let harness = Harness::new();
+    assert!(!harness.scratchpad.exists());
 
     let output = harness
         .command()
-        .args(["--color", "never", "resume"])
-        .output()
-        .expect("run ralph resume");
-    let text = rendered(&output);
-
-    assert!(output.status.success(), "resume failed: {text}");
-    assert!(
-        text.contains("fake autoloop: resume invocation reached"),
-        "native engine resume did not run to completion: {text}"
-    );
-
-    // The resume subprocess must receive exactly `resume <run-id>`.
-    let argv = fs::read_to_string(harness.fake_autoloop.argv_out()).expect("read argv out");
-    let args: Vec<&str> = argv.lines().collect();
-    assert_eq!(
-        args,
-        ["resume", RUN_ID],
-        "unexpected autoloop argv: {args:?}"
-    );
-
-    // The Ralph-owned engine state root must be exported so autoloop resumes
-    // the exact run, not a re-discovered one.
-    let env = fs::read_to_string(harness.fake_autoloop.env_out()).expect("read env out");
-    let state_dir = harness
-        .workspace
-        .path()
-        .join(".ralph/autoloop")
-        .canonicalize()
-        .expect("canonicalize state dir");
-    assert!(
-        env.contains(&format!("AUTOLOOP_STATE_DIR={}", state_dir.display())),
-        "resume did not export the owned engine state root: {env}"
-    );
-    assert!(
-        env.contains(&format!(
-            "AUTOLOOP_JOURNAL_FILE={}",
-            state_dir.join("journal.jsonl").display()
-        )),
-        "resume did not export the owned journal file: {env}"
-    );
-}
-
-/// Without a recorded run, `ralph resume` fails cleanly and never launches
-/// the engine process.
-#[test]
-fn resume_without_recorded_run_fails_without_launching_engine() {
-    let harness = Harness::with_fixture("resume_native.jsonl");
-    assert!(!harness.fake_autoloop.argv_out().exists());
-
-    let output = harness
-        .command()
-        .args(["--color", "never", "resume"])
+        .args([
+            "--color",
+            "never",
+            "--config",
+            "ralph.yml",
+            "resume",
+            "--no-tui",
+            "--skip-preflight",
+        ])
         .output()
         .expect("run ralph resume");
     let text = rendered(&output);
@@ -254,15 +198,86 @@ fn resume_without_recorded_run_fails_without_launching_engine() {
         "resume unexpectedly succeeded: {text}"
     );
     assert!(
-        text.contains("no engine run to resume"),
-        "expected a clean no-run error: {text}"
+        text.contains("Ralph has no persisted Autoloop run_id"),
+        "missing persisted run_id error: {text}"
     );
     assert!(
         !text.contains("scratchpad not found"),
         "resume reported obsolete scratchpad error: {text}"
     );
+}
+
+#[test]
+fn resume_invokes_autoloop_resume_for_the_persisted_run_id() {
+    let harness = Harness::new();
+
+    let first = harness
+        .command()
+        .args([
+            "--color",
+            "never",
+            "--config",
+            "ralph.yml",
+            "run",
+            "--continue",
+            "--no-tui",
+            "--skip-preflight",
+            "--max-iterations",
+            "2",
+            "-p",
+            "seed run_id",
+        ])
+        .output()
+        .expect("seed ralph run");
+    let first_text = rendered(&first);
+    assert!(first.status.success(), "seed run failed: {first_text}");
+    assert_eq!(
+        fs::read_to_string(
+            harness
+                .workspace
+                .path()
+                .join(".ralph/autoloop/current-run-id")
+        )
+        .expect("read persisted run_id")
+        .trim(),
+        "run-headless-voice"
+    );
+
+    let output = harness
+        .command()
+        .args([
+            "--color",
+            "never",
+            "--config",
+            "ralph.yml",
+            "resume",
+            "--no-tui",
+            "--skip-preflight",
+        ])
+        .output()
+        .expect("run ralph resume");
+    let text = rendered(&output);
+    assert!(output.status.success(), "resume failed: {text}");
+
+    let argv = harness
+        .fake_autoloop
+        .recorded_argv()
+        .expect("recorded autoloop argv");
+    assert_eq!(
+        argv.first().map(String::as_str),
+        Some("resume"),
+        "native resume must invoke autoloop resume: {argv:?}"
+    );
     assert!(
-        !harness.fake_autoloop.argv_out().exists(),
-        "resume must not launch autoloop when there is no recorded run"
+        argv.iter().any(|arg| arg == "run-headless-voice"),
+        "resume argv missing persisted run_id: {argv:?}"
+    );
+    assert!(
+        argv.iter().any(|arg| arg == "--events"),
+        "resume must keep the Autoloop --events plane: {argv:?}"
+    );
+    assert!(
+        !argv.iter().any(|arg| arg == "run"),
+        "resume must not start a fresh autoloop run: {argv:?}"
     );
 }

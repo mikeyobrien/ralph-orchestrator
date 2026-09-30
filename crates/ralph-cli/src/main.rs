@@ -38,6 +38,7 @@ mod memory;
 mod merge_processing;
 mod preflight;
 mod presets;
+mod rpc_events;
 mod skill_cli;
 mod sop_runner;
 mod task_cli;
@@ -545,13 +546,8 @@ enum Commands {
     /// Interactive walkthrough of hats, hat collections, and workflow
     Tutorial(TutorialArgs),
 
-    /// Continue the most recent engine run in place (`autoloop resume`).
-    ///
-    /// Reads `.ralph/current-run-id` recorded by the last `ralph run` and
-    /// invokes `autoloop resume <run-id>` so no completed work is redone.
-    /// Unlike `ralph run --continue` (which continues Ralph coordination
-    /// state), this resumes the native autoloop engine run itself.
-    Resume,
+    /// Resume the last Autoloop run without redoing completed work.
+    Resume(ResumeArgs),
 
     /// View event history for debugging
     Events(EventsArgs),
@@ -625,6 +621,18 @@ struct InitArgs {
     force: bool,
 }
 
+/// Arguments for `ralph resume`.
+#[derive(Parser, Debug)]
+struct ResumeArgs {
+    /// Skip preflight checks before resume.
+    #[arg(long)]
+    skip_preflight: bool,
+
+    /// Disable TUI observation mode (TUI is enabled by default on a tty).
+    #[arg(long)]
+    no_tui: bool,
+}
+
 /// Arguments for the run subcommand.
 #[derive(Parser, Debug)]
 struct RunArgs {
@@ -675,11 +683,6 @@ struct RunArgs {
     #[arg(short, long, conflicts_with = "no_tui")]
     autonomous: bool,
 
-    /// RPC mode: emit ralph's JSON-RPC RpcEvent contract on stdout (#343).
-    /// stdout is reserved for the protocol stream; logs go to stderr.
-    #[arg(long, conflicts_with = "no_tui")]
-    rpc: bool,
-
     // ─────────────────────────────────────────────────────────────────────────
     // Multi-Loop Concurrency Options
     // ─────────────────────────────────────────────────────────────────────────
@@ -700,6 +703,14 @@ struct RunArgs {
     /// Overrides features.preflight.enabled from config.
     #[arg(long)]
     skip_preflight: bool,
+
+    /// Emit Ralph `RpcEvent` JSON lines on stdout from the Autoloop `--events` stream.
+    #[arg(long)]
+    rpc: bool,
+
+    /// Invoke `autoloop resume` for the persisted run_id instead of `autoloop run`.
+    #[arg(skip)]
+    native_resume: bool,
 
     // ─────────────────────────────────────────────────────────────────────────
     // Verbosity Options
@@ -918,6 +929,7 @@ async fn main() -> Result<()> {
         eprintln!("No interactive terminal detected; using headless mode.");
     }
     let mcp_enabled = matches!(&cli.command, Some(Commands::Mcp(_)));
+    let rpc_enabled = matches!(&cli.command, Some(Commands::Run(args)) if args.rpc);
 
     // Initialize logging - suppress in TUI mode to avoid corrupting the display
     let filter = if cli.verbose { "debug" } else { "info" };
@@ -968,8 +980,8 @@ async fn main() -> Result<()> {
             }
         }
         // If log file creation fails, silently continue without logging
-    } else if mcp_enabled {
-        // MCP mode: logs must go to stderr to keep stdout clean for protocol messages
+    } else if mcp_enabled || rpc_enabled {
+        // MCP and --rpc keep stdout as the machine protocol.
         tracing_subscriber::fmt()
             .with_env_filter(filter)
             .with_writer(std::io::stderr)
@@ -1066,7 +1078,16 @@ async fn main() -> Result<()> {
             .await
         }
         Some(Commands::Tutorial(args)) => tutorial_command(cli.color, args),
-        Some(Commands::Resume) => resume_command(),
+        Some(Commands::Resume(args)) => {
+            resume_command(
+                &config_sources,
+                hats_source.as_ref(),
+                cli.verbose,
+                cli.color,
+                args,
+            )
+            .await
+        }
         Some(Commands::Events(args)) => events_command(cli.color, args),
         Some(Commands::Init(args)) => init_command(cli.color, args),
         Some(Commands::Clean(args)) => clean_command(&config_sources, cli.color, args),
@@ -1117,10 +1138,11 @@ async fn main() -> Result<()> {
                 loop_id: None,
                 no_tui: false, // TUI enabled by default
                 autonomous: false,
-                rpc: false,
                 exclusive: false,
                 no_auto_merge: false,
                 skip_preflight: false,
+                rpc: false,
+                native_resume: false,
                 verbose: false,
             };
             run_command(
@@ -1333,7 +1355,7 @@ async fn run_command(
     color_mode: ColorMode,
     args: RunArgs,
 ) -> Result<()> {
-    let wants_tui = !args.no_tui && !args.autonomous && has_interactive_terminal();
+    let wants_tui = !args.rpc && !args.no_tui && !args.autonomous && has_interactive_terminal();
     let mut config = preflight::load_config_for_preflight(config_sources, hats_source).await?;
 
     // Apply CLI overrides (after normalization so they take final precedence)
@@ -1683,14 +1705,12 @@ async fn run_command(
         Some(loop_context),
         auto_merge_override,
         args.loop_id.clone(),
-        args.continue_mode,
-        color_mode.should_use_colors(),
-        if args.rpc {
-            autoloop_engine::AutoloopRunMode::Rpc
-        } else if wants_tui {
-            autoloop_engine::AutoloopRunMode::Tui
-        } else {
-            autoloop_engine::AutoloopRunMode::Headless
+        autoloop_engine::AutoloopLaunch {
+            continue_mode: args.continue_mode,
+            native_resume: args.native_resume,
+            use_colors: color_mode.should_use_colors(),
+            tui: wants_tui,
+            rpc: args.rpc,
         },
     )
     .await?;
@@ -1744,65 +1764,19 @@ fn clear_restart_request_signal(workspace_root: &std::path::Path) {
     let _ = std::fs::remove_file(&restart_path);
 }
 
-/// Continue the most recent engine run in place.
-///
-/// Reads the `.ralph/current-run-id` marker left by the last `ralph run` and
-/// drives `autoloop resume <run-id>` so completed work is not redone. The
-/// subprocess inherits stdio; exit status propagates.
-fn resume_command() -> Result<()> {
-    let workspace = resolve_workspace_root(None);
-    let marker = workspace.join(".ralph/current-run-id");
-    let run_id = std::fs::read_to_string(&marker)
-        .map(|value| value.trim().to_string())
-        .unwrap_or_default();
-    if run_id.is_empty() {
-        anyhow::bail!(
-            "no engine run to resume at {} — run `ralph run` first so a native autoloop run_id is recorded. \
-             Note `ralph run --continue` is a different operation: it continues Ralph coordination state, \
-             not the engine run.",
-            marker.display()
-        );
-    }
-
-    // Same engine gate and resolution as `ralph run`: provision when absent,
-    // honoring the interactive consent prompt exactly like run preflight.
-    let interactive = has_interactive_terminal();
-    let engine_bin =
-        crate::engine_provision::ensure_autoloop_with_provisioning(interactive, false)?;
-    let engine_root = ralph_core::engine_state::prepare_engine_state_root(&workspace)
-        .context("preparing Ralph-owned Autoloop state")?;
-
-    let mut command = match &engine_bin {
-        ralph_adapters::AutoloopBin::PathLookup => std::process::Command::new("autoloop"),
-        ralph_adapters::AutoloopBin::Node(path) => {
-            let mut cmd = std::process::Command::new("node");
-            cmd.arg(path);
-            cmd
-        }
-        ralph_adapters::AutoloopBin::Explicit(path) => std::process::Command::new(path),
-    };
-    command
-        .arg("resume")
-        .arg(&run_id)
-        .current_dir(&workspace)
-        .stdin(std::process::Stdio::inherit())
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit());
-    for (key, value) in ralph_core::engine_state::engine_env(&engine_root) {
-        command.env(key, value);
-    }
-    tracing::info!(run_id = %run_id, workspace = %workspace.display(), "launching `autoloop resume`");
-
-    let mut child = command
-        .spawn()
-        .with_context(|| format!("spawning `autoloop resume {run_id}`"))?;
-    let status = child
-        .wait()
-        .context("waiting for `autoloop resume` to finish")?;
-    if let Some(code) = status.code() {
-        std::process::exit(code);
-    }
-    Ok(())
+async fn resume_command(
+    config_sources: &[ConfigSource],
+    hats_source: Option<&HatsSource>,
+    verbose: bool,
+    color_mode: ColorMode,
+    args: ResumeArgs,
+) -> Result<()> {
+    let mut run_args = RunArgs::try_parse_from(["run", "--continue"]).expect("resume run args");
+    run_args.continue_mode = true;
+    run_args.native_resume = true;
+    run_args.skip_preflight = args.skip_preflight;
+    run_args.no_tui = args.no_tui;
+    run_command(config_sources, hats_source, verbose, color_mode, run_args).await
 }
 
 fn init_command(color_mode: ColorMode, args: InitArgs) -> Result<()> {
@@ -2652,12 +2626,12 @@ mod tests {
     #[test]
     fn test_r8_removed_resume_flags_are_rejected() {
         let removed_arguments = [
+            vec!["--rpc"],
             vec!["--record-session", "session.jsonl"],
             vec!["-q"],
             vec!["--quiet"],
             vec!["--idle-timeout", "30"],
             vec!["--max-iterations", "2"],
-            vec!["--no-tui"],
             vec!["--autonomous"],
             vec!["-a"],
         ];
@@ -2686,6 +2660,18 @@ mod tests {
             panic!("expected run command");
         };
         assert!(args.autonomous);
+
+        let cli = Cli::try_parse_from(["ralph", "run", "--rpc", "--no-tui"])
+            .expect("rpc flag must parse");
+        let Some(Commands::Run(args)) = cli.command else {
+            panic!("expected run command");
+        };
+        assert!(args.rpc);
+        assert!(args.no_tui);
+
+        let cli = Cli::try_parse_from(["ralph", "resume", "--skip-preflight", "--no-tui"])
+            .expect("resume flags must parse");
+        assert!(matches!(cli.command, Some(Commands::Resume(_))));
     }
 
     #[test]
@@ -3474,10 +3460,11 @@ core:
             loop_id: None,
             no_tui: true,
             autonomous: false,
-            rpc: false,
             exclusive: false,
             no_auto_merge: false,
             skip_preflight: true,
+            rpc: false,
+            native_resume: false,
             verbose: false,
         }
     }

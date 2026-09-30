@@ -44,6 +44,9 @@ pub trait RobotService: Send + Sync {
     ///
     /// Blocks until a response arrives or the configured timeout expires.
     /// Returns `Ok(Some(response))` on response, `Ok(None)` on timeout.
+    ///
+    /// `start_position` is a byte offset into `events_path`. `None` starts at
+    /// the current end of the file so only later lines are consumed.
     fn wait_for_response(
         &self,
         events_path: &Path,

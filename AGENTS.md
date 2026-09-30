@@ -37,7 +37,7 @@ the merge queue, worktrees, loop registry, TUI, and—once implemented—HITL re
 ralph-cli      → CLI/TUI frontend, autoloop launch, completion and merge coordination
 ralph-core     → Shared config and coordination state (memories, tasks, registry, merge queue)
 ralph-adapters → Autoloop process integration and journal/event/summary contracts
-ralph-telegram → Telegram relay components (inactive with the autoloop engine; see RObot below)
+ralph-telegram → Telegram relay components (HITL via Autoloop `control respond`)
 ralph-tui      → Terminal UI (ratatui-based)
 ralph-e2e      → End-to-end test framework
 ralph-proto    → Protocol definitions
@@ -190,13 +190,15 @@ cargo run -p ralph-e2e -- --list
 
 ## RObot (Human-in-the-Loop)
 
-**Telegram HITL is inactive under the autoloop engine pending autoloop#345.**
-The `ralph-telegram` crate, `ralph bot` command, and configuration surface
-remain in the tree for when the engine relay lands, but an autoloop-backed
-`ralph run` does not currently relay agent questions or human guidance.
+When `RObot.enabled` is set on the primary loop, Ralph tails Autoloop
+`ask.pending` events and relays questions through Telegram or the file-backed
+web service. Answers and proactive `human.guidance` go back through
+`autoloop control respond` / `guide`. Human events stay in
+`.ralph/human-events.jsonl` so they cannot corrupt Autoloop's structured
+`--events` stream. TUI still displays pending asks only.
 
 ```yaml
-# Reserved configuration shape in ralph.yml
+# ralph.yml
 RObot:
   enabled: true
   timeout_seconds: 300
@@ -204,7 +206,7 @@ RObot:
     bot_token: "your-token"  # Or RALPH_TELEGRAM_BOT_TOKEN
 ```
 
-See `crates/ralph-telegram/README.md` for the retained bot setup.
+See `crates/ralph-telegram/README.md` for bot setup.
 
 ## Diagnostics
 

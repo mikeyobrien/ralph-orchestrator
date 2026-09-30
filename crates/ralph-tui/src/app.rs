@@ -118,7 +118,7 @@ pub fn dispatch_action(action: Action, state: &mut TuiState, viewport_height: us
         Action::GuidanceNext => {
             // Under the autoloop source there is no back-channel to the
             // subprocess, so guidance/steer would no-op. Suppress it entirely
-            // rather than opening a dead-end input (FIX gap#6; HITL is #345).
+            // rather than opening a dead-end input (FIX gap#6; TUI is display-only).
             if !state.autoloop_source {
                 state.start_guidance(crate::state::GuidanceMode::Next);
             }

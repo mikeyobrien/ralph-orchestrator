@@ -18,7 +18,7 @@ The Cargo workspace has nine crates:
 | `ralph-adapters` | Autoloop process, journal, event-stream, and summary adapters |
 | `ralph-tui` | Ratatui observation UI |
 | `ralph-proto` | Shared protocol definitions |
-| `ralph-telegram` | Retained Telegram components; not connected to `ralph run` under v3 pending autoloop#345 |
+| `ralph-telegram` | Telegram HITL relay for Autoloop `ask.pending` / `control respond` |
 | `ralph-e2e` | Legacy E2E scenario inventory and test framework |
 | `ralph-bench` | Benchmarking support |
 | `ralph-api` | Rust RPC API used by the web dashboard |
@@ -97,8 +97,9 @@ running. When autoloop exits, Ralph reads the summary, maps the engine stop
 reason, updates coordination state, and either completes in place or queues a
 worktree for merge processing.
 
-Telegram HITL is not currently part of this flow. The retained bot and relay
-components are awaiting an autoloop engine relay contract (autoloop#345).
+On the primary loop with `RObot.enabled`, Ralph also tails Autoloop
+`ask.pending`, relays questions through Telegram or the file-backed web
+service, and answers through `autoloop control`.
 
 ## Process Model
 

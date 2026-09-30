@@ -37,7 +37,7 @@ ralph-orchestrator/
 │   ├── ralph-proto/     # Protocol types
 │   ├── ralph-core/      # Shared config and coordination state
 │   ├── ralph-adapters/  # Autoloop process/contract adapters
-│   ├── ralph-telegram/  # Retained bot components; v3 relay pending #345
+│   ├── ralph-telegram/  # Telegram HITL relay for Autoloop
 │   ├── ralph-tui/       # Terminal UI
 │   ├── ralph-cli/       # Binary entry point
 │   ├── ralph-e2e/       # End-to-end testing

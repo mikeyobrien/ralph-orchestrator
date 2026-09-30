@@ -1155,12 +1155,18 @@ mod tests {
     #[test]
     fn wait_for_response_honors_caller_position_for_preexisting_response() {
         let dir = TempDir::new().unwrap();
-        let service = test_service(&dir);
+        let service = TelegramService::new(
+            dir.path().to_path_buf(),
+            Some("token".to_string()),
+            None,
+            2,
+            "main".to_string(),
+        )
+        .unwrap();
         let events_path = dir.path().join("events.jsonl");
         std::fs::write(
             &events_path,
-            r#"{"topic":"human.response","payload":"Immediate answer"}
-"#,
+            "{\"topic\":\"human.response\",\"payload\":\"Immediate answer\"}\n",
         )
         .unwrap();
 
