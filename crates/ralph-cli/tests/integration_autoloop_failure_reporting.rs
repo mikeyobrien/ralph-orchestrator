@@ -145,15 +145,22 @@ impl Harness {
 
     fn assert_fail_closed(&self, output: &Output) {
         let output_text = combined_output(output);
+        // The workspace-level `.autoloop` may exist ONLY as the #344 compatibility
+        // symlink to the Ralph-owned root (`.ralph/autoloop`) — never as a real
+        // directory or file where legacy state could accumulate.
         let legacy_root = self.workspace.path().join(".autoloop");
-        assert_eq!(
-            fs::symlink_metadata(&legacy_root)
-                .expect_err("legacy state path must not exist as a file, directory, or symlink")
-                .kind(),
-            std::io::ErrorKind::NotFound,
-            "unexpected filesystem result for {}",
-            legacy_root.display()
-        );
+        match fs::symlink_metadata(&legacy_root) {
+            Err(error) => assert_eq!(
+                error.kind(),
+                std::io::ErrorKind::NotFound,
+                "unexpected filesystem result for {}",
+                legacy_root.display()
+            ),
+            Ok(metadata) => assert!(
+                metadata.file_type().is_symlink(),
+                "legacy state path must not exist as a file or directory: {metadata:?}"
+            ),
+        }
         assert!(
             !legacy_root.join("runs/fallback-run").exists(),
             "legacy run fallback was created at {}",
