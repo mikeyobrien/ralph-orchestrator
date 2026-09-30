@@ -580,8 +580,12 @@ fn tui_shows_incremental_backend_stream_before_iteration_finish_and_reconciles_o
         "engine stream missing from the Ralph-owned root: {}",
         owned_stream.display()
     );
-    assert!(
-        !workspace.path().join(".autoloop").exists(),
-        "Ralph-launched run must not create a top-level .autoloop directory"
-    );
+    // The workspace-level `.autoloop` may exist only as the #344 compat
+    // symlink to the Ralph-owned root — never a real directory.
+    if let Ok(metadata) = std::fs::symlink_metadata(workspace.path().join(".autoloop")) {
+        assert!(
+            metadata.file_type().is_symlink(),
+            "Ralph-launched run created a real top-level .autoloop entry: {metadata:?}"
+        );
+    }
 }
