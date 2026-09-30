@@ -233,22 +233,52 @@ impl Harness {
                 .expect("fake autoloop should record engine environment"),
             expected,
         );
+        // The ownership overrides are emitted RELATIVE to the workspace (the
+        // engine joins core.* paths onto its working directory; absolute values
+        // would double up — see engine_config_overrides). The expected override
+        // is the owned-root suffix beneath the workspace, wherever it lives.
         let argv = self.recorded_argv();
-        for override_arg in [
-            format!("core.state_dir={}", root.display()),
-            format!("core.journal_file={}", root.join("journal.jsonl").display()),
-            format!("core.memory_file={}", root.join("memory.jsonl").display()),
-            format!("core.tasks_file={}", root.join("tasks.jsonl").display()),
+        // `root` is the CANONICALIZED owned root; canonicalization on macOS
+        // resolves /var → /private/var, so strip the prefix against the same
+        // canonicalized workspace, not the raw TempDir path.
+        let workspace = self
+            .workspace
+            .path()
+            .canonicalize()
+            .expect("canonicalize workspace");
+        let relative_root = root
+            .strip_prefix(&workspace)
+            .map(|relative| relative.to_path_buf())
+            .unwrap_or_else(|_| root.clone());
+        for (key, absolute) in [
+            ("core.state_dir", root.clone()),
+            ("core.journal_file", root.join("journal.jsonl")),
+            ("core.memory_file", root.join("memory.jsonl")),
+            ("core.tasks_file", root.join("tasks.jsonl")),
         ] {
+            let expected_override = format!(
+                "{}={}",
+                key,
+                absolute
+                    .strip_prefix(&workspace)
+                    .map(|relative| relative.display().to_string())
+                    .unwrap_or_else(|_| absolute.display().to_string())
+            );
             assert!(
-                argv.contains(&override_arg),
-                "missing engine ownership override {override_arg:?} in {argv:?}"
+                argv.contains(&expected_override),
+                "missing engine ownership override {expected_override:?} (owned root {}, relative root {}) in {argv:?}",
+                root.display(),
+                relative_root.display()
             );
         }
-        assert!(
-            !self.workspace.path().join(".autoloop").exists(),
-            "Ralph launch created a top-level .autoloop directory"
-        );
+        // The workspace-level `.autoloop` may exist only as the #344 compat
+        // symlink to the owned root — never a real directory.
+        if let Ok(metadata) = fs::symlink_metadata(workspace.join(".autoloop")) {
+            assert!(
+                metadata.file_type().is_symlink(),
+                "Ralph launch created a real top-level .autoloop entry: {metadata:?}"
+            );
+        }
         let normal_output = format!(
             "{}{}",
             String::from_utf8_lossy(&output.stdout),
