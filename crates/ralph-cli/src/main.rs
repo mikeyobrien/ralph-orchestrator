@@ -1685,8 +1685,13 @@ async fn run_command(
         args.loop_id.clone(),
         args.continue_mode,
         color_mode.should_use_colors(),
-        wants_tui,
-        args.rpc,
+        if args.rpc {
+            autoloop_engine::AutoloopRunMode::Rpc
+        } else if wants_tui {
+            autoloop_engine::AutoloopRunMode::Tui
+        } else {
+            autoloop_engine::AutoloopRunMode::Headless
+        },
     )
     .await?;
 

@@ -325,6 +325,18 @@ fn resolve_autoloop_prompt(workspace: &Path, event_loop: &EventLoopConfig) -> Re
 /// (merge queue, loop registry, landing, summary, history) matches the in-house
 /// engine. `context` carries the loop identity; `None` means an ad-hoc run with
 /// no merge-queue / registry participation.
+/// Which presentation surface the autoloop run drives. Replaces the former
+/// `tui: bool, rpc: bool` pair so the mode set stays closed and exhaustive.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AutoloopRunMode {
+    /// Live-region headless output on stdout.
+    Headless,
+    /// In-process TUI rendering the run.
+    Tui,
+    /// JSON-RPC `RpcEvent` protocol stream on stdout (#343).
+    Rpc,
+}
+
 pub async fn run_autoloop_engine(
     config: RalphConfig,
     autoloop_bin: AutoloopBin,
@@ -333,8 +345,7 @@ pub async fn run_autoloop_engine(
     loop_id: Option<String>,
     continue_mode: bool,
     use_colors: bool,
-    tui: bool,
-    rpc: bool,
+    mode: AutoloopRunMode,
 ) -> Result<TerminationReason> {
     let workspace = config.core.workspace_root.clone();
     let engine_state_root =
@@ -430,7 +441,7 @@ pub async fn run_autoloop_engine(
     }
 
     let mut current_events_guard = None;
-    let robot_service = if !tui {
+    let robot_service = if matches!(mode, AutoloopRunMode::Headless | AutoloopRunMode::Rpc) {
         if let Some(loop_context) = context.as_ref()
             && config.robot.enabled
             && loop_context.is_primary()
@@ -452,7 +463,7 @@ pub async fn run_autoloop_engine(
     };
 
     let start = Instant::now();
-    let outcome = if rpc {
+    let outcome = if mode == AutoloopRunMode::Rpc {
         // RPC mode (#343): emit ralph's JSON-RPC `RpcEvent` stream on stdout by
         // live-tailing the same --events file and translating it through
         // `AutoloopRpcMapper`. stdout is kept protocol-clean (logs go to stderr,
@@ -468,7 +479,7 @@ pub async fn run_autoloop_engine(
         .await
         .context("autoloop RPC run failed")?;
         interpret_autoloop_result(Ok(summary), false)
-    } else if tui {
+    } else if mode == AutoloopRunMode::Tui {
         // In-process TUI: render the autoloop run live by tailing its --events
         // file, concurrent with the subprocess. Resolves Ctrl+C by killing the
         // child (see run_autoloop_with_tui).
@@ -593,7 +604,7 @@ pub async fn run_autoloop_engine(
         use_colors,
         // In RPC mode stdout is the protocol channel — the banner's content is
         // already delivered as the LoopTerminated event.
-        !rpc,
+        mode != AutoloopRunMode::Rpc,
     );
 
     match failure {
@@ -1413,8 +1424,7 @@ pub async fn start_loop(
             None,
             false,
             false,
-            false,
-            false,
+            AutoloopRunMode::Headless,
         )
         .await?;
         if reason == TerminationReason::RestartRequested {

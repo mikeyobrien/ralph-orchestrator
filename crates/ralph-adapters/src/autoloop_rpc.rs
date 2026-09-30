@@ -409,7 +409,7 @@ mod tests {
             } => {
                 assert_eq!(*reason, TerminationReason::Completed);
                 assert_eq!(*total_iterations, 2);
-                assert_eq!(*total_cost_usd, 0.08);
+                assert!((*total_cost_usd - 0.08).abs() < 1e-9);
             }
             other => panic!("expected LoopTerminated, got {other:?}"),
         }
@@ -442,7 +442,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(*reason, TerminationReason::MaxIterations);
-                assert_eq!(*total_cost_usd, 0.12);
+                assert!((*total_cost_usd - 0.12).abs() < 1e-9);
             }
             other => panic!("expected LoopTerminated, got {other:?}"),
         }
@@ -472,7 +472,7 @@ mod tests {
                 // Unknown-to-RPC reason collapses to Error.
                 assert_eq!(reason, TerminationReason::Error);
                 assert_eq!(total_iterations, 3);
-                assert_eq!(total_cost_usd, 0.2);
+                assert!((total_cost_usd - 0.2).abs() < 1e-9);
             }
             other => panic!("expected LoopTerminated, got {other:?}"),
         }

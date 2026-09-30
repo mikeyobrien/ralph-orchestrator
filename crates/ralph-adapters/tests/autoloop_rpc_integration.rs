@@ -13,7 +13,8 @@ use std::path::Path;
 
 use ralph_adapters::{AutoloopEventTailer, AutoloopRpcMapper};
 use ralph_proto::json_rpc::{
-    GuidanceTarget, RpcCommand, RpcEvent, TerminationReason, emit_event_line, parse_command,
+    GuidanceTarget, RpcCommand, RpcEvent, RpcTaskCounts, TerminationReason, emit_event_line,
+    parse_command,
 };
 
 fn append(path: &Path, line: &str) {
@@ -140,8 +141,8 @@ fn autoloop_events_stream_maps_to_rpc_event_sequence() {
         } => {
             assert_eq!(*reason, TerminationReason::MaxIterations);
             assert_eq!(*total_iterations, 2);
-            assert_eq!(
-                *total_cost_usd, 0.08,
+            assert!(
+                (*total_cost_usd - 0.08).abs() < 1e-9,
                 "cost comes from loop.finish, not summary"
             );
         }
@@ -289,7 +290,7 @@ fn rpc_event_wire_contract_locks_tags_and_field_names() {
 
     // response — control-command replies; optionality rules matter here
     // (id/data/error omitted when absent).
-    let v: serde_json::Value = serde_json::to_value(&RpcEvent::success_response(
+    let v: serde_json::Value = serde_json::to_value(RpcEvent::success_response(
         "get_state",
         Some("c-1".into()),
         None,
@@ -303,7 +304,7 @@ fn rpc_event_wire_contract_locks_tags_and_field_names() {
     assert!(!v.as_object().unwrap().contains_key("error"));
 
     let v: serde_json::Value =
-        serde_json::to_value(&RpcEvent::error_response("abort", None, "no loop")).unwrap();
+        serde_json::to_value(RpcEvent::error_response("abort", None, "no loop")).unwrap();
     assert_eq!(v["success"], false);
     assert_eq!(v["error"], "no loop");
     assert!(!v.as_object().unwrap().contains_key("id"));
@@ -346,7 +347,7 @@ fn rpc_event_wire_contract_locks_tags_and_field_names() {
         completed: false,
         started_at: 1,
         iteration_started_at: Some(2),
-        task_counts: Default::default(),
+        task_counts: RpcTaskCounts::default(),
         active_task: None,
         total_cost_usd: 0.0,
     })
@@ -356,7 +357,7 @@ fn rpc_event_wire_contract_locks_tags_and_field_names() {
 
     // And every tag round-trips: parse the serialized line back into an
     // RpcEvent (the consumer's exact decode path).
-    let round_trip = serde_json::from_str::<RpcEvent>(&emit_event_line(&e).trim()).unwrap();
+    let round_trip = serde_json::from_str::<RpcEvent>(emit_event_line(&e).trim()).unwrap();
     assert_eq!(round_trip, e);
 }
 
