@@ -231,6 +231,17 @@ impl AutoloopRunner {
         if let Some(run_id) = &self.resume_run_id {
             args.push("resume".to_string());
             args.push(run_id.clone());
+            // `autoloop resume` accepts `-b <backend>` (backendOverride) but
+            // has no `--set` parser. Without the selector the engine falls
+            // back to the preset's default backend, silently diverging from
+            // ralph's configured backend — so forward it whenever a native
+            // selector was mapped. Structured overrides cannot cross the
+            // resume boundary; state paths are covered by env exports.
+            if let Some(backend) = &self.backend {
+                // CRITICAL: backend value is exactly one argv element.
+                args.push("-b".to_string());
+                args.push(backend.clone());
+            }
             if let Some(events) = &self.events_path {
                 args.push("--events".to_string());
                 args.push(events.to_string_lossy().into_owned());
@@ -903,6 +914,48 @@ journal: /j
         assert_eq!(args[backend + 1], "claude-sdk");
         let setting = args.iter().position(|arg| arg == "--set").unwrap();
         assert_eq!(args[setting + 1], "backend.timeout_ms=300000");
+    }
+
+    /// Resume argv must forward the mapped native backend selector: without
+    /// it, `autoloop resume` falls back to the preset's default backend and
+    /// silently diverges from ralph's configured backend. `--set` overrides
+    /// have no resume parser in the engine, so they must not appear.
+    #[test]
+    fn resume_args_preserve_native_backend_selector_without_set_overrides() {
+        let runner = AutoloopRunner::new("/p", "x", "/w")
+            .mapped_backend(AutoloopBackendMapping {
+                selector: Some("kiro".to_string()),
+                set_overrides: vec![("backend.timeout_ms".to_string(), "300000".to_string())],
+            })
+            .resume("run-abc123");
+        let args = runner.build_args();
+
+        assert_eq!(args[0], "resume");
+        assert_eq!(args[1], "run-abc123");
+        let backend = args
+            .iter()
+            .position(|arg| arg == "-b")
+            .expect("resume argv must carry -b when a native selector is mapped");
+        assert_eq!(args[backend + 1], "kiro");
+        assert!(
+            !args.contains(&"--set".to_string()),
+            "--set is not parsed by the engine's resume command"
+        );
+    }
+
+    /// A command backend maps to no native selector; resume argv must stay
+    /// selector-free so the engine keeps its persisted/default backend.
+    #[test]
+    fn resume_args_omit_selector_when_backend_maps_to_overrides_only() {
+        let runner = AutoloopRunner::new("/p", "x", "/w")
+            .mapped_backend(AutoloopBackendMapping {
+                selector: None,
+                set_overrides: vec![("backend.command".to_string(), "mybin".to_string())],
+            })
+            .resume("run-abc123");
+        let args = runner.build_args();
+
+        assert!(!args.contains(&"-b".to_string()));
     }
 
     /// Opt-in smoke test that drives the real autoloop binary against the
