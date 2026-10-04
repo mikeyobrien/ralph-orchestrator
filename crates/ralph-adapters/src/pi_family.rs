@@ -13,6 +13,7 @@
 
 use crate::stream_handler::{SessionResult, StreamHandler};
 use serde::{Deserialize, Deserializer, Serialize};
+use std::collections::HashSet;
 use std::time::Duration;
 
 /// Events from a Pi-family `--mode json` NDJSON output.
@@ -178,6 +179,9 @@ impl PiFamilyStreamParser {
 /// fallback), and provider/model + usage/cost accumulation. Callers feed lines
 /// via [`Self::process_line`] and finish with [`Self::finalize`].
 pub struct PiFamilySessionState {
+    /// Tool executions awaiting their matching end event. Only the Pi CLI
+    /// executor uses this state to suspend its output-inactivity timer.
+    active_tool_calls: HashSet<String>,
     pub total_cost_usd: f64,
     pub num_turns: u32,
     pub stream_provider: Option<String>,
@@ -221,6 +225,7 @@ pub struct PiFamilySessionState {
 impl PiFamilySessionState {
     pub fn new() -> Self {
         Self {
+            active_tool_calls: HashSet::new(),
             total_cost_usd: 0.0,
             num_turns: 0,
             stream_provider: None,
@@ -238,6 +243,11 @@ impl PiFamilySessionState {
             last_turn_content: None,
             flavor_label: "Pi-family",
         }
+    }
+
+    /// Whether a tool has started without its matching end event.
+    pub fn has_active_tool_calls(&self) -> bool {
+        !self.active_tool_calls.is_empty()
     }
 
     /// Returns the assistant text accumulated so far (no fallback applied until
@@ -402,6 +412,7 @@ pub fn dispatch_pi_family_event<H: StreamHandler>(
             tool_call_id,
             args,
         } => {
+            state.active_tool_calls.insert(tool_call_id.clone());
             handler.on_tool_call(&tool_name, &tool_call_id, &args);
         }
         PiFamilyEvent::ToolExecutionEnd {
@@ -410,6 +421,7 @@ pub fn dispatch_pi_family_event<H: StreamHandler>(
             is_error,
             ..
         } => {
+            state.active_tool_calls.remove(&tool_call_id);
             let output = result
                 .content
                 .iter()

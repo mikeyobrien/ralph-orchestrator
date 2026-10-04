@@ -78,7 +78,10 @@ impl CliExecutor {
     /// Output is streamed line-by-line to the writer while being accumulated
     /// for the return value. If `timeout` is provided and the execution produces
     /// no stdout/stderr activity for longer than that duration, the process
-    /// receives SIGTERM and the result indicates timeout.
+    /// receives SIGTERM and the result indicates timeout. For Pi JSON streams,
+    /// this timer is suspended while tool executions are open: a healthy tool
+    /// may emit no updates until it finishes. After the last matching tool end,
+    /// the full inactivity window resumes. Other formats are unchanged.
     ///
     /// When `verbose` is true, stderr output is also written to the output writer
     /// with a `[stderr]` prefix. When false, stderr is captured but not displayed.
@@ -189,7 +192,17 @@ impl CliExecutor {
 
         while !stdout_done || !stderr_done {
             let now = tokio::time::Instant::now();
-            let effective_timeout = match (timeout, post_event_deadline) {
+            // Pi tool updates are output-driven, not heartbeats. Silence between
+            // a start and its matching end is not evidence of an inactive agent.
+            // Keep this exemption Pi-only even though OMP shares the parser.
+            let inactivity_timeout = if self.backend.output_format == OutputFormat::PiStreamJson
+                && family_state.has_active_tool_calls()
+            {
+                None
+            } else {
+                timeout
+            };
+            let effective_timeout = match (inactivity_timeout, post_event_deadline) {
                 (_, Some(deadline)) if deadline <= now => Some(Duration::ZERO),
                 (Some(duration), Some(deadline)) => {
                     Some(duration.min(deadline.saturating_duration_since(now)))
@@ -909,6 +922,120 @@ mod tests {
             result.protocol_error.is_none(),
             "clean stream must not surface a protocol error"
         );
+    }
+
+    fn fake_pi_executor() -> CliExecutor {
+        CliExecutor::new(CliBackend {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string()],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None,
+            output_format: OutputFormat::PiStreamJson,
+            env_vars: vec![],
+        })
+    }
+
+    #[tokio::test]
+    async fn test_execute_pi_silent_tool_does_not_time_out() {
+        let result = fake_pi_executor()
+            .execute_capture_with_timeout(
+                r#"
+                printf '%s\n' '{"type":"tool_execution_start","toolCallId":"a","toolName":"bash","args":{"command":"sleep 1.2"}}'
+                printf '%s\n' '{"type":"tool_execution_update","toolCallId":"a","toolName":"bash","args":{},"partialResult":{"content":[]}}'
+                sleep 1.2
+                printf '%s\n' '{"type":"tool_execution_end","toolCallId":"a","toolName":"bash","result":{"content":[]},"isError":false}'
+                printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"done"}}'
+                "#,
+                Some(Duration::from_millis(400)),
+            )
+            .await
+            .unwrap();
+
+        assert!(!result.timed_out, "An open Pi tool may be silent");
+        assert!(result.success);
+        assert_eq!(result.extracted_text.as_deref(), Some("done"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_pi_without_open_tool_still_times_out() {
+        let result = fake_pi_executor()
+            .execute_capture_with_timeout(
+                r#"printf '%s\n' '{"type":"agent_start"}'; sleep 10"#,
+                Some(Duration::from_millis(400)),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.timed_out);
+        assert!(!result.success);
+    }
+
+    #[tokio::test]
+    async fn test_execute_pi_timeout_resumes_after_tool_end() {
+        for is_error in [false, true] {
+            let script = format!(
+                r#"
+                printf '%s\n' '{{"type":"tool_execution_start","toolCallId":"a","toolName":"bash","args":{{}}}}'
+                sleep 1.2
+                printf '%s\n' '{{"type":"tool_execution_end","toolCallId":"a","toolName":"bash","result":{{"content":[]}},"isError":{is_error}}}'
+                sleep 0.1
+                printf '%s\n' '{{"type":"message_update","assistantMessageEvent":{{"type":"text_delta","delta":"after tool"}}}}'
+                sleep 10
+                "#
+            );
+            let result = fake_pi_executor()
+                .execute_capture_with_timeout(&script, Some(Duration::from_millis(400)))
+                .await
+                .unwrap();
+
+            assert!(result.timed_out);
+            assert!(!result.success);
+            assert_eq!(result.extracted_text.as_deref(), Some("after tool"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_pi_waits_for_all_matching_tool_ends() {
+        let result = fake_pi_executor()
+            .execute_capture_with_timeout(
+                r#"
+                printf '%s\n' '{"type":"tool_execution_start","toolCallId":"a","toolName":"bash","args":{}}'
+                printf '%s\n' '{"type":"tool_execution_start","toolCallId":"a","toolName":"bash","args":{}}'
+                printf '%s\n' '{"type":"tool_execution_start","toolCallId":"b","toolName":"bash","args":{}}'
+                printf '%s\n' '{"type":"tool_execution_end","toolCallId":"a","toolName":"bash","result":{"content":[]},"isError":false}'
+                printf '%s\n' '{"type":"tool_execution_end","toolCallId":"unmatched","toolName":"bash","result":{"content":[]},"isError":false}'
+                printf '%s\n' '{"type":"tool_execution_update","toolCallId":"b","toolName":"bash","args":{},"partialResult":{"content":[]}}'
+                sleep 1.2
+                printf '%s\n' '{"type":"tool_execution_end","toolCallId":"b","toolName":"bash","result":{"content":[]},"isError":false}'
+                printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"all closed"}}'
+                sleep 10
+                "#,
+                Some(Duration::from_millis(400)),
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            result.timed_out,
+            "Duplicate starts must not leave tools open"
+        );
+        assert_eq!(result.extracted_text.as_deref(), Some("all closed"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_omp_open_tool_keeps_existing_timeout() {
+        let mut executor = fake_pi_executor();
+        executor.backend.output_format = OutputFormat::OmpStreamJson;
+        let result = executor
+            .execute_capture_with_timeout(
+                r#"printf '%s\n' '{"type":"tool_execution_start","toolCallId":"a","toolName":"bash","args":{}}'; sleep 10"#,
+                Some(Duration::from_millis(400)),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.timed_out);
+        assert!(!result.success);
     }
 
     #[tokio::test]
