@@ -251,7 +251,7 @@ adapters:
   pi:
     timeout: 120        # pi-specific inactivity timeout while no tool is open
     tool_timeout: 3600  # pi only: max seconds a single open tool may run
-    enabled: true      # include Pi in auto-detection
+    enabled: true       # include Pi in auto-detection
 ```
 
 | Option | Type | Default | Description |
