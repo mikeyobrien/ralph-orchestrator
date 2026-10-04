@@ -210,11 +210,12 @@ impl CliExecutor {
             // a start and its matching end is not evidence of an inactive agent,
             // but a tool open past the ceiling is stuck.
             // Keep this exemption Pi-only even though OMP shares the parser.
-            let inactivity_timeout = match family_state.oldest_active_tool_start() {
-                Some(started) if self.backend.output_format == OutputFormat::PiStreamJson => {
-                    Some(self.tool_timeout.saturating_sub(started.elapsed()))
-                }
-                _ => timeout,
+            let open_tool_start = family_state
+                .oldest_active_tool_start()
+                .filter(|_| self.backend.output_format == OutputFormat::PiStreamJson);
+            let inactivity_timeout = match open_tool_start {
+                Some(started) => Some(self.tool_timeout.saturating_sub(started.elapsed())),
+                None => timeout,
             };
             let effective_timeout = match (inactivity_timeout, post_event_deadline) {
                 (_, Some(deadline)) if deadline <= now => Some(Duration::ZERO),
@@ -230,10 +231,17 @@ impl CliExecutor {
                 Some(duration) => match tokio::time::timeout(duration, event_rx.recv()).await {
                     Ok(event) => event,
                     Err(_) => {
-                        warn!(
-                            timeout_secs = duration.as_secs(),
-                            "Execution inactivity timeout reached, sending SIGTERM"
-                        );
+                        if open_tool_start.is_some() {
+                            warn!(
+                                tool_timeout_secs = self.tool_timeout.as_secs(),
+                                "Pi tool execution exceeded tool_timeout, sending SIGTERM"
+                            );
+                        } else {
+                            warn!(
+                                timeout_secs = duration.as_secs(),
+                                "Execution inactivity timeout reached, sending SIGTERM"
+                            );
+                        }
                         timed_out = true;
                         terminated_status = Some(Self::terminate_child_and_wait(&mut child).await?);
                         break;
