@@ -30,6 +30,8 @@ pub type StartLoopFn = Box<
 /// loop is running, the adapter hands off interaction to the loop's own
 /// communication service (e.g., `TelegramService`) and simply awaits
 /// completion.
+// async_trait adds #[must_use] to methods returning already-must-use futures.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait DaemonAdapter: Send + Sync {
     /// Run the daemon loop. Blocks until shutdown (Ctrl+C / SIGTERM).
