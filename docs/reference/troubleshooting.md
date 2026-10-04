@@ -284,7 +284,13 @@ hats:
    adapters:
      claude:
        timeout: 600
+     pi:
+       timeout: 600  # Pi does not inherit Claude's timeout
    ```
+
+   For Pi JSON CLI execution, this timer applies outside open tool calls. A
+   silent running tool is allowed to finish; the inactivity timer resumes after
+   all tools end. Use the Pi tool's own timeout to bound tool execution.
 
 2. Reduce prompt complexity:
    - Break large tasks into smaller ones

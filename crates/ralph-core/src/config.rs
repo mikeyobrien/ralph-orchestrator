@@ -2702,6 +2702,51 @@ adapters:
     }
 
     #[test]
+    fn test_pi_adapter_settings_are_independent_of_claude() {
+        let config = RalphConfig::parse_yaml(
+            r"
+cli:
+  backend: pi
+adapters:
+  default:
+    timeout: 450
+  claude:
+    timeout: 999
+    enabled: true
+    tool_permissions: [Read]
+  pi:
+    timeout: 120
+    enabled: false
+    tool_permissions: [Bash, Edit]
+",
+        )
+        .unwrap();
+
+        let pi = config.adapter_settings("pi");
+        assert_eq!(pi.timeout, 120);
+        assert!(!pi.enabled);
+        assert_eq!(
+            pi.tool_permissions.as_deref(),
+            Some(["Bash".to_string(), "Edit".to_string()].as_slice())
+        );
+        assert_eq!(config.per_worker_timeout_secs(None, "pi"), 120);
+        assert_eq!(config.per_worker_timeout_secs(Some(60), "pi"), 60);
+        assert_eq!(config.adapter_settings("claude").timeout, 999);
+        assert!(config.adapter_settings("claude").enabled);
+
+        let round_trip: RalphConfig =
+            serde_yaml::from_str(&serde_yaml::to_string(&config).unwrap()).unwrap();
+        assert_eq!(round_trip.per_worker_timeout_secs(None, "pi"), 120);
+        assert!(!round_trip.adapter_settings("pi").enabled);
+
+        let defaults = RalphConfig::parse_yaml("adapters:\n  pi: {}\n").unwrap();
+        let pi = defaults.adapter_settings("pi");
+        assert_eq!(pi.timeout, 300);
+        assert!(pi.enabled);
+        assert!(pi.tool_permissions.is_none());
+    }
+
+    #[test]
     fn test_adapter_settings_cover_every_catalog_backend() {
         // Catalog conformance matrix — settings surface (TR#11). The generic
         // `adapters.default` + flattened `overrides` design must give EVERY

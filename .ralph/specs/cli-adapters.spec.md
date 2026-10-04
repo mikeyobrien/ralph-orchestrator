@@ -158,7 +158,17 @@ adapters:
   amp:
     enabled: true
     timeout: 300
+  pi:
+    enabled: true
+    timeout: 300                 # Inactivity outside open Pi tool executions
 ```
+
+`adapters.pi` uses the same settings defaults as other adapters and never
+inherits `adapters.claude`. In Pi JSON CLI execution, the inactivity timer pauses
+while a tool is open and resumes after its matching end event (success or error).
+Tool updates are not heartbeats, so silent tools are not killed by this timer;
+a tool-level timeout is needed to bound their execution. Pi with no open tool
+still times out on inactivity. Other backends keep their existing behavior.
 
 ### Auto-Detection
 

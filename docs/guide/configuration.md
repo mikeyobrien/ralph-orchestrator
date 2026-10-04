@@ -249,7 +249,8 @@ adapters:
   claude:
     timeout: 600        # claude-specific override
   pi:
-    timeout: 120        # pi-specific override
+    timeout: 120        # pi-specific inactivity timeout, not a tool runtime limit
+    enabled: true      # include Pi in auto-detection
 ```
 
 | Option | Type | Default | Description |
@@ -262,6 +263,19 @@ adapters:
 Override keys must be a catalogued backend name or `custom`; an unknown key is a
 validation error. `enabled: false` skips a backend only during auto-detection —
 selecting it explicitly (`cli.backend: <name>`) still works.
+
+For Pi's JSON CLI stream, `adapters.pi.timeout` applies when no tool execution is
+open. Ralph suspends the inactivity timer between `tool_execution_start` and its
+matching `tool_execution_end` because a long-running Pi tool can legitimately
+emit no output. The full inactivity window resumes after all open tools finish,
+including failed tools. This is not a tool runtime limit: an open tool without
+an end event is not terminated by this timer. Set a timeout on the Pi tool itself
+when a tool execution bound is needed. Other backends retain their existing
+inactivity behavior.
+
+Pi accepts the same adapter settings as other backends. Like other CLI backends,
+`adapters.pi.tool_permissions` is ignored with a warning; configure permissions
+in Pi rather than Ralph.
 
 > **Migration notice — `adapters.claude` no longer inherits.** Previously Pi, Roo,
 > Copilot, and OpenCode silently inherited the `adapters.claude` settings through a
