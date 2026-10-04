@@ -3,7 +3,9 @@
 #
 # Requires:
 # - `opencode` CLI installed (https://github.com/opencode-ai/opencode)
-# - Configured provider credentials (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)
+# - Configured provider credentials (ANTHROPIC_API_KEY, OPENAI_API_KEY, ORCAROUTER_API_KEY, etc.)
+#   OrcaRouter is a named provider in the models.dev registry; set ORCAROUTER_API_KEY
+#   and use a model like `orcarouter/auto` (https://www.orcarouter.ai).
 #
 # Note: opencode 1.1.30+ requires explicit model flag (-m) for reliable operation.
 # Change the model below to your preferred provider/model combination.
