@@ -289,8 +289,9 @@ hats:
    ```
 
    For Pi JSON CLI execution, this timer applies outside open tool calls. A
-   silent running tool is allowed to finish; the inactivity timer resumes after
-   all tools end. Use the Pi tool's own timeout to bound tool execution.
+   silent running tool is allowed to finish within `adapters.pi.tool_timeout`
+   (default 3600 seconds); the inactivity timer resumes after all tools end.
+   Raise `tool_timeout` if a healthy tool legitimately runs longer.
 
 2. Reduce prompt complexity:
    - Break large tasks into smaller ones

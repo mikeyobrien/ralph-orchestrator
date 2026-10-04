@@ -40,16 +40,17 @@ not a periodic heartbeat; a longer silent command has the same gap.
 Track outstanding tool IDs in the existing Pi-family stream processor. A start
 adds its ID; a matching end removes it, including error results. Duplicate starts
 must not require duplicate ends; unrelated ends must not clear another tool.
-Only `OutputFormat::PiStreamJson` consults this state to suspend the CLI
-inactivity timeout while a tool remains open. OMP and every other format retain
+An end record whose other fields fail to deserialize still removes its
+`toolCallId`. Only `OutputFormat::PiStreamJson` consults this state to replace
+the CLI inactivity timeout while a tool remains open. OMP and every other format retain
 their current timeout behavior. After the last matching end, the normal full
 inactivity window resumes.
 
-No new global timeout or heartbeat is introduced. A Pi process silent without
-an open tool must still time out. An open tool is intentionally not bounded by
-this inactivity timer; tools can supply their own execution deadlines. A lost
-end event cannot be distinguished from a legitimately silent running tool by
-this protocol alone.
+While a tool is open, the deadline is `adapters.pi.tool_timeout` (default 3600
+seconds) measured from the oldest open tool's first start. A tool open past that
+ceiling, or one whose end event was lost, is treated as stuck and the iteration
+times out. No heartbeat is introduced. A Pi process silent without an open tool
+must still time out.
 
 ## Acceptance and validation
 
@@ -59,6 +60,8 @@ this protocol alone.
   configured inactivity timeout.
 - Silence without an open tool, and silence after tool completion (successful or
   failed), still times out.
+- A tool open longer than `tool_timeout` times out; an unparsable end record
+  with a matching ID still closes the tool.
 - Overlapping tool IDs, duplicate starts, unmatched ends, and partial updates do
   not incorrectly release the exemption.
 - The same open-tool stream in OMP still times out.

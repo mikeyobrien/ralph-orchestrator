@@ -13,8 +13,8 @@
 
 use crate::stream_handler::{SessionResult, StreamHandler};
 use serde::{Deserialize, Deserializer, Serialize};
-use std::collections::HashSet;
-use std::time::Duration;
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 /// Events from a Pi-family `--mode json` NDJSON output.
 ///
@@ -171,6 +171,16 @@ impl PiFamilyStreamParser {
     }
 }
 
+/// The `toolCallId` of a `tool_execution_end` record whose other fields failed
+/// to deserialize, so its open tool call can still be closed.
+fn unparsed_tool_end_id(line: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+    if value.get("type")?.as_str()? != "tool_execution_end" {
+        return None;
+    }
+    value.get("toolCallId")?.as_str().map(str::to_string)
+}
+
 /// Accumulating processor for a Pi-family `--mode json` NDJSON stream.
 ///
 /// Owns line parsing, blank/malformed-line tolerance, the incremental extracted
@@ -179,9 +189,10 @@ impl PiFamilyStreamParser {
 /// fallback), and provider/model + usage/cost accumulation. Callers feed lines
 /// via [`Self::process_line`] and finish with [`Self::finalize`].
 pub struct PiFamilySessionState {
-    /// Tool executions awaiting their matching end event. Only the Pi CLI
-    /// executor uses this state to suspend its output-inactivity timer.
-    active_tool_calls: HashSet<String>,
+    /// Tool executions awaiting their matching end event, with their first
+    /// start time. Only the Pi CLI executor uses this state to replace its
+    /// output-inactivity timer with the open-tool ceiling.
+    active_tool_calls: HashMap<String, Instant>,
     pub total_cost_usd: f64,
     pub num_turns: u32,
     pub stream_provider: Option<String>,
@@ -225,7 +236,7 @@ pub struct PiFamilySessionState {
 impl PiFamilySessionState {
     pub fn new() -> Self {
         Self {
-            active_tool_calls: HashSet::new(),
+            active_tool_calls: HashMap::new(),
             total_cost_usd: 0.0,
             num_turns: 0,
             stream_provider: None,
@@ -245,9 +256,9 @@ impl PiFamilySessionState {
         }
     }
 
-    /// Whether a tool has started without its matching end event.
-    pub fn has_active_tool_calls(&self) -> bool {
-        !self.active_tool_calls.is_empty()
+    /// Start time of the oldest tool still awaiting its matching end event.
+    pub fn oldest_active_tool_start(&self) -> Option<Instant> {
+        self.active_tool_calls.values().min().copied()
     }
 
     /// Returns the assistant text accumulated so far (no fallback applied until
@@ -272,7 +283,12 @@ impl PiFamilySessionState {
                 }
                 dispatch_pi_family_event(event, handler, self, verbose);
             }
-            None => self.malformed_lines += 1,
+            None => {
+                self.malformed_lines += 1;
+                if let Some(id) = unparsed_tool_end_id(line) {
+                    self.active_tool_calls.remove(&id);
+                }
+            }
         }
     }
 
@@ -412,7 +428,10 @@ pub fn dispatch_pi_family_event<H: StreamHandler>(
             tool_call_id,
             args,
         } => {
-            state.active_tool_calls.insert(tool_call_id.clone());
+            state
+                .active_tool_calls
+                .entry(tool_call_id.clone())
+                .or_insert_with(Instant::now);
             handler.on_tool_call(&tool_name, &tool_call_id, &args);
         }
         PiFamilyEvent::ToolExecutionEnd {
