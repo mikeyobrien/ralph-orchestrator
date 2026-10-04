@@ -249,7 +249,9 @@ adapters:
   claude:
     timeout: 600        # claude-specific override
   pi:
-    timeout: 120        # pi-specific override
+    timeout: 120        # pi-specific inactivity timeout while no tool is open
+    tool_timeout: 3600  # pi only: max seconds a single open tool may run
+    enabled: true      # include Pi in auto-detection
 ```
 
 | Option | Type | Default | Description |
@@ -258,10 +260,26 @@ adapters:
 | `default.enabled` | boolean | `true` | Whether a backend participates in auto-detection |
 | `<backend>.timeout` | integer | `default.timeout` | Per-backend timeout override |
 | `<backend>.enabled` | boolean | `default.enabled` | Per-backend auto-detection override |
+| `pi.tool_timeout` | integer | `3600` | Pi only: seconds a single open tool execution may run before the iteration fails as stuck |
 
 Override keys must be a catalogued backend name or `custom`; an unknown key is a
 validation error. `enabled: false` skips a backend only during auto-detection —
 selecting it explicitly (`cli.backend: <name>`) still works.
+
+For Pi's JSON CLI stream, `adapters.pi.timeout` applies when no tool execution is
+open. Ralph suspends the inactivity timer between `tool_execution_start` and its
+matching `tool_execution_end` because a long-running Pi tool can legitimately
+emit no output. The full inactivity window resumes after all open tools finish,
+including failed tools. While a tool is open, `adapters.pi.tool_timeout`
+(default 3600 seconds) bounds it instead: once the oldest open tool has run that
+long, Ralph terminates Pi and the iteration fails as timed out. Keep it well
+above `timeout` so healthy multi-minute tools finish. Any `tool_execution_end`
+record carrying a `toolCallId` closes that call, even when its other fields are
+missing or malformed. Other backends retain their existing inactivity behavior.
+
+Pi accepts the same adapter settings as other backends. Like other CLI backends,
+`adapters.pi.tool_permissions` is ignored with a warning; configure permissions
+in Pi rather than Ralph.
 
 > **Migration notice — `adapters.claude` no longer inherits.** Previously Pi, Roo,
 > Copilot, and OpenCode silently inherited the `adapters.claude` settings through a

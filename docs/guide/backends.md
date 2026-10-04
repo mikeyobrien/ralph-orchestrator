@@ -378,6 +378,24 @@ hats:
       args: ["--provider", "anthropic", "--model", "claude-sonnet-4"]
 ```
 
+**Adapter settings:**
+
+```yaml
+adapters:
+  pi:
+    timeout: 300        # inactivity timeout in seconds while no tool is open
+    tool_timeout: 3600  # max seconds a single open tool may run
+    enabled: true
+```
+
+Pi uses `adapters.pi`, falling back to `adapters.default` when no Pi override is
+present; it does not inherit `adapters.claude`. During JSON CLI execution, Ralph
+replaces the inactivity timer with `tool_timeout` while Pi has an open tool call.
+Silent long-running tools are allowed to finish; a tool still open after
+`tool_timeout` seconds is treated as stuck and fails the iteration. The
+inactivity timer resumes after the matching tool ends. A silent Pi process with
+no open tool still times out. See [adapter configuration](configuration.md#adapters).
+
 **Doctor checks:**
 - `pi --version` must succeed
 - Warns if no provider API key is set
