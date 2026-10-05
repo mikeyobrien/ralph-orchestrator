@@ -1800,7 +1800,8 @@ pub async fn run_loop_impl(
                     Duration::from_secs(
                         config
                             .adapter_settings(&backend_name_for_timeout)
-                            .tool_timeout,
+                            .tool_timeout
+                            .unwrap_or(ralph_core::DEFAULT_TOOL_TIMEOUT_SECS),
                     ),
                 );
                 let result = executor

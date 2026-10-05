@@ -289,8 +289,8 @@ hats:
    ```
 
    For Pi JSON CLI execution, this timer applies outside open tool calls and
-   pending model requests. A silent running tool, or a `turn_start` waiting for
-   its first assistant message, is bounded by `adapters.pi.tool_timeout`
+   pending model requests. A silent running tool, or a `turn_start` whose
+   assistant message has not ended, is bounded by `adapters.pi.tool_timeout`
    (default 3600 seconds). Raise `tool_timeout` if a healthy tool or model request
    legitimately takes longer; pending requests have a distinct timeout message.
 

@@ -91,10 +91,10 @@ impl CliExecutor {
     /// for the return value. If `timeout` is provided and the execution produces
     /// no stdout/stderr activity for longer than that duration, the process
     /// receives SIGTERM and the result indicates timeout. For Pi JSON streams,
-    /// this timer is replaced while a tool is open or a turn is waiting for its
-    /// first assistant message. Such work may be silent, but is bounded by the
-    /// configured tool timeout measured from its start. After the assistant
-    /// responds and all tools end, the full inactivity window resumes. Other
+    /// this timer is replaced while a tool is open or a turn's assistant message
+    /// has not ended. Such work may be silent, but is bounded by the configured
+    /// tool timeout measured from its start. After the assistant message ends
+    /// and all tools end, the full inactivity window resumes. Other
     /// formats are unchanged.
     ///
     /// When `verbose` is true, stderr output is also written to the output writer
@@ -207,7 +207,7 @@ impl CliExecutor {
         while !stdout_done || !stderr_done {
             let now = tokio::time::Instant::now();
             // Pi tool updates are not heartbeats, and a model can be silent
-            // between turn_start and its first assistant message. Both phases
+            // between turn_start and its assistant message_end. Both phases
             // use the existing ceiling, never a deadline reset by output.
             // Keep this exemption Pi-only even though OMP shares the parser.
             let open_tool_start = family_state
@@ -1068,27 +1068,51 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_execute_pi_inactivity_resumes_after_assistant_response() {
-        for event in ["message_start", "message_end"] {
-            let script = format!(
+    async fn test_execute_pi_started_assistant_message_survives_inactivity() {
+        let result = fake_pi_executor()
+            .with_tool_timeout(Duration::from_secs(5))
+            .execute_capture_with_timeout(
                 r#"
-                printf '%s\n' '{{"type":"turn_start"}}'
+                printf '%s\n' '{"type":"turn_start"}'
+                printf '%s\n' '{"type":"message_start","message":{"role":"assistant","content":[]}}'
                 sleep 1.2
-                printf '%s\n' '{{"type":"{event}","message":{{"role":"assistant","content":[]}}}}'
-                sleep 10
-                "#
-            );
-            let started = Instant::now();
-            let result = fake_pi_executor()
-                .with_tool_timeout(Duration::from_secs(5))
-                .execute_capture_with_timeout(&script, Some(Duration::from_millis(400)))
-                .await
-                .unwrap();
+                printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"done"}}'
+                printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}'
+                printf '%s\n' '{"type":"turn_end","message":{"stopReason":"stop"}}'
+                "#,
+                Some(Duration::from_millis(400)),
+            )
+            .await
+            .unwrap();
 
-            assert!(result.timed_out);
-            assert!(result.output.contains("\"role\":\"assistant\""));
-            assert!(started.elapsed() < Duration::from_secs(5));
-        }
+        assert!(
+            !result.timed_out,
+            "A streaming Pi model request is not idle"
+        );
+        assert!(result.success);
+        assert_eq!(result.extracted_text.as_deref(), Some("done"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_pi_inactivity_resumes_after_assistant_message_end() {
+        let started = Instant::now();
+        let result = fake_pi_executor()
+            .with_tool_timeout(Duration::from_secs(5))
+            .execute_capture_with_timeout(
+                r#"
+                printf '%s\n' '{"type":"turn_start"}'
+                sleep 1.2
+                printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[]}}'
+                sleep 10
+                "#,
+                Some(Duration::from_millis(400)),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.timed_out);
+        assert!(result.output.contains("\"role\":\"assistant\""));
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 
     #[tokio::test]

@@ -193,8 +193,8 @@ pub struct PiFamilySessionState {
     /// start time. Only the Pi CLI executor uses this state to replace its
     /// output-inactivity timer with the open-tool ceiling.
     active_tool_calls: HashMap<String, Instant>,
-    /// A turn awaiting its first assistant message. Only the Pi CLI executor
-    /// uses this timestamp to bound pre-response model latency.
+    /// A turn whose assistant message has not ended yet. Only the Pi CLI
+    /// executor uses this timestamp to bound in-flight model latency.
     pending_model_request: Option<Instant>,
     pub total_cost_usd: f64,
     pub num_turns: u32,
@@ -265,7 +265,7 @@ impl PiFamilySessionState {
         self.active_tool_calls.values().min().copied()
     }
 
-    /// Start time of the turn still waiting for its first assistant response.
+    /// Start time of the turn still waiting for its assistant message to end.
     pub fn pending_model_request_start(&self) -> Option<Instant> {
         self.pending_model_request
     }
@@ -280,9 +280,7 @@ impl PiFamilySessionState {
             Some("turn_start") => {
                 self.pending_model_request.get_or_insert_with(Instant::now);
             }
-            Some("message_start" | "message_end")
-                if value["message"]["role"].as_str() == Some("assistant") =>
-            {
+            Some("message_end") if value["message"]["role"].as_str() == Some("assistant") => {
                 self.pending_model_request = None;
             }
             Some("agent_end" | "agent_settled") => self.pending_model_request = None,
@@ -307,14 +305,13 @@ impl PiFamilySessionState {
         }
         match PiFamilyStreamParser::parse_line(line) {
             Some(event) => {
-                if matches!(event, PiFamilyEvent::Other) {
-                    self.observe_request_lifecycle(line);
-                } else {
-                    // Assistant updates, tool execution, or turn completion
-                    // prove the pre-response model wait has ended, even if
-                    // a message_start record was omitted.
-                    self.pending_model_request = None;
-                    self.recognized_events += 1;
+                match event {
+                    PiFamilyEvent::Other => self.observe_request_lifecycle(line),
+                    PiFamilyEvent::TurnEnd { .. } => {
+                        self.pending_model_request = None;
+                        self.recognized_events += 1;
+                    }
+                    _ => self.recognized_events += 1,
                 }
                 dispatch_pi_family_event(event, handler, self, verbose);
             }
@@ -834,12 +831,28 @@ mod tests {
     }
 
     #[test]
-    fn test_pending_request_closes_on_response_or_completion() {
+    fn test_pending_request_stays_open_while_assistant_message_streams() {
+        let mut handler = RecordingHandler::default();
+        let mut state = PiFamilySessionState::new();
+        state.process_line(r#"{"type":"turn_start"}"#, &mut handler, false);
+        let started = state.pending_model_request_start().unwrap();
+
         for line in [
             r#"{"type":"message_start","message":{"role":"assistant"}}"#,
-            r#"{"type":"message_end","message":{"role":"assistant"}}"#,
+            r#"{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","delta":"hm"}}"#,
             r#"{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"hi"}}"#,
-            r#"{"type":"tool_execution_start","toolCallId":"a","toolName":"bash","args":{}}"#,
+            r#"{"type":"message_update","assistantMessageEvent":{"type":"text_start"}}"#,
+        ] {
+            state.process_line(line, &mut handler, false);
+            assert_eq!(state.pending_model_request_start(), Some(started), "{line}");
+        }
+        assert_eq!(handler.texts, vec!["hi"]);
+    }
+
+    #[test]
+    fn test_pending_request_closes_on_response_or_completion() {
+        for line in [
+            r#"{"type":"message_end","message":{"role":"assistant"}}"#,
             r#"{"type":"turn_end","message":null}"#,
             r#"{"type":"agent_end"}"#,
             r#"{"type":"agent_settled"}"#,

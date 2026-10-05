@@ -395,7 +395,7 @@ Silent long-running tools are allowed to finish; a tool still open after
 `tool_timeout` seconds is treated as stuck and fails the iteration. The
 inactivity timer resumes after the matching tool ends. A silent Pi process with
 neither an open tool nor a pending model request still times out. A `turn_start`
-waiting for its first assistant message also counts as activity and uses the same
+whose assistant message has not ended also counts as activity and uses the same
 `tool_timeout` ceiling, with a distinct model-request timeout if exceeded.
 See [adapter configuration](configuration.md#adapters).
 

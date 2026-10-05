@@ -260,19 +260,19 @@ adapters:
 | `default.enabled` | boolean | `true` | Whether a backend participates in auto-detection |
 | `<backend>.timeout` | integer | `default.timeout` | Per-backend timeout override |
 | `<backend>.enabled` | boolean | `default.enabled` | Per-backend auto-detection override |
-| `pi.tool_timeout` | integer | `3600` | Pi only: maximum seconds for an open tool or a model request awaiting its first assistant message |
+| `pi.tool_timeout` | integer | `3600` | Pi only: maximum seconds for an open tool or a model request whose assistant message has not ended; set on another backend, it is ignored with a warning |
 
 Override keys must be a catalogued backend name or `custom`; an unknown key is a
 validation error. `enabled: false` skips a backend only during auto-detection —
 selecting it explicitly (`cli.backend: <name>`) still works.
 
 For Pi's JSON CLI stream, `adapters.pi.timeout` applies when no tool execution or
-pre-response model request is open. A `turn_start` awaiting its first assistant
-`message_start` or `message_end` counts as activity, including the first request
-of an iteration. This wait uses the existing `adapters.pi.tool_timeout` ceiling
-measured from `turn_start`; exceeding it reports a model-request timeout, not
-inactivity. User and tool-result messages do not end this wait. After the
-assistant responds, normal inactivity handling resumes unless a tool is open.
+in-flight model request is open. A `turn_start` counts as activity until the
+assistant `message_end` or `turn_end` arrives, including the first request of an
+iteration and silent reasoning after the assistant `message_start`. This wait
+uses the existing `adapters.pi.tool_timeout` ceiling measured from
+`turn_start`; exceeding it reports a model-request timeout, not inactivity. User and tool-result messages do not end this wait. After the
+assistant message ends, normal inactivity handling resumes unless a tool is open.
 
 Ralph suspends the inactivity timer between `tool_execution_start` and its
 matching `tool_execution_end` because a long-running Pi tool can legitimately

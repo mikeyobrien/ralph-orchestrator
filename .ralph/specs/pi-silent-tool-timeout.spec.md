@@ -55,22 +55,23 @@ without an open tool or pending model request must still time out.
 
 ## In-flight model request extension
 
-The approved extension covers long pre-response model latency, including an
-iteration's first request. A Pi `turn_start` opens a pending model request until
-an assistant `message_start` or `message_end` arrives. User and tool-result
-messages do not close it. Assistant updates, tool execution, and turn/agent
-completion also end this pre-response phase. Duplicate starts must not restart
-the bound.
+The approved extension covers long model latency, including an iteration's
+first request and silent reasoning after the response stream opens. A Pi
+`turn_start` opens a pending model request that stays in flight until the
+assistant `message_end`, `turn_end`, or agent completion arrives. Assistant
+`message_start` and `message_update` records do not close it, nor do user and
+tool-result messages. Duplicate starts must not restart the bound.
 
 While the model request is pending, replace inactivity detection with the
 existing `adapters.pi.tool_timeout` ceiling (no new setting), measured from
 `turn_start`. A request exceeding the ceiling fails with a distinct model-request
-timeout diagnostic. Once the assistant responds, normal inactivity handling
+timeout diagnostic. Once the assistant message ends, normal inactivity handling
 resumes unless a tool is open. A silent process with neither a pending request
 nor an open tool still times out normally. OMP behavior stays unchanged.
 
-Add process-level regressions for a healthy slow first response, a pending
-request exceeding its ceiling, and true idle silence. Check request lifecycle
+Add process-level regressions for a healthy slow first response, a silent
+response after assistant `message_start`, a pending request exceeding its
+ceiling, and true idle silence. Check request lifecycle
 transitions and update the activity descriptions in docs.
 
 ## Acceptance and validation
@@ -86,6 +87,8 @@ transitions and update the activity descriptions in docs.
 - Overlapping tool IDs, duplicate starts, unmatched ends, and partial updates do
   not incorrectly release the exemption.
 - The same open-tool stream in OMP still times out.
+- `tool_timeout` set on a named backend other than `pi` yields a config warning;
+  `adapters.default.tool_timeout` may still feed Pi through the normal fallback.
 - Document Pi configuration and the inactivity exemption in adapter references.
 - Run format checks, clippy, affected crate tests, full `cargo test`, and
   replay-based smoke tests before committing and handing off to no-mistakes.
