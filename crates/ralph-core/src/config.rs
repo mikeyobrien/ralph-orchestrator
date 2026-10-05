@@ -360,11 +360,20 @@ pub struct AdapterSettings {
     /// Tool permissions (DROPPED: CLI tool manages its own permissions).
     #[serde(default)]
     pub tool_permissions: Option<Vec<String>>,
+
+    /// Pi only: seconds an open tool or a model request whose assistant
+    /// message has not ended may run before the iteration is treated as stuck.
+    /// Defaults to [`DEFAULT_TOOL_TIMEOUT_SECS`] when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_timeout: Option<u64>,
 }
 
 fn default_timeout() -> u64 {
     300 // 5 minutes
 }
+
+/// Default Pi open-tool and pending-model-request ceiling in seconds (1 hour).
+pub const DEFAULT_TOOL_TIMEOUT_SECS: u64 = 3600;
 
 impl Default for AdapterSettings {
     fn default() -> Self {
@@ -372,6 +381,7 @@ impl Default for AdapterSettings {
             timeout: default_timeout(),
             enabled: true,
             tool_permissions: None,
+            tool_timeout: None,
         }
     }
 }
@@ -618,6 +628,21 @@ impl RalphConfig {
                 warnings.push(ConfigWarning::DroppedField {
                     field: "adapters.*.tool_permissions".to_string(),
                     reason: "CLI tool manages its own permissions".to_string(),
+                });
+            }
+
+            let mut non_pi_tool_timeouts: Vec<&str> = self
+                .adapters
+                .overrides
+                .iter()
+                .filter(|(name, settings)| *name != "pi" && settings.tool_timeout.is_some())
+                .map(|(name, _)| name.as_str())
+                .collect();
+            non_pi_tool_timeouts.sort_unstable();
+            for name in non_pi_tool_timeouts {
+                warnings.push(ConfigWarning::DroppedField {
+                    field: format!("adapters.{name}.tool_timeout"),
+                    reason: "tool_timeout only applies to the pi backend".to_string(),
                 });
             }
 
@@ -2699,6 +2724,92 @@ adapters:
         assert_eq!(config.adapter_settings("pi").timeout, 120);
         assert_eq!(config.adapter_settings("roo").timeout, 240);
         assert!(!config.adapter_settings("roo").enabled);
+    }
+
+    #[test]
+    fn test_validate_warns_on_tool_timeout_outside_pi() {
+        let yaml = r"
+adapters:
+  default:
+    tool_timeout: 1200
+  pi:
+    tool_timeout: 900
+  omp:
+    tool_timeout: 600
+  claude:
+    tool_timeout: 3600
+";
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let fields: Vec<String> = config
+            .validate()
+            .unwrap()
+            .into_iter()
+            .filter_map(|w| match w {
+                ConfigWarning::DroppedField { field, .. } if field.ends_with(".tool_timeout") => {
+                    Some(field)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            fields,
+            vec!["adapters.claude.tool_timeout", "adapters.omp.tool_timeout"]
+        );
+
+        let pi_only: RalphConfig =
+            serde_yaml::from_str("adapters:\n  pi:\n    tool_timeout: 900\n").unwrap();
+        assert!(!pi_only.validate().unwrap().iter().any(
+            |w| matches!(w, ConfigWarning::DroppedField { field, .. } if field.ends_with(".tool_timeout"))
+        ));
+    }
+
+    #[test]
+    fn test_pi_adapter_settings_are_independent_of_claude() {
+        let config = RalphConfig::parse_yaml(
+            r"
+cli:
+  backend: pi
+adapters:
+  default:
+    timeout: 450
+  claude:
+    timeout: 999
+    enabled: true
+    tool_permissions: [Read]
+  pi:
+    timeout: 120
+    tool_timeout: 900
+    enabled: false
+    tool_permissions: [Bash, Edit]
+",
+        )
+        .unwrap();
+
+        let pi = config.adapter_settings("pi");
+        assert_eq!(pi.timeout, 120);
+        assert_eq!(pi.tool_timeout, Some(900));
+        assert!(!pi.enabled);
+        assert_eq!(
+            pi.tool_permissions.as_deref(),
+            Some(["Bash".to_string(), "Edit".to_string()].as_slice())
+        );
+        assert_eq!(config.per_worker_timeout_secs(None, "pi"), 120);
+        assert_eq!(config.per_worker_timeout_secs(Some(60), "pi"), 60);
+        assert_eq!(config.adapter_settings("claude").timeout, 999);
+        assert!(config.adapter_settings("claude").enabled);
+
+        let round_trip: RalphConfig =
+            serde_yaml::from_str(&serde_yaml::to_string(&config).unwrap()).unwrap();
+        assert_eq!(round_trip.per_worker_timeout_secs(None, "pi"), 120);
+        assert!(!round_trip.adapter_settings("pi").enabled);
+        assert_eq!(round_trip.adapter_settings("pi").tool_timeout, Some(900));
+
+        let defaults = RalphConfig::parse_yaml("adapters:\n  pi: {}\n").unwrap();
+        let pi = defaults.adapter_settings("pi");
+        assert_eq!(pi.timeout, 300);
+        assert_eq!(pi.tool_timeout, None);
+        assert!(pi.enabled);
+        assert!(pi.tool_permissions.is_none());
     }
 
     #[test]

@@ -284,7 +284,15 @@ hats:
    adapters:
      claude:
        timeout: 600
+     pi:
+       timeout: 600  # Pi does not inherit Claude's timeout
    ```
+
+   For Pi JSON CLI execution, this timer applies outside open tool calls and
+   pending model requests. A silent running tool, or a `turn_start` whose
+   assistant message has not ended, is bounded by `adapters.pi.tool_timeout`
+   (default 3600 seconds). Raise `tool_timeout` if a healthy tool or model request
+   legitimately takes longer; pending requests have a distinct timeout message.
 
 2. Reduce prompt complexity:
    - Break large tasks into smaller ones

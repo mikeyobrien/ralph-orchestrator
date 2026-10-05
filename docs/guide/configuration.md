@@ -249,7 +249,9 @@ adapters:
   claude:
     timeout: 600        # claude-specific override
   pi:
-    timeout: 120        # pi-specific override
+    timeout: 120        # pi-specific inactivity outside tools and pending requests
+    tool_timeout: 3600  # pi only: ceiling for a tool or pending model request
+    enabled: true       # include Pi in auto-detection
 ```
 
 | Option | Type | Default | Description |
@@ -258,10 +260,34 @@ adapters:
 | `default.enabled` | boolean | `true` | Whether a backend participates in auto-detection |
 | `<backend>.timeout` | integer | `default.timeout` | Per-backend timeout override |
 | `<backend>.enabled` | boolean | `default.enabled` | Per-backend auto-detection override |
+| `pi.tool_timeout` | integer | `3600` | Pi only: maximum seconds for an open tool or a model request whose assistant message has not ended; set on another backend, it is ignored with a warning |
 
 Override keys must be a catalogued backend name or `custom`; an unknown key is a
 validation error. `enabled: false` skips a backend only during auto-detection —
 selecting it explicitly (`cli.backend: <name>`) still works.
+
+For Pi's JSON CLI stream, `adapters.pi.timeout` applies when no tool execution or
+in-flight model request is open. A `turn_start` counts as activity until the
+assistant `message_end`, `turn_end`, or agent completion arrives, including the
+first request of an iteration and silent reasoning after the assistant
+`message_start`. This wait uses the existing `adapters.pi.tool_timeout` ceiling
+measured from `turn_start`; exceeding it reports a model-request timeout, not
+inactivity. User and tool-result messages do not end this wait. After the
+assistant message ends, normal inactivity handling resumes unless a tool is open.
+
+Ralph suspends the inactivity timer between `tool_execution_start` and its
+matching `tool_execution_end` because a long-running Pi tool can legitimately
+emit no output. The full inactivity window resumes after all open tools finish,
+including failed tools. While a tool is open, `adapters.pi.tool_timeout`
+(default 3600 seconds) bounds it instead: once the oldest open tool has run that
+long, Ralph terminates Pi and the iteration fails as timed out. Keep it well
+above `timeout` so healthy multi-minute tools finish. Any `tool_execution_end`
+record carrying a `toolCallId` closes that call, even when its other fields are
+missing or malformed. Other backends retain their existing inactivity behavior.
+
+Pi accepts the same adapter settings as other backends. Like other CLI backends,
+`adapters.pi.tool_permissions` is ignored with a warning; configure permissions
+in Pi rather than Ralph.
 
 > **Migration notice — `adapters.claude` no longer inherits.** Previously Pi, Roo,
 > Copilot, and OpenCode silently inherited the `adapters.claude` settings through a
