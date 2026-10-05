@@ -50,8 +50,28 @@ While a tool is open, the deadline is `adapters.pi.tool_timeout` (default 3600
 seconds) measured from the oldest open tool's first start. A tool open past that
 ceiling, or one whose end event was lost, is treated as stuck and the iteration
 times out, logged as exceeding `tool_timeout` with the configured ceiling rather
-than as an inactivity timeout. No heartbeat is introduced. A Pi process silent without an open tool
-must still time out.
+than as an inactivity timeout. No heartbeat is introduced. A Pi process silent
+without an open tool or pending model request must still time out.
+
+## In-flight model request extension
+
+The approved extension covers long pre-response model latency, including an
+iteration's first request. A Pi `turn_start` opens a pending model request until
+an assistant `message_start` or `message_end` arrives. User and tool-result
+messages do not close it. Assistant updates, tool execution, and turn/agent
+completion also end this pre-response phase. Duplicate starts must not restart
+the bound.
+
+While the model request is pending, replace inactivity detection with the
+existing `adapters.pi.tool_timeout` ceiling (no new setting), measured from
+`turn_start`. A request exceeding the ceiling fails with a distinct model-request
+timeout diagnostic. Once the assistant responds, normal inactivity handling
+resumes unless a tool is open. A silent process with neither a pending request
+nor an open tool still times out normally. OMP behavior stays unchanged.
+
+Add process-level regressions for a healthy slow first response, a pending
+request exceeding its ceiling, and true idle silence. Check request lifecycle
+transitions and update the activity descriptions in docs.
 
 ## Acceptance and validation
 
@@ -59,8 +79,8 @@ must still time out.
   independent of Claude; actual worker timeout lookup selects Pi.
 - A fake Pi subprocess completes after an open tool is silent longer than the
   configured inactivity timeout.
-- Silence without an open tool, and silence after tool completion (successful or
-  failed), still times out.
+- Silence without an open tool or pending request, and silence after completion
+  (successful or failed), still times out.
 - A tool open longer than `tool_timeout` times out; an unparsable end record
   with a matching ID still closes the tool.
 - Overlapping tool IDs, duplicate starts, unmatched ends, and partial updates do

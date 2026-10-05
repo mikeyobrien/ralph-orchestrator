@@ -160,8 +160,8 @@ adapters:
     timeout: 300
   pi:
     enabled: true
-    timeout: 300                 # Inactivity outside open Pi tool executions
-    tool_timeout: 3600           # Pi only: ceiling for a single open tool
+    timeout: 300                 # Inactivity outside Pi tools and pending requests
+    tool_timeout: 3600           # Pi only: tool or pending model-request ceiling
 ```
 
 `adapters.pi` uses the same settings defaults as other adapters and never
@@ -169,8 +169,10 @@ inherits `adapters.claude`. In Pi JSON CLI execution, the inactivity timer pause
 while a tool is open and resumes after its matching end event (success or error).
 Tool updates are not heartbeats, so silent tools are not killed by this timer;
 instead a tool open longer than `tool_timeout` (default 3600s) fails the
-iteration as stuck. Pi with no open tool
-still times out on inactivity. Other backends keep their existing behavior.
+iteration as stuck. A `turn_start` awaiting its first assistant message also
+counts as activity and uses the same ceiling, with a distinct model-request
+timeout if exceeded. Pi with neither an open tool nor a pending request still
+times out on inactivity. Other backends keep their existing behavior.
 
 ### Auto-Detection
 

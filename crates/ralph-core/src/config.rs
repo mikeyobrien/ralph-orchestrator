@@ -361,8 +361,8 @@ pub struct AdapterSettings {
     #[serde(default)]
     pub tool_permissions: Option<Vec<String>>,
 
-    /// Pi only: seconds a single open tool execution may run before the
-    /// iteration is treated as stuck and terminated.
+    /// Pi only: seconds an open tool or model request awaiting its first
+    /// assistant message may run before the iteration is treated as stuck.
     #[serde(default = "default_tool_timeout")]
     pub tool_timeout: u64,
 }
@@ -371,7 +371,7 @@ fn default_timeout() -> u64 {
     300 // 5 minutes
 }
 
-/// Default Pi open-tool ceiling in seconds (1 hour).
+/// Default Pi open-tool and pending-model-request ceiling in seconds (1 hour).
 pub const DEFAULT_TOOL_TIMEOUT_SECS: u64 = 3600;
 
 fn default_tool_timeout() -> u64 {

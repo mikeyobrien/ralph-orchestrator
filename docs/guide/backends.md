@@ -383,8 +383,8 @@ hats:
 ```yaml
 adapters:
   pi:
-    timeout: 300        # inactivity timeout in seconds while no tool is open
-    tool_timeout: 3600  # max seconds a single open tool may run
+    timeout: 300        # inactivity outside tools and pending model requests
+    tool_timeout: 3600  # ceiling for a tool or pending model request
     enabled: true
 ```
 
@@ -394,7 +394,10 @@ replaces the inactivity timer with `tool_timeout` while Pi has an open tool call
 Silent long-running tools are allowed to finish; a tool still open after
 `tool_timeout` seconds is treated as stuck and fails the iteration. The
 inactivity timer resumes after the matching tool ends. A silent Pi process with
-no open tool still times out. See [adapter configuration](configuration.md#adapters).
+neither an open tool nor a pending model request still times out. A `turn_start`
+waiting for its first assistant message also counts as activity and uses the same
+`tool_timeout` ceiling, with a distinct model-request timeout if exceeded.
+See [adapter configuration](configuration.md#adapters).
 
 **Doctor checks:**
 - `pi --version` must succeed

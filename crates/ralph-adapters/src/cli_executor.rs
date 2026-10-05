@@ -77,8 +77,8 @@ impl CliExecutor {
         }
     }
 
-    /// Sets how long a single open Pi tool execution may run before the
-    /// process is terminated as stuck. Ignored for other output formats.
+    /// Sets how long a Pi tool execution or pending model request may run before
+    /// the process is terminated as stuck. Ignored for other output formats.
     #[must_use]
     pub fn with_tool_timeout(mut self, tool_timeout: Duration) -> Self {
         self.tool_timeout = tool_timeout;
@@ -91,10 +91,10 @@ impl CliExecutor {
     /// for the return value. If `timeout` is provided and the execution produces
     /// no stdout/stderr activity for longer than that duration, the process
     /// receives SIGTERM and the result indicates timeout. For Pi JSON streams,
-    /// this timer is replaced while tool executions are open: a healthy tool
-    /// may emit no updates until it finishes, so the process is terminated only
-    /// once the oldest open tool has run longer than the tool timeout. After
-    /// the last matching tool end, the full inactivity window resumes. Other
+    /// this timer is replaced while a tool is open or a turn is waiting for its
+    /// first assistant message. Such work may be silent, but is bounded by the
+    /// configured tool timeout measured from its start. After the assistant
+    /// responds and all tools end, the full inactivity window resumes. Other
     /// formats are unchanged.
     ///
     /// When `verbose` is true, stderr output is also written to the output writer
@@ -206,14 +206,21 @@ impl CliExecutor {
 
         while !stdout_done || !stderr_done {
             let now = tokio::time::Instant::now();
-            // Pi tool updates are output-driven, not heartbeats. Silence between
-            // a start and its matching end is not evidence of an inactive agent,
-            // but a tool open past the ceiling is stuck.
+            // Pi tool updates are not heartbeats, and a model can be silent
+            // between turn_start and its first assistant message. Both phases
+            // use the existing ceiling, never a deadline reset by output.
             // Keep this exemption Pi-only even though OMP shares the parser.
             let open_tool_start = family_state
                 .oldest_active_tool_start()
                 .filter(|_| self.backend.output_format == OutputFormat::PiStreamJson);
-            let inactivity_timeout = match open_tool_start {
+            let pending_request_start = family_state
+                .pending_model_request_start()
+                .filter(|_| self.backend.output_format == OutputFormat::PiStreamJson);
+            let bounded_activity_start = open_tool_start
+                .into_iter()
+                .chain(pending_request_start)
+                .min();
+            let inactivity_timeout = match bounded_activity_start {
                 Some(started) => Some(self.tool_timeout.saturating_sub(started.elapsed())),
                 None => timeout,
             };
@@ -231,7 +238,14 @@ impl CliExecutor {
                 Some(duration) => match tokio::time::timeout(duration, event_rx.recv()).await {
                     Ok(event) => event,
                     Err(_) => {
-                        if open_tool_start.is_some() {
+                        if pending_request_start.is_some()
+                            && bounded_activity_start == pending_request_start
+                        {
+                            warn!(
+                                tool_timeout_secs = self.tool_timeout.as_secs(),
+                                "Pi model request exceeded tool_timeout, sending SIGTERM"
+                            );
+                        } else if open_tool_start.is_some() {
                             warn!(
                                 tool_timeout_secs = self.tool_timeout.as_secs(),
                                 "Pi tool execution exceeded tool_timeout, sending SIGTERM"
@@ -980,8 +994,127 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_execute_pi_without_open_tool_still_times_out() {
+    async fn test_execute_pi_pending_model_request_survives_inactivity() {
         let result = fake_pi_executor()
+            .with_tool_timeout(Duration::from_secs(5))
+            .execute_capture_with_timeout(
+                r#"
+                printf '%s\n' '{"type":"turn_start"}'
+                printf '%s\n' '{"type":"message_start","message":{"role":"user","content":"test"}}'
+                printf '%s\n' '{"type":"message_end","message":{"role":"user","content":"test"}}'
+                sleep 1.2
+                printf '%s\n' '{"type":"message_start","message":{"role":"assistant","content":[]}}'
+                printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"done"}}'
+                printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}'
+                printf '%s\n' '{"type":"turn_end","message":{"stopReason":"stop"}}'
+                "#,
+                Some(Duration::from_millis(400)),
+            )
+            .await
+            .unwrap();
+
+        assert!(!result.timed_out, "A pending Pi model request is not idle");
+        assert!(result.success);
+        assert_eq!(result.extracted_text.as_deref(), Some("done"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_pi_pending_model_request_ceiling_has_own_reason() {
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone)]
+        struct LogWriter(Arc<Mutex<Vec<u8>>>);
+        impl Write for LogWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let logs = Arc::new(Mutex::new(Vec::new()));
+        let writer = LogWriter(logs.clone());
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(move || writer.clone())
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let started = Instant::now();
+        let result = fake_pi_executor()
+            .with_tool_timeout(Duration::from_millis(800))
+            .execute_capture_with_timeout(
+                r#"printf '%s\n' '{"type":"turn_start"}'; sleep 10"#,
+                Some(Duration::from_millis(400)),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.timed_out);
+        assert!(!result.success);
+        assert!(started.elapsed() >= Duration::from_millis(700));
+        assert!(started.elapsed() < Duration::from_secs(5));
+        let logs = String::from_utf8(logs.lock().unwrap().clone()).unwrap();
+        assert!(
+            logs.contains("Pi model request exceeded tool_timeout"),
+            "{logs}"
+        );
+        assert!(
+            !logs.contains("Execution inactivity timeout reached"),
+            "{logs}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_pi_inactivity_resumes_after_assistant_response() {
+        for event in ["message_start", "message_end"] {
+            let script = format!(
+                r#"
+                printf '%s\n' '{{"type":"turn_start"}}'
+                sleep 1.2
+                printf '%s\n' '{{"type":"{event}","message":{{"role":"assistant","content":[]}}}}'
+                sleep 10
+                "#
+            );
+            let started = Instant::now();
+            let result = fake_pi_executor()
+                .with_tool_timeout(Duration::from_secs(5))
+                .execute_capture_with_timeout(&script, Some(Duration::from_millis(400)))
+                .await
+                .unwrap();
+
+            assert!(result.timed_out);
+            assert!(result.output.contains("\"role\":\"assistant\""));
+            assert!(started.elapsed() < Duration::from_secs(5));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_omp_pending_model_request_keeps_inactivity_timeout() {
+        let mut executor = fake_pi_executor();
+        executor.backend.output_format = OutputFormat::OmpStreamJson;
+        let started = Instant::now();
+        let result = executor
+            .with_tool_timeout(Duration::from_secs(5))
+            .execute_capture_with_timeout(
+                r#"printf '%s\n' '{"type":"turn_start"}'; sleep 10"#,
+                Some(Duration::from_millis(400)),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.timed_out);
+        assert!(!result.success);
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn test_execute_pi_without_open_activity_still_times_out() {
+        let started = Instant::now();
+        let result = fake_pi_executor()
+            .with_tool_timeout(Duration::from_secs(5))
             .execute_capture_with_timeout(
                 r#"printf '%s\n' '{"type":"agent_start"}'; sleep 10"#,
                 Some(Duration::from_millis(400)),
@@ -991,6 +1124,7 @@ mod tests {
 
         assert!(result.timed_out);
         assert!(!result.success);
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 
     #[tokio::test]
