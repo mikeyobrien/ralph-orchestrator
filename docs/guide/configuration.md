@@ -268,10 +268,11 @@ selecting it explicitly (`cli.backend: <name>`) still works.
 
 For Pi's JSON CLI stream, `adapters.pi.timeout` applies when no tool execution or
 in-flight model request is open. A `turn_start` counts as activity until the
-assistant `message_end` or `turn_end` arrives, including the first request of an
-iteration and silent reasoning after the assistant `message_start`. This wait
-uses the existing `adapters.pi.tool_timeout` ceiling measured from
-`turn_start`; exceeding it reports a model-request timeout, not inactivity. User and tool-result messages do not end this wait. After the
+assistant `message_end`, `turn_end`, or agent completion arrives, including the
+first request of an iteration and silent reasoning after the assistant
+`message_start`. This wait uses the existing `adapters.pi.tool_timeout` ceiling
+measured from `turn_start`; exceeding it reports a model-request timeout, not
+inactivity. User and tool-result messages do not end this wait. After the
 assistant message ends, normal inactivity handling resumes unless a tool is open.
 
 Ralph suspends the inactivity timer between `tool_execution_start` and its

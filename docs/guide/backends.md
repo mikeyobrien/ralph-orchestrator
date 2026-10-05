@@ -389,14 +389,9 @@ adapters:
 ```
 
 Pi uses `adapters.pi`, falling back to `adapters.default` when no Pi override is
-present; it does not inherit `adapters.claude`. During JSON CLI execution, Ralph
-replaces the inactivity timer with `tool_timeout` while Pi has an open tool call.
-Silent long-running tools are allowed to finish; a tool still open after
-`tool_timeout` seconds is treated as stuck and fails the iteration. The
-inactivity timer resumes after the matching tool ends. A silent Pi process with
-neither an open tool nor a pending model request still times out. A `turn_start`
-whose assistant message has not ended also counts as activity and uses the same
-`tool_timeout` ceiling, with a distinct model-request timeout if exceeded.
+present; it does not inherit `adapters.claude`. Silent long-running tools and
+pending model requests are bounded by `tool_timeout` instead of the inactivity
+timer; a silent Pi process with neither still times out.
 See [adapter configuration](configuration.md#adapters).
 
 **Doctor checks:**
