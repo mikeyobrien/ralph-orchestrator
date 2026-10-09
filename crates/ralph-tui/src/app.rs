@@ -832,7 +832,7 @@ mod tests {
 
         assert!(!state.search_state.search_mode);
         assert!(state.search_state.query.is_none());
-        assert!(state.search_state.matches.is_empty());
+        assert_eq!(state.search_state.matches, [] as [(usize, usize); 0]);
     }
 
     #[test]

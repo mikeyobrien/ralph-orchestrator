@@ -2313,18 +2313,21 @@ mod tests {
     #[test]
     fn test_env_vars_default_empty() {
         // All non-teams constructors should have empty env_vars
-        assert!(CliBackend::claude().env_vars.is_empty());
-        assert!(CliBackend::claude_interactive().env_vars.is_empty());
-        assert!(CliBackend::kiro().env_vars.is_empty());
-        assert!(CliBackend::gemini().env_vars.is_empty());
-        assert!(CliBackend::codex().env_vars.is_empty());
-        assert!(CliBackend::forge().env_vars.is_empty());
-        assert!(CliBackend::amp().env_vars.is_empty());
-        assert!(CliBackend::copilot().env_vars.is_empty());
-        assert!(CliBackend::opencode().env_vars.is_empty());
-        assert!(CliBackend::pi().env_vars.is_empty());
-        assert!(CliBackend::roo().env_vars.is_empty());
-        assert!(CliBackend::omp().env_vars.is_empty());
+        assert_eq!(CliBackend::claude().env_vars, [] as [(String, String); 0]);
+        assert_eq!(
+            CliBackend::claude_interactive().env_vars,
+            [] as [(String, String); 0]
+        );
+        assert_eq!(CliBackend::kiro().env_vars, [] as [(String, String); 0]);
+        assert_eq!(CliBackend::gemini().env_vars, [] as [(String, String); 0]);
+        assert_eq!(CliBackend::codex().env_vars, [] as [(String, String); 0]);
+        assert_eq!(CliBackend::forge().env_vars, [] as [(String, String); 0]);
+        assert_eq!(CliBackend::amp().env_vars, [] as [(String, String); 0]);
+        assert_eq!(CliBackend::copilot().env_vars, [] as [(String, String); 0]);
+        assert_eq!(CliBackend::opencode().env_vars, [] as [(String, String); 0]);
+        assert_eq!(CliBackend::pi().env_vars, [] as [(String, String); 0]);
+        assert_eq!(CliBackend::roo().env_vars, [] as [(String, String); 0]);
+        assert_eq!(CliBackend::omp().env_vars, [] as [(String, String); 0]);
     }
 
     #[test]

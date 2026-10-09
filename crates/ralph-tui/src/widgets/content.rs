@@ -479,7 +479,7 @@ mod tests {
         let lines = render_content_pane(&buffer, Some("search"), 40, 5);
 
         for line in &lines {
-            assert!(line.trim().is_empty());
+            assert_eq!(line.trim(), "");
         }
     }
 
