@@ -316,7 +316,7 @@ mod tests {
     #[test]
     fn test_parse_whitelist_empty() {
         let prefixes = parse_whitelist("");
-        assert!(prefixes.is_empty());
+        assert_eq!(prefixes, [] as [String; 0]);
     }
 
     #[test]
@@ -460,7 +460,7 @@ mod tests {
     #[test]
     fn test_parse_command_empty() {
         let parts = parse_command("").unwrap();
-        assert!(parts.is_empty());
+        assert_eq!(parts, [] as [String; 0]);
     }
 
     #[test]

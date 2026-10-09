@@ -2783,6 +2783,20 @@ fn output_mentions_ralph_emit(output: &str) -> bool {
     output.contains("ralph emit")
 }
 
+/// Which hat id a termination hook payload reports. When exactly one hat
+/// ran in the most recent processed iteration, report it; otherwise keep
+/// the pending-derived id — covering termination before any hat executed
+/// as well as parallel configurations, where no single provenance exists.
+fn termination_active_hat<'a>(
+    last_active_hat_ids: &'a [HatId],
+    pending_derived: &'a HatId,
+) -> &'a HatId {
+    match last_active_hat_ids {
+        [hat] => hat,
+        _ => pending_derived,
+    }
+}
+
 fn resolve_display_hat_for_execution(
     event_loop: &EventLoop,
     hat_id: &HatId,
@@ -3039,7 +3053,18 @@ fn collect_loop_termination_hook_outcomes(
         post_phase_event
     };
 
-    let active_hat = event_loop.get_active_hat_id().as_str().to_string();
+    // Completion provenance for hook authorization: report the hat that
+    // actually executed. get_active_hat_id() derives from *pending* events,
+    // but the terminal event has no subscribers, so at termination it falls
+    // back to the coordinator id and a hook cannot tell which stage
+    // requested completion.
+    let pending_derived = event_loop.get_active_hat_id();
+    let active_hat = termination_active_hat(
+        event_loop.state().last_active_hat_ids.as_slice(),
+        &pending_derived,
+    )
+    .as_str()
+    .to_string();
     let outcomes = dispatch_phase_event_hooks(
         event_loop,
         hooks_dispatch_enabled,
@@ -9483,6 +9508,34 @@ exit 73"#
             loop_termination_phase_events(&TerminationReason::MaxRuntime),
             (HookPhaseEvent::PreLoopError, HookPhaseEvent::PostLoopError)
         );
+    }
+
+    #[test]
+    fn test_termination_active_hat_reports_single_executed_hat() {
+        let pending = HatId::new("ralph");
+        assert_eq!(
+            termination_active_hat(&[HatId::new("builder")], &pending).as_str(),
+            "builder"
+        );
+    }
+
+    #[test]
+    fn test_termination_active_hat_falls_back_without_executed_hat() {
+        // Termination before any hat executed: keep the pending-derived id.
+        // A distinct pending value proves the fallback is preserved, not
+        // hardcoded to the coordinator id.
+        let pending = HatId::new("planner");
+        let empty: Vec<HatId> = Vec::new();
+        assert_eq!(termination_active_hat(&empty, &pending).as_str(), "planner");
+    }
+
+    #[test]
+    fn test_termination_active_hat_falls_back_for_parallel_execution() {
+        // Several hats ran: no single provenance exists, so keep the
+        // pending-derived id rather than picking arbitrarily.
+        let pending = HatId::new("reviewer");
+        let hats = vec![HatId::new("builder"), HatId::new("reviewer")];
+        assert_eq!(termination_active_hat(&hats, &pending).as_str(), "reviewer");
     }
 
     #[test]
