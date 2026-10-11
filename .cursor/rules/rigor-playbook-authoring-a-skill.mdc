@@ -1,0 +1,19 @@
+---
+description: Authoring playbook. Read when writing or editing a Cursor rule, skill, or agent-facing workflow doc. Front-load triggers, order the steps, and delete prose that does not change a decision.
+alwaysApply: false
+---
+
+### Authoring or modifying a skill
+
+**You own the voice of the rule.**
+
+In this repo the artifact is usually a Cursor rule under `.cursor/rules/`. Always-on guidance sets `alwaysApply: true` and stays short. A workflow that should load only when relevant sets `alwaysApply: false` and puts the trigger in `description`. A skill under `.cursor/skills/` or `.claude/skills/` follows the same shape when the user asked for a skill file.
+
+1. Author or edit the file. Front-load trigger branches in `description`. Body is ordered steps, each ending in a completion criterion. Name host tools the way `.cursor/rules/rigor-mode.mdc` does (Task, Read, verify on the real surface). Do not require a plugin slash command or a subagent type this host does not have. Done when the file exists with frontmatter and every step has a criterion.
+2. Validate. Referenced files exist. Cross-rule links resolve. No inlined tool schema. Done when validation notes list zero broken links.
+3. Test cases if the change is structural. Skip if subjective. Done when tests ran or `skip: subjective` is on the todo.
+4. Run Opening a PR (`.cursor/rules/rigor-playbook-opening-a-pr.mdc`). Done when the PR URL exists.
+
+When in doubt, delete. Keep only prose that changes a decision. Point at structural sources (types, READMEs, config). Delegate to another rule by path. A workflow you keep hitting that is not captured becomes a new agent-requested rule.
+
+**Reply:** summary of the rule, key design decisions, validation notes.

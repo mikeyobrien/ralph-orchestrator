@@ -1,0 +1,21 @@
+---
+description: Investigation playbook. Read for a read-only question about how code works, why it was built this way, or which option to recommend. Produces an explanation, not a code change.
+alwaysApply: false
+---
+
+### Investigation
+
+**You own the answer. Plan, route, write.**
+
+Investigation is read-only. It produces a cited explanation or a recommendation, not a code change.
+
+Host mapping is in `.cursor/rules/rigor-mode.mdc`.
+
+1. Write the how-note for the subsystem (Overview, Key Concepts, How It Works, Where Things Live, Gotchas). For a motivation question, also reconstruct why from git history and the PR that introduced the behavior. Use an `explore` subagent when the area or history is large, and keep the writeup in the parent. Done when the how-note exists, plus the why-note when the question is about motivation.
+2. Throughput checkpoint stays one line. `throughput checkpoint: n/a, read-only investigation`. Done when that line is on the todo list.
+3. Produce the how-shaped output, or a recommendation with a tradeoffs table when the request chooses between alternatives. Done when that output is drafted.
+4. Apply Writing the reply from `.cursor/rules/rigor-mode.mdc`. Done when the reply follows those rules.
+
+No PR and no babysit. Skip the architect sketch unless the investigation precedes a code change. If it does, hand back and re-route to Bug fix or Feature.
+
+**Reply:** the investigation output. For "are we sure?" include the real judgment with reasons. Push back when the premise is wrong.

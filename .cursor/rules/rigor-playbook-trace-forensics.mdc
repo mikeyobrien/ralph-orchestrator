@@ -1,0 +1,21 @@
+---
+description: Trace forensics playbook. Read when a profiling artifact already exists (cpuprofile, heapsnapshot, spindump, json.gz trace). Load it, narrow to the cause, attribute to source. Diagnosis only.
+alwaysApply: false
+---
+
+### Trace forensics
+
+**You own the diagnosis from the artifact. Load it, shape it, narrow to the cause, attribute to source.**
+
+Runtime forensics instruments the live process. Here the capture already exists. Keep tooling generic. A DevTools or trace parser for cpuprofile and `.json.gz`, a text editor for a spindump, heap tooling for a heapsnapshot.
+
+Dispatch bulk parse per `.cursor/rules/rigor-mode.mdc`. Keep the reduced finding in the parent.
+
+1. Identify the format and load it with the right tool. Parse a large artifact in a dispatched worker. Done when the format is named and a reduced finding exists.
+2. Transform the raw artifact into a form you can query. Dump the trace or heap snapshot into sqlite, one row per sample, frame, or node. Done when a queryable store exists.
+3. Narrow to the cause. Query for the frames that hold the most time and walk the call tree to the hot path. For a leak, follow the retainer chain from the leaked object to a GC root. For a spindump, find the thread stuck on-CPU or blocked and its wait reason. Done when one hot path, retainer chain, or stuck thread is named.
+4. Attribute to source. Map the hot frame to file, symbol, and line via the artifact's own symbols. A frame with no source mapping is not yet a diagnosis. Resolve the symbols, or say the artifact does not carry them. Done when a `file:symbol:line` exists or the missing-symbols fact is stated.
+5. Confirm against a paired capture when you have one. Diff a before and after artifact. Without one, mark the finding as the strongest hypothesis the artifact supports. Done when confirmed or labeled hypothesis.
+6. Hand back a cited diagnosis. No fix unless asked. Route to Bug fix or Perf issue once the cause is known. Throughput checkpoint stays one line. `throughput checkpoint: n/a, read-only forensics`. Done when the diagnosis is in the reply.
+
+**Reply:** the artifact and format, the reduced finding, the source location, the artifact paths, and whether a paired capture confirmed it.

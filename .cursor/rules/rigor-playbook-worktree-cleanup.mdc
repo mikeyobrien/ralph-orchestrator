@@ -1,0 +1,21 @@
+---
+description: Worktree cleanup playbook. Read when pruning merged or abandoned git worktrees to reclaim disk. Deletion is irreversible. Confirm each path is unused and has no uncommitted work first.
+alwaysApply: false
+---
+
+### Worktree cleanup
+
+**You own the disk and the safety gate.** Prune merged or abandoned git worktrees to reclaim space. Deletion is irreversible, so every step guards against deleting something in use or holding uncommitted work.
+
+This repo has no `scripts/worktree-audit.sh`. Classify from git.
+
+1. Snapshot and audit. Record `df -h /`, then `git worktree list --porcelain`. For each path record size, age of the newest commit, whether the branch is merged to the default branch, `git -C <path> status --porcelain`, and open PR state via `gh pr list --head <branch>`. Bucket each row. `safe` means clean, merged or abandoned, no open PR, and not the current checkout. `wip` means tracked uncommitted edits. `scratch` means untracked files only. `in-use` means the current checkout, a pinned chat, or a sibling worktree of active work. Done when the audit table and a `df -h /` snapshot exist.
+2. The bucket is advice, not permission. Get the pinned and active chats from the user and cross-check every candidate. The pinned set wins. Done when every `safe` row has been checked against the pinned set.
+3. Verify usage before deleting. For anything you doubt, dispatch readonly workers to read transcripts and report whether the chat is pinned or ongoing and which worktrees it touches. Sibling worktrees spawned for a bakeoff or a repro are in use even when their names never hit the sidebar. Done when every doubtful row has a usage report.
+4. Pause on irreversible loss. For `wip`, show the diff and ask first. For `scratch`, name the untracked files, then they are safe to drop. Clean, merged, and not-in-use proceeds. Done when every `wip` row has a human decision and every in-use row is held.
+5. Prune the confirmed set. Per path, `git worktree remove --force <path>`. If the dir survives on ignored build artifacts, `rm -rf` it, then `git worktree prune`. Branch refs survive. Confirm with `df -h /` and re-list. Done when `git worktree list` no longer contains the confirmed set and a second `df -h /` exists.
+6. Other reclaimers when they exist on this machine. Simulator runtimes, Xcode DerivedData, package caches (pnpm, uv, brew, yarn). Clear only caches the user has not said to keep. Skip host-app caches that are not on this machine. Done when extra reclaimers either ran with named targets or are `skip: not on this machine`.
+
+This is the one playbook that deletes user state with no code review to catch a slip, so the gates above are the review.
+
+**Reply:** `df -h /` before and after with space reclaimed, the worktrees pruned, and a one-line reason for each held back.

@@ -1,0 +1,162 @@
+---
+description: Multi-phase plan playbook. Read when work spans phases or stacked PRs and the deliverable is a checklist plan, not code. Execution starts only after the operator says go.
+alwaysApply: false
+---
+
+### Multi-phase or multi-PR plan
+
+**You own the plan, not the code.** The plan is a checklist an owner runs box by box and the operator audits from the evidence. Do not implement.
+
+Host mapping is in `.cursor/rules/rigor-mode.mdc`. Explorers are `generalPurpose` or `explore`. This repo has no `scripts/check-plan.mjs`. The check in step 6 is manual.
+
+1. When the change is one or two files with an obvious approach, skip the plan. Say so and stop. Done when either `skip: obvious` is the reply, or the work is large enough to plan.
+2. Settle open questions by prototype before you write. Run `.cursor/rules/rigor-playbook-prototype.mdc` for each. Keep the branch, the SHA, and the screenshots for Appendix A. Ask the operator only about a product or preference call that no run can settle. Done when every open question has prototype evidence or is labeled unproven.
+3. Explore in dispatched workers. Each returns file pointers, conventions, test commands, and entry points. No inlined dumps. Done when those pointers exist for every touched subsystem.
+4. Copy the skeleton below into the plan file and fill every placeholder. Unless the operator names a path, write the file under the agent store's `docs/` (`/cursor/stores/self/docs/` on a Cursor cloud agent, otherwise `/tmp/<slug>-plan.md`). Do not put the plan in the product tree unless the operator asked for it there. Keep every heading and every sub-block in the order shown. One section per PR. Name the execution playbook in **How to read this**. Pick between Autopilot-full and Autopilot-stack per the rule at the end of `.cursor/rules/rigor-playbook-autopilot-stack.mdc`. A standing program takes Orchestrate. Done when the plan file exists with every placeholder filled or explicitly marked n/a.
+5. Write the body as a how-to. Appendices hold explanation and reference. Follow Writing the reply. No long dashes. No mid-sentence colons. Done when the body follows that voice.
+6. Check the plan yourself. Every skeleton heading is present, in order. Every placeholder is filled or marked n/a. Every PR section has Depends on, Files, Build, You see, Verify unit, Verify live (ten lanes, lane 1 is regression against trunk), Verify perf, Review gate, and Merge. The verification sentence opens each verification block. Write the findings down and fix every miss. Done when that check lists zero misses.
+7. Hand back. Post the plan path and the check output, then stop. Execution starts on the operator's explicit go. Done when the path and the check output are in the reply.
+
+**Verification.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. That sentence is the verification rule. Every verification block opens with it. The live block is mandatory. Ten lanes at the PR head drive the real surface. Each lane is one box with a concrete scenario, the screenshot it saves, and its pass predicate. One lane is the regression lane against trunk. The perf gate is dual-sided. Trunk and head must both produce the named metric. A PR that changes an interaction is review-gated.
+
+**Surface driver.** Pick it by surface. Browser and web UI use the host browser tools. CLI and TUI use a PTY or the project binary. A PR that touches two surfaces gets lanes on both. A surface with no driver is a risk in Appendix C, and its live block still names how each lane drives it.
+
+````markdown
+# <Program> plan
+
+<Under ten lines. What changes, for whom, the rule the program enforces, and the PR ids in order.>
+
+## How to read this
+
+One box is one unit of work. Every box names the evidence that checks it. A nested box is a sub-step of the box above it. Check a box only when its evidence exists, a file, a log line, a screenshot, a test run, or a SHA. The body is a how-to. The appendices explain and record.
+
+The program runs `.cursor/rules/rigor-playbook-<execution>.mdc`. <Who merges, and which PR ids are the operator's items that stop at merge-ready.>
+
+Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+## Program checklist
+
+### Arm the program
+
+- [ ] State the protocol and this plan to the operator, then stop. Start execution only on an explicit go.
+- [ ] On go, arm a durable goal with this exact text. "<The plan path, the PR ids in order, the verification rule, who merges, and the done condition.>"
+- [ ] Read these from the default branch at program start. Re-read them at every tick.
+  - [ ] `.cursor/rules/rigor-playbook-<execution>.mdc`
+  - [ ] `.cursor/rules/rigor-mode.mdc` (dispatch, verify, writing)
+  - [ ] `.cursor/rules/rigor-playbook-opening-a-pr.mdc`
+  - [ ] each other playbook the program uses
+- [ ] Arm a 30-minute audit tick. Use a timer subscription when the host has one. Otherwise re-check on that cadence inside the session.
+- [ ] Use this tick prompt, verbatim. "Re-read the execution playbook from the repo and the armed goal. Audit the operation against both and fix drift in this tick. Probe every active lane and judge progress by side effects only. Stand down a stuck lane and dispatch its replacement now. Then send the operator a status message, whether or not anything changed, with the queue table of PR, owner, state, and head SHA, the verdicts since the last tick, what merged, open operator gates, and blockers."
+- [ ] On the operator's hold or stand-down, send every owner a zero-writes order at once.
+
+### Spawn owners
+
+- [ ] Dispatch one owner per PR with the full lifecycle the execution playbook names.
+- [ ] Follow this dependency graph. Start dependent work only after its parent merges, or base it on the parent branch when the execution playbook stacks.
+  - [ ] <PR id> and <PR id> are independent and first. Both branch from `main`.
+  - [ ] <PR id> after <PR id>.
+- [ ] Hold the file boundaries. <PR id or class> touches only `<glob>`.
+- [ ] Hold the review gate. <PR ids> change an interaction. They wait for the operator's review in chat with screenshots and a video before merge.
+
+### PR mechanics, for every PR
+
+- [ ] Resolve the forge once. GitHub via `gh`, or the host PR tool when the session requires it. Record any fallback. Never require `gt`.
+- [ ] Open the PR ready when the host allows it. Cloud agents follow the host draft rule and say so.
+- [ ] Run the repo's lint and typecheck once before the PR-facing push. Push with hooks on.
+- [ ] Delete comments that narrate what the code shows. Keep a comment only for a non-obvious why.
+- [ ] Triage every Bugbot and security-reviewer comment per `.cursor/rules/rigor-bugbot-triage.mdc`.
+- [ ] Rebase onto current trunk before babysit and again before the merge-ready report.
+
+### Verdict and merge, for every PR
+
+- [ ] At the merge-ready head SHA, fan out verifiers. One gates lane. The ten live lanes from the PR's Verify, live block. The perf lane from its Verify, perf block. One audit lane that reads the diff and the receipts and distrusts the PR body.
+- [ ] Clean only when every lane is `PASS`. Findings go back to the owner. A new head gets a fresh fan-out and a fresh verdict.
+- [ ] <The merge or append rule from the execution playbook, with the patch-id rule from `.cursor/rules/rigor-playbook-shipping.mdc`.>
+
+### Boot recipe, for every live lane
+
+Each live lane runs isolated at the PR head. Drive the real surface.
+
+- [ ] `git fetch origin <head-branch> && git checkout <head SHA>`.
+- [ ] <Start the backend and the surface. Wait for ready.>
+- [ ] <Deliver input only through the surface driver. Name the read-only diagnostics.>
+- [ ] Save every screenshot to `/tmp/swarm-<pr-id>/worker-<n>/<slug>.png` and return the paths with the report.
+
+## <Change as a verb phrase> (<PR id>)
+
+**Depends on.** <PR id, or None.>
+
+**Files.**
+
+- [ ] Edit `<path>`.
+- [ ] Create `<path>`.
+- [ ] Delete `<path>`.
+
+**Build.**
+
+- [ ] <One change. Name the symbol and the file.>
+
+**You see.**
+
+- [ ] <One observable result, with the exact log line or screen state.>
+
+**Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] <Test file and the case it gains.> Run `<command>`.
+
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe.
+
+- [ ] Lane 1. Regression lane against trunk. Run <the same load-bearing scenario> at trunk and head. If trunk lacks the feature, record that and gate <the behavior the diff adds plus the end state the user waits for>. Save `<slug>.png`. Pass when <predicate>.
+- [ ] Lane 2. <Scenario.> Save `<slug>.png`. Pass when <predicate>.
+- [ ] Lane 3. <Scenario.> Save `<slug>.png`. Pass when <predicate>.
+- [ ] Lane 4. <Scenario.> Save `<slug>.png`. Pass when <predicate>.
+- [ ] Lane 5. <Scenario.> Save `<slug>.png`. Pass when <predicate>.
+- [ ] Lane 6. <Scenario.> Save `<slug>.png`. Pass when <predicate>.
+- [ ] Lane 7. <Scenario.> Save `<slug>.png`. Pass when <predicate>.
+- [ ] Lane 8. <Scenario.> Save `<slug>.png`. Pass when <predicate>.
+- [ ] Lane 9. <Scenario.> Save `<slug>.png`. Pass when <predicate>.
+- [ ] Lane 10. <Scenario.> Save `<slug>.png`. Pass when <predicate>.
+
+**Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] Metric. <What is measured at both trunk and head.>
+- [ ] Probe. <The command or procedure, run at trunk and at the head, interleaved.>
+- [ ] Baseline. Record the trunk <value> first.
+- [ ] Rule. <Head against trunk, with the number that fails.>
+
+**Review gate.** The operator reviews before merge.
+
+- [ ] Copy lane <n> screenshots into `<media path>/<pr-id>-review-<slug>.png`.
+- [ ] Record a 30 to 60 second video of the change. Save it as `<media path>/<pr-id>-review.mp4`.
+- [ ] Post the screenshots and the video in chat. Stop at merge-ready. Wait for the operator.
+
+**Merge.**
+
+- [ ] Root's clean verdict at the exact head SHA.
+- [ ] Bugbot triage done.
+- [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
+- [ ] <The owner squash-merges its own PR, or the root appends it to the base-branch stack and the operator lands it bottom-up.>
+
+## Close the program
+
+- [ ] Every box above is checked with its evidence.
+- [ ] Reply to the operator with the report the execution playbook names.
+
+## Appendix A. Prototype evidence
+
+<Each open question a prototype answered, with the branch, the SHA, and the artifact links. Each question that stays unproven.>
+
+## Appendix B. Alternatives rejected
+
+<Each approach weighed and why it lost.>
+
+## Appendix C. Risks
+
+<Each risk with the PR it lands in and what the owner watches.>
+
+## Appendix D. Links and reading list
+
+<Docs to read before editing. Which PRs need a how-note and an interrogate pass. The decision trail path.>
+````
+
+**Reply:** the plan path, the PR ids with their dependencies and the review-gated set, what the prototypes proved and what stays unproven, and the check output.

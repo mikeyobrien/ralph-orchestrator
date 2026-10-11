@@ -1,0 +1,42 @@
+---
+description: Opening a PR playbook. Read at the end of any playbook that ships code. Covers branch hygiene, commit shape, PR prose, and forge choice for this repo.
+alwaysApply: false
+---
+
+### Opening a PR
+
+Invoked at the end of every other playbook that ships.
+
+Host mapping is in `.cursor/rules/rigor-mode.mdc`. Two writers on one branch each get their own worktree, or `git fetch` and `git reset --hard origin/<branch>` between them.
+
+**Worktree.** Branch off the remote default. Confirm it with `git symbolic-ref refs/remotes/origin/HEAD`. Today that is `main`. `integration/v3-prerelease` is a long-lived branch, not the base, unless that command says otherwise. Cloud agents use the session branch (`cursor/<descriptive-name>-8ca2`) and open a second worktree only when two writers would share one checkout. IDE and CLI agents with unrelated dirty work patch it out, use a fresh worktree, and apply. A snarled branch resets from the default branch and redoes the minimum. Done when the work lives on a clean branch off the default.
+
+**Commits.** Commit liberally. Rebase into small, ordered commits before opening PRs. Each commit is a future PR. Landable, ordered to tell the story. Amend when the fix belongs in a just-made commit. Done when every commit is landable and ordered.
+
+**Prose.** Before review, delete comments that narrate what the code shows. Keep a comment only for a non-obvious why. Write the PR title, PR description, and commit body in the voice of Writing the reply. One word for each action, keep articles, and prefer a plain verb over `-ing`. Done when the diff comment pass has run and the title and body follow that voice.
+
+**Titles.** Conventional Commits. `type(scope): subject`. Types are `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `perf`. Scope is the changed area. Subject is short and imperative. Name a real symbol when one carries the change. No trailing period.
+
+**Descriptions.** The PR body is a briefing, not the lab notebook. The squash commit body is the PR body. If the body would make the squash commit longer than about 40 lines, cut the body.
+
+Use these sections in order. Drop a section when it has nothing to say.
+
+- `## Why`. Intent and approach in one or two short paragraphs.
+- `## Scope`. Bullets of real symbols and paths. Both sides of a rename.
+- `## Tradeoffs`. Rejected alternatives a reviewer would otherwise ask about.
+- `## Blast Radius`. Who or what the change touches, and why it is safe or risky.
+- `## Verification`. Each real run path and its outcome. For perf, one primary number with unit in `before → after` form.
+
+After these sections, attach videos or screenshots when they prove a claim. Put lab-notebook detail in a linked artifact outside the body.
+
+**Forge.** This repo is GitHub. Resolve the forge before the first PR operation. A Cursor cloud agent uses the host PR tool (`ManagePullRequest`) when the session requires it, and passes `base_branch` as the remote default. An IDE or CLI agent uses `gh pr create`. Never require Graphite (`gt`). Done when the forge choice is recorded.
+
+**Size and stacks.** Prefer five narrow PRs to one large PR. A stack is a base-branch chain. The root PR targets the default branch. Each child rebases onto its parent's exact tip and its PR targets the parent branch. Create a child with `gh pr create --base <parent-branch>`, or the host PR tool's base field.
+
+**Readiness.** Open ready when the host allows it. IDE and CLI agents omit `--draft`. Cursor cloud agents open draft unless the user asked for ready, and the reply says draft. If a PR still opens as a draft and the user asked for ready, run `gh pr ready <number>`. Run `gh pr view` before you refer to PR status. Done when the view reports the readiness you intended.
+
+**Babysit.** Opening a PR does not start a babysit. Post the URL and keep building.
+
+A subagent that opens a PR runs the interrogate pass and the comment purge. It returns the URL and does not babysit.
+
+**Reply:** the PR URL.

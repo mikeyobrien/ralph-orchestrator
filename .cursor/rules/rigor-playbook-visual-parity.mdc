@@ -1,0 +1,18 @@
+---
+description: Visual parity playbook. Read when UI must match a baseline pixel for pixel. Equivalence is an image diff, and the baseline is not edited to make a diff pass.
+alwaysApply: false
+---
+
+### Visual parity
+
+**You own pixel-exact equivalence. The baseline is the spec. You do not touch it.** Equivalence is verified by image diff, not by eye.
+
+Host mapping is in `.cursor/rules/rigor-mode.mdc`. One worktree per component owner.
+
+1. Establish the baseline first, before any migration. A visual regression harness that screenshots the current component across its states, plus the target when matching two implementations. No baseline, no parity claim. Done when baseline screenshots exist for every in-scope state.
+2. Anti-shortcut clauses, stated and held. No harness modifications, no baseline tampering, no component restructuring to make a diff pass. If the baseline looks wrong, ask. Do not edit it. Done when those clauses are on the todo list.
+3. Migrate one component at a time. Parallelize across worktrees, one owner per component. Shared primitives migrate first as a blocking phase. Done when shared primitives have landed and each remaining component has an owner.
+4. Verify each component against its baseline via image diff on the matching surface. A nonzero diff is a fail. Investigate the pixel delta. Keep going per component until the diff is zero. Done when every in-scope component has pixel-diff 0.
+5. Run Opening a PR (`.cursor/rules/rigor-playbook-opening-a-pr.mdc`) per component or per safe batch. Done when those PR URLs exist.
+
+**Reply:** components migrated, the diff result for each, the baseline harness location, what's left.
