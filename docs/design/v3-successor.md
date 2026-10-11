@@ -1,297 +1,257 @@
 # V3 successor: one agent, many hats
 
-Status: proposal. Anchored to `integration/v3-prerelease` at `a01826d`.
+Status: proposal, revised. Anchored to `integration/v3-prerelease` at `a01826d`, and to `@earendil-works/pi-durable` as of `earendil-works/pi` commit `8a9c051` (`packages/durable`). The package is experimental: the API changes without notice. This revision replaces the earlier draft that drove `pi --mode rpc` as a subprocess and invented a Ralph event log, job queue, and crash retry.
+
 No code in this change. Implementation specs, when this is accepted, go in `.ralph/specs/` and cite this file.
-
-Ralph 3 as it stands on this branch is a TUI and coordination shell around the autoloop subprocess. Autoloop owns the loop, picks a role, and starts a new agent process for that role. That got feature-parity work done. It is the wrong shape for the product.
-
-The successor is the spiritual successor of classic Ralph, built on Pi. One Pi session is the agent. Hats are modes that session wears when events say so. The user can talk, interrupt, and steer at any moment. Long work is a background job. The conversation does not wait on it.
 
 ## Vision
 
-A run is a conversation with a durable Pi session, plus a durable event log that decides which hat speaks next.
+Ralph is an opinionated workflow on a [pi-durable](https://github.com/earendil-works/pi/tree/8a9c051f80090895abbc64262bc90d95b42103c4/packages/durable) Harness. One root conversation is the agent. Hats are modes that conversation wears. The user can talk, interrupt, and steer at any moment, including while a run is busy. Long work is a durable child task or a subagent conversation. Cancel aborts. A crash is `Harness.open` on the same storage plus `resume()`.
 
-The user states a goal. Ralph wears the hat that goal triggers and answers in the foreground session. When the next step is long — a test suite, a wide edit, a review of many files — the agent enqueues a job, tells the user what it queued, and returns to the prompt. A worker Pi session runs the job. Its completion is an event. That event wakes a hat, which speaks in the same foreground session. Cancel aborts the foreground turn and every worker. The conversation stays open.
+pi-durable already commits every conversation entry, document edit, and task checkpoint before it is shown. It already queues input on a busy conversation (`pi.inbox`), watches commits, derives agent events, compacts, resets, tracks usage, and resumes a run the last process left unfinished. Ralph does not build a second copy of any of that.
 
-Hats exist so a workflow can be planner, then builder, then reviewer, without hiring a new agent per role and without losing the thread the user is talking to.
+What Ralph adds is the hat graph: which instructions are active, which events a hat may publish, which hat wakes next, and when the goal is done. That policy is a pi-durable extension plus one document. It is not a new engine.
 
 ## Non-goals
 
-- A swarm. One foreground model, one transcript. Background jobs are fresh, short-lived Pi sessions with a frozen brief. They are not peers in the conversation.
+- A second durability layer. No `.ralph/events.jsonl` authority, no `session.json`, no Ralph job table, no crash-retry loop beside the Harness.
+- Driving the `pi` CLI (`--mode rpc`, `--mode json`, `--no-session`). That is a different process model. `specs/pi-agent-support/` describes it; this design does not use it.
 - Autoloop as a hidden engine. Role dispatch, journals, and `autoloop control` do not sit under this loop.
-- A multi-backend product. Claude, Kiro, Gemini, Codex, Copilot, OpenCode, Roo, ACP, and OMP are out of the successor path. Pi is the harness.
-- Blocking human-in-the-loop. An ask is a message. It does not freeze the supervisor, the input box, or other jobs.
-- Pixel parity with v2: lifecycle hooks, per-hat backends, the wave CLI, scratchpad-as-authority, and session-cassette replay.
-- Rebuilding the web dashboard in the first slices. It follows the event log once the loop is real.
-- Embedding Pi. The boundary is Pi's existing `--mode rpc` subprocess.
+- A swarm of peer agents. The root conversation is the one the user talks to. Other conversations are children with a frozen brief.
+- A multi-backend product. Claude, Kiro, Gemini, Codex, Copilot, OpenCode, Roo, ACP, and OMP are out of this path. The model is whatever the root conversation's `pi.agent` selects through pi-ai.
+- Rewriting pi-durable, wrapping it in a Rust port, or embedding it through N-API.
+- Pixel parity with v2 shell hooks, per-hat backends, the wave CLI, and cassette replay.
+- Rebuilding the web dashboard in the first slices.
 
 ## What is wrong with current v3
 
-`ralph run` always enters `autoloop_engine::run_autoloop_engine` (`crates/ralph-cli/src/main.rs`). The in-house event loop is already gone. Hats are lowered to an autoloop preset (`crates/ralph-cli/src/autoloop_preset_gen.rs`): one role file per hat, a `[handoff]` table from triggers, then a fresh backend process per iteration. The Pi mapping still launches `pi -p --mode json --no-session` (`crates/ralph-adapters/src/cli_backend.rs`). Session persistence, the thing Pi is for, is switched off. Each hat switch starts a cold prompt.
+`ralph run` always enters `autoloop_engine::run_autoloop_engine` (`crates/ralph-cli/src/main.rs`). Hats are lowered to an autoloop preset (`crates/ralph-cli/src/autoloop_preset_gen.rs`): one role file per hat, a fresh backend process per iteration. The Pi mapping launches `pi -p --mode json --no-session` (`crates/ralph-adapters/src/cli_backend.rs`), which throws away Pi session identity.
 
-The restored surfaces are adapters onto that subprocess, not a conversation:
+The restored surfaces are adapters onto that subprocess:
 
-- `--rpc` (commit messages tag this `#343` / `#368`) translates autoloop's coarse `--events` stream into `RpcEvent`. Two mappers exist (`crates/ralph-cli/src/rpc_events.rs`, `crates/ralph-adapters/src/autoloop_rpc.rs`). A turn's text arrives as one `TextDelta` of `backend.output` at the iteration boundary. Pi's token stream never reaches the wire.
-- `ralph resume` (tagged `#344`) stores an autoloop `run_id` under `.ralph/autoloop` and execs `autoloop resume`. `engine_state.rs` also plants a `.autoloop` → `.ralph/autoloop` symlink so autoloop's own CLI can find that state.
-- Human questions are `ask.pending`. Autoloop blocks until `autoloop control respond` (`crates/ralph-cli/src/autoloop_robot.rs`). Telegram and web only relay that block.
-- Configured lifecycle hooks are inert. Preflight says so (`crates/ralph-core/src/preflight.rs`).
-- `generate_preset` writes `id`, `name`, `emits`, `concurrency`, `aggregate`, and `prompt_file`. It drops `backend`, `default_publishes`, `max_activations`, `disallowed_tools`, and `timeout`, which `HatConfig` still accepts. Skills and `.ralph/agent/memories.md` are not injected. Ralph tasks are observational; autoloop has a second task store. The gap analysis in `.ralph/specs/v2-engine-autoloop-gap-analysis.md` recorded these; the preset generator on this tip still behaves that way.
-- The live web watcher still follows `.ralph/current-events` (`crates/ralph-api/src/event_watcher.rs`). The engine writes a different stream.
+- `--rpc` (commit messages tag this `#343` / `#368`) translates autoloop's coarse `--events` stream into `RpcEvent`. Two mappers exist (`crates/ralph-cli/src/rpc_events.rs`, `crates/ralph-adapters/src/autoloop_rpc.rs`). A turn arrives as one blob of `backend.output`.
+- `ralph resume` (tagged `#344`) stores an autoloop `run_id` under `.ralph/autoloop` and execs `autoloop resume`. `engine_state.rs` plants a `.autoloop` symlink so autoloop's CLI can find that state.
+- Human questions are `ask.pending`. Autoloop blocks until `autoloop control respond` (`crates/ralph-cli/src/autoloop_robot.rs`).
+- Configured lifecycle hooks are inert (`crates/ralph-core/src/preflight.rs`).
+- `generate_preset` writes `id`, `name`, `emits`, `concurrency`, `aggregate`, and `prompt_file`. It drops `backend`, `default_publishes`, `max_activations`, `disallowed_tools`, and `timeout`. Skills and memories are not injected. Ralph tasks and autoloop tasks are two stores (`.ralph/specs/v2-engine-autoloop-gap-analysis.md`).
+- The web watcher still follows `.ralph/current-events` (`crates/ralph-api/src/event_watcher.rs`).
 
-`HatRegistry`, `EventBus`, and `EventLogger` are still in the tree. They are not on the run path. `EventLogger` already appends `.ralph/events.jsonl`. That file becomes the authority. The autoloop journal does not.
+`HatRegistry`, `EventBus`, and `EventLogger` are not on the run path. `EventLogger`'s `.ralph/events.jsonl` does not become the authority. The Harness transcript and documents do.
 
-Pi itself, as already researched in `specs/pi-agent-support/`, supports the loop this product wants: `--mode rpc` stays up and accepts `prompt`, `steer`, `follow_up`, and `abort`; the first NDJSON record is a `session` event with an id; `turn_end.message.usage` carries `cacheRead` and `cacheWrite`; `-c` / `--continue` resumes. Ralph's `RpcCommand` enum was copied from that protocol. The successor uses it directly instead of reimplementing it over autoloop.
+PR `#377` (open against `main`) stops Ralph's CLI executor from treating a silent Pi tool call as idle. This path does not use that executor. pi-durable checkpoints a tool as a task and bounds streams with `settings.stream.timeoutMs`. Do not reintroduce a silence killer in front of the Harness.
 
-PR `#377` (open against `main`, not in this branch) is relevant once Ralph owns the Pi process again: an open tool call or an in-flight model request is not inactivity. The ceiling is `adapters.pi.tool_timeout`. A silent Pi must not be killed the way print-mode used to kill it. Worker and foreground sessions both follow that rule.
+## Rust and TypeScript
 
-## Keep, adapt, drop
+pi-durable is TypeScript. Extensions, tools, hooks, and tasks are TypeScript. The README states that one process owns a storage at a time and there is no cross-process locking. A Rust thread cannot open the same SQLite while the Harness runs, and it cannot call `submit` or `commit` except through a process that holds the Harness.
 
-### Keep
+Three shapes:
 
-Coordination that autoloop never owned, and the hat vocabulary users already write:
+| Shape | What it means | Verdict |
+|---|---|---|
+| TS core, Rust TUI/CLI over a protocol | A Node host opens the Harness, installs the Ralph extension, and owns hat routing. `ralph` spawns that host. Stdin is commands. Stdout is `watchEvents` batches plus task-graph frames. Rust renders and forwards keystrokes. Rust never opens the database. | **This one.** |
+| Rewrite Ralph in TypeScript | The same host, and also a new TUI, merge queue, worktrees, doctor, and Telegram. | The end state only if the Rust client stays a thin skin. It is the wrong first slice. The ratatui TUI and git coordination are large and are not the pivot. |
+| Rust stays the orchestrator and shells out to a TS sidecar for "a turn" | Rust keeps hat selection, a queue, and a log, and asks the sidecar to run the model. | The autoloop mistake again. `pi.inbox`, task checkpoints, and `requestId` only stay true if the process that owns storage also decides what happens next. A second queue will diverge. |
 
-- Worktrees, merge queue, loop registry, loop lock, loop history, landing, handoff, summary writer, and `completion_coord.rs`. A worktree loop is its own session and its own event log. The primary loop still holds `.ralph/loop.lock` and drains the queue.
-- `HatConfig` and `HatRegistry`. Triggers, publishes, instructions, `description`, `extra_instructions`, `default_publishes`, `max_activations`, `disallowed_tools`, `concurrency`, `aggregate`.
-- `ralph-proto` `Event` topics and the `RpcCommand` / `RpcEvent` vocabulary (`prompt`, `steer`, `follow_up`, `abort`, `set_hat`, hat changes, text deltas, tool calls).
-- `pi_stream.rs` and `PiUsage` (`cacheRead`, `cacheWrite`, cost).
-- Memories (`.ralph/agent/memories.md`) and tasks (`.ralph/agent/tasks.jsonl`). One store each.
-- `file_lock`, diagnostics, preflight (minus engine-binary install), the TUI widgets, Telegram and web as transports.
-- `ralph emit` as the agent's write path into the event log. The urgent-steer check in `emit_command` stays until steer text is in the turn that is about to hand off.
-- `event_parser.rs` as the fallback when the model writes an `<event>` tag instead of calling `ralph emit`. Evidence checks on `build.done` stay attached to that topic.
+The process boundary is allowed. A second brain is not. Headless `ralph run` is the host with no TUI. The TUI is a client that can die and reattach: the host is still the Harness, and `resume()` continues work the client never saw.
 
-### Adapt
+Distribution: the Rust binary spawns `node` with a pinned `@earendil-works/pi-durable`. Pin the commit this doc was read against (`8a9c051`) until a release exists. Do not vendor the package.
 
-- `cli_backend` Pi invocation. Foreground and workers use `pi --mode rpc` with a session. `--no-session` leaves this path.
-- `rpc_events.rs`. It emits from the event log and the live Pi stream. It stops reading `AutoloopEvent`.
-- `engine_state.rs`. Keep the fail-closed, no-symlink directory checks. Point them at `.ralph/pi/` and the event log. Stop creating `.ralph/autoloop` and the `.autoloop` symlink.
-- `urgent_steer.rs`. Records become `user.steer` events. Pi `steer` is the delivery mechanism while a turn is in flight.
-- TUI source (`ralph-tui/src/autoloop_source.rs`). It tails the event log and Pi deltas. The input box is part of the product, not a quit key.
-- `autoloop_robot.rs`. Becomes a non-blocking steer and cancel bridge. `ask.pending` is not a lock.
-- `ralph-bench`. Drives the supervisor.
-- `event_watcher.rs`. Follows the authority log when the dashboard is touched. Not a first-slice requirement.
-- `HatConfig.concurrency` and `aggregate`. They mean jobs and a wake-when-terminal hat, not autoloop role fields.
-- Resume. `ralph resume` reopens the Pi session id and replays events the agent has not been shown. It does not exec `autoloop resume`.
+### Protocol
 
-### Drop
+Commands, one JSON line each: `submit` (content, `whenBusy`, `requestId`), `abort` (`background` flag), `configure` (hat id), `answer` (a follow-up input). The host assigns `requestId`s the client did not, so a reattach does not double-submit.
 
-- The autoloop subprocess and its Ralph-side machinery: `autoloop_runner`, `autoloop_backend`, `autoloop_events`, `autoloop_event_tailer`, `autoloop_journal`, `autoloop_rpc`, `autoloop_preset_gen`, `autoloop_health`, `engine_install`, `engine_provision`, fake-autoloop fixtures as the CI gate.
-- `core.engine` and `core.autoloop_preset` as runtime inputs.
-- Per-hat `backend` and `backend_args`. One agent.
-- The hooks engine. It does not run on this branch. Events are the extension point. Do not build the autoloop hook bridge.
-- Scratchpad as something the supervisor injects. The event log and memories are the handoff.
-- Cassette replay of the deleted in-house loop. New tests replay event-log fixtures and a fake Pi RPC script.
-- The second task store and autoloop's project memory file.
-- Treating "hatless" as a second engine. No hats means the default hat below.
+Events out:
 
-`docs/migration/v3-autoloop-engine.md` describes the branch as it is. This document replaces that direction once accepted.
+- `watchEvents` for the root conversation: `snapshot`, `message_*`, `tool_execution_*`, `inbox_update`, `compaction_*`, `usage_changed`, `agent_changed`. Spec §9.4. This stream covers one conversation, not its children.
+- The same stream for each live child conversation. The task graph and the workflow document say which ids are live.
+- `watchTaskGraph` frames (spec §9.5): live tasks, owner edges, `waiting` / `background` / `abortRequested`.
+- Snapshots of the `ralph.workflow` document when it changes (`watchDoc`).
 
-## Event model
+`RpcEvent` in `ralph-proto` can be a projection of those agent events for old clients. It is not a log, and it is not the protocol the host speaks to itself. Agent events are marked experimental in the package. Pin the commit, and treat a protocol break as a host change, not a reason to invent a parallel event bus.
 
-The log is the commit. An in-memory bus is a projection for subscribers (TUI, RPC, Telegram). `EventBus` today is memory-only; it becomes that projection, fed by the append.
+## Map
 
-### Record
-
-```json
-{
-  "id": "01JABC",
-  "seq": 42,
-  "ts": "2026-10-11T20:00:00Z",
-  "topic": "job.done",
-  "payload": "tests passed",
-  "source": "builder",
-  "target": "reviewer",
-  "causation": "01JABA",
-  "idempotency_key": "test:cargo-test"
-}
-```
-
-`seq` is assigned under `file_lock` as the line is appended to `.ralph/events.jsonl`. Readers store `applied_seq`. A crash mid-append leaves a torn last line; readers ignore a trailing partial line and resume after the last good record (the bug the old `event_reader` had against autoloop's journal).
-
-Hat topics are open strings constrained by `publishes`. Lifecycle topics are closed. The supervisor writes every lifecycle topic except the three a hat is allowed to request: `job.enqueue`, `ask.raised`, and `loop.complete`. Those three still have to be listed in `publishes`.
-
-| Topic | Meaning |
-|---|---|
-| `run.start` | Session is up. Payload is the user goal. |
-| `run.cancelled` | Cancel finished. Conversation still open. |
-| `run.completed` | Supervisor accepted completion. |
-| `user.message` | User spoke while the foreground was idle. Starts a turn. |
-| `user.steer` | User spoke during a turn. Delivered with Pi `steer`. |
-| `hat.activated` | Supervisor chose a hat for the next prompt. |
-| `hat.exhausted` | `max_activations` tripped. Payload names the hat. |
-| `event.rejected` | Agent emitted a topic outside `publishes`, or a duplicate idempotency key. |
-| `job.enqueue` | Hat request. Supervisor persists it, then runs the job. |
-| `job.started` / `job.progress` / `job.done` / `job.failed` / `job.cancelled` | Supervisor-only job lifecycle. |
-| `ask.raised` | A question for the user. Does not pause the supervisor. |
-| `ask.answered` | The user's answer, when it arrives. |
-| `loop.complete` | The hat declared the goal done. |
-
-`ralph emit TOPIC PAYLOAD` appends one record and returns `id` and `seq`. Payload is a string or a JSON value, which `ralph emit` already accepts. The agent does not invent ids. A `target` forces the next hat. Otherwise the existing rule stands: each trigger string maps to exactly one hat (`AmbiguousRouting` in `config.rs`). Overlapping globs keep the bus rule, a specific subscription ahead of a `*` fallback.
-
-A topic outside the active hat's `publishes` is refused. The supervisor appends `event.rejected` and steers the refusal into the open turn. That is the backpressure gate. `build.done` still has to carry the evidence `event_parser` already knows how to read; a failed check is an `event.rejected`, not a silent drop.
-
-If a turn ends with no successful emit and the hat sets `default_publishes`, the supervisor appends that topic. The same rule classic Ralph had, enforced here because the preset generator dropped it.
+| Ralph idea | pi-durable | Ralph still writes |
+|---|---|---|
+| The agent | `harness.root()`. One conversation, one `pi.provider` session id. | The decision to have exactly one root the user talks to. |
+| A hat | `configure({ instructions })` on that root. The instruction body renders last, as the `instructions` section. | Hat YAML: triggers, publishes, instruction text, activation cap. |
+| Hat with different tools | `configure({ modelTools })` or an extension added the way `27-plan-mode.ts` adds plan mode. | Which hats need a tool change. Default is none. |
+| Hat with a different model or a long brief | A child conversation (`23-subagent-background.ts`, `28-reviewer.ts`). Fresh `pi.provider` id. | When work leaves the root. |
+| Workflow event | Display entry `ralph.event` (no `model` field) plus `ralph.workflow.lastEvent`, both in the emit tool's commit. | The topic allow-list and who wakes next. |
+| Current hat, counts, goal | Document `ralph.workflow`. | The schema and the routing that updates it. |
+| User talks while busy | `submit` with `whenBusy: "steer"` or the default follow-up. Queue is `pi.inbox` (`20-inbox.ts`). | The choice that a user keystroke is a steer, not a new run. |
+| UI | `viewState` / `watch` / `watchEvents` (`05-watches.ts`, `19-json.ts`, `21-late-join.ts`). | The TUI layout. |
+| Background agent work | Subagent conversation owned by a background anchor, reporter posts the answer back (`23-subagent-background.ts`). | The tool the root calls to start one, and the brief. |
+| Fan-out / waves | A task that creates children and commits `waiting` (`24-child-tasks.ts`). `allSettled` is `aggregate: wait_for_all`. `failFast` aborts the rest. | Hat `concurrency` as the cap. |
+| Cancel | `conversation.abort(context, { background: true })`. | Ctrl-C means that flag. Background work does not survive cancel. |
+| Resume | `Harness.open(same sqlite)` then `resume()`. | Nothing. |
+| Idempotency | `requestId` on submit. `replay: "safe"` tools reuse nested calls after a crash. | `requestId`s derived from the logical action, not a Ralph retry loop. |
+| Compaction, reset, usage | Built in. `pi.usage`, `harness.usage()`, `compact()`, `reset()`. | Budgets that read `pi.usage` and refuse another submit. |
+| Hooks | Extension hooks on `GenerationTask` and `ToolTask`. | A guard hook for the emit allow-list. v2 shell hooks are not ported. |
+| Memories and tasks | Documents, or a section that renders a file. | One authority. See migration. |
 
 ## Hats
 
-A hat is data: when it wakes, what it may say, and the instructions pasted into the user message for that wake.
+A hat is data loaded from the existing `HatConfig` YAML. The host installs one extension, `ralph`:
 
-```yaml
-hats:
-  builder:
-    name: "Builder"
-    description: "Implements the current plan"
-    triggers: ["plan.ready", "review.changes"]
-    publishes: ["build.done", "build.failed", "job.enqueue"]
-    max_activations: 8
-    disallowed_tools: ["bash"]   # refused on the foreground session
-    instructions: |
-      Implement the plan named in the event.
-      If the next step is a long command or a wide edit, enqueue a job and stop.
+```typescript
+defineExtension({
+  name: "ralph",
+  sections: [
+    section("identity", () => IDENTITY, { tag: false }), // frozen text
+    section("catalog", () => hatCatalog, { tag: false }), // ids, descriptions, triggers, publishes
+  ],
+  tools: [emitTool],
+})
 ```
 
-The supervisor picks the hat. The model does not pick its own hat. `set_hat` from the user appends a steer and forces the next wake.
+`IDENTITY` and `hatCatalog` are pure functions of the config file. They do not read the clock, the inbox, or the open-task list.
 
-Switching hats does not spawn a process and does not edit the system prompt. The next user message in the same Pi session is:
+The active hat's instruction body is the conversation's `instructions`, set with `configure({ instructions })` when the hat changes (`15-system-prompt.ts`, spec §7.4). `instructions` renders last. A change that keeps section order appends one `pi.system` delta with the new `instructions` value. The prefix the model already saw stays. That is the cache-safe switch.
 
-```text
-Hat: builder
-<instructions>
+Rules that follow from spec §7.4:
 
-Event 01JAB9 plan.ready
-<payload>
+- Do not put the triggering event, job list, or time into a section. A section that changes every request appends a system delta and defeats the provider cache. Those facts go in the `submit` content.
+- Do not reorder sections when the hat changes. An order mismatch deletes every section and re-adds them, which is a new baseline.
+- Do not `reset()` to switch hats. Reset hides prior entries from the model. The transcript is the point of one agent.
+- Do not `compact()` to switch hats. Compaction writes a new baseline on purpose. Leave compaction to the Harness settings.
+- Keep the root tool list stable. A `modelTools` or tool-declaration change is its own system delta. Hats that only differ by prose do not touch tools. A hat that must be read-only uses the plan-mode shape (`27-plan-mode.ts`): add an extension and narrow tools for that stretch, and put the tool list back after. That is a deliberate delta, not the common path.
+- Model and thinking level are request options, not prompt text (spec §7.4). Changing them on the root does not rewrite sections, and `pi.provider` survives a model change. Still: the root keeps one model. A cheaper reviewer is a child conversation (`28-reviewer.ts`), which gets a fresh provider session and cannot invalidate the root cache.
 
-Open jobs:
-- 01JABC test:cargo-test  running
+The host picks the hat after a run settles. The model does not. Each trigger string already maps to one hat (`AmbiguousRouting` in `config.rs`). The host reads `ralph.workflow.lastEvent`, configures `instructions` if the hat changed, and `submit`s the next wake with `requestId` `wake:<event id>`. A `target` on the event forces the hat. `max_activations` lives in the document. The next trigger records topic `hat.exhausted` and does not submit.
 
-You may emit: build.done, build.failed, job.enqueue
-```
+Empty `hats:` is one default hat, `ralph`, triggering on the goal, on user input, and on child reports, publishing `loop.complete`. Hatless is not a second runtime.
 
-`disallowed_tools` is enforced by passing Pi `--tools` for that turn's process only when the session is a worker started with a restricted set. The foreground session's tool list is fixed at start (cache). A foreground hat that disallows a tool gets the restriction in the wake message, and the supervisor rejects a tool call that violates it before the result is trusted. File-write audit from v2 stays for hats that disallow `edit` or `write`.
+### Emit
 
-`max_activations` increments on `hat.activated`. The next matching trigger appends `hat.exhausted` and skips the prompt.
+The agent publishes by calling the `emit` tool. In that tool's commit the host writes two things, and only those:
 
-### Default hat
+- `ralph.workflow.lastEvent`, which routing reads.
+- A display entry `{ kind: "ralph.event", data: { topic, payload } }` with no `model` field, so the UI has a line and the model is not handed a second user message in the middle of the turn. The model sees the tool result.
 
-Empty `hats:` is one hat, not a special loop:
+`kind` must not start with `pi.` (README, busy conversations). A topic outside the active hat's `publishes` fails the tool before the commit, and the model gets an error result. `build.done` still has to carry the evidence `event_parser` already understands. A failed check is that error result. If a run ends with no `lastEvent` and the hat sets `default_publishes`, the host commits that topic itself before routing. No extra model turn, and no side file.
 
-```yaml
-ralph:
-  name: Ralph
-  description: Works the objective until it is done
-  triggers: ["run.start", "user.message", "job.done", "job.failed", "ask.answered"]
-  publishes: ["loop.complete", "job.enqueue", "ask.raised"]
-```
+User-visible notes that are not hat publishes use `submit({ type: "write", entry: { kind, data } })`. A write with only `kind` and `data` appends immediately, even mid-run.
 
 ### Completion
 
-The run completes when a hat emits `loop.complete` and no task is open. Open tasks produce a refusal, not a warning and not a second store's silent override. The legacy completion-promise string is accepted as an alias that the supervisor rewrites into `loop.complete`, so old prompts keep working. `event_loop.max_iterations`, `max_runtime`, and `max_cost` are enforced by the supervisor between turns. `max_consecutive_failures` is enforced again; v3 dropped it only because autoloop had no equivalent.
+The run is done when a hat emits `loop.complete` and the `ralph.tasks` document has nothing open. Open tasks make the emit tool return an error. The legacy completion-promise string is accepted by the host as that same topic. `max_iterations` is a counter in `ralph.workflow`. `max_cost` reads `pi.usage`. `max_runtime` is host wall clock between submits. `max_consecutive_failures` counts generation failures the Harness surfaces as unanswered submissions. The Harness already retries provider errors via `settings.retry`; Ralph's counter is for runs that still fail after that.
 
-## Durability on Pi
+## Durability
 
-### Layout
+Storage is one SQLite file, `openNodeSqliteStorage(".ralph/harness.sqlite")`. WAL, `synchronous = NORMAL`: commits survive process death; the newest may be lost on power loss (README, storage). JSONL keeps the whole history in memory; it is for tests, not the product. One Harness per file. A worktree loop is another directory, so it gets its own file and its own process. The merge queue does not open that file.
+
+Layout Ralph owns:
 
 ```text
-.ralph/pi/session.json     # foreground session id, cwd, woken_through_seq
-.ralph/pi/jobs/<job_id>/   # worker session id, pid, brief
-.ralph/events.jsonl        # authority
-.ralph/agent/memories.md
-.ralph/agent/tasks.jsonl
+.ralph/harness.sqlite    # the Harness. Conversations, entries, tasks, documents.
 ```
 
-`session.json` stores the id from Pi's `session` event. Resume launches `pi --mode rpc` against that session (`--continue` / the session id Pi accepts). State lives in the workspace so a worktree does not resume another loop's agent.
+There is no `session.json`. The root conversation id comes from `harness.root()`. Provider cache affinity is `pi.provider`, which survives reopen, retry, reset, compaction, and model changes. A child or a fork gets a new id (README, persist and resume).
 
-### Crash
+Resume is:
 
-1. Rebuild the job table and activation counts by folding `events.jsonl`.
-2. Reattach the foreground session. If the session file is gone, start a new one and send a single recovery message: goal, current hat, open jobs, last 20 events. Do not replay the whole transcript into a fresh session; the old transcript is gone.
-3. A job in `started` whose process is dead: if it produced no `job.progress` and `attempts < 2`, enqueue the same `idempotency_key` once more. Otherwise append `job.failed` with reason `crash` and wake the hat. No further automatic retries.
-4. Prompt the foreground only for events with `seq > woken_through_seq`. Update that cursor after Pi accepts the prompt (`response` success). A duplicate delivery of an already-applied seq does not happen on the happy path; if it does, the wake message carries the seq and the hat instructions say to ignore a seq it has already handled.
+```typescript
+const harness = await Harness.open(await openNodeSqliteStorage(path), options, context);
+const root = await harness.root(context);
+harness.resume();
+```
 
-### Idempotency
+Work left pending stays pending. Submitting or waiting also starts the scheduler. A retried `submit` with the same `requestId` returns the existing submission. `harness.submission(id)` reacquires a wait after restart. A tool that is not `replay: "safe"` does not rerun after a crash; the model gets an `interrupted` result with the output committed so far. Ralph does not add another retry on top. A storage error fails the Harness (`SessionFailed`); the host process exits and the Rust parent reopens. `harness.closed` is that signal.
 
-- Append-only log. Consumers are seq cursors.
-- `job.enqueue` with an `idempotency_key` that already names a non-terminal job returns that job.
-- A second `job.done` or `job.failed` for the same job id is ignored.
-- The supervisor is not a git transaction manager. A worker that commits must tolerate being started twice. The job brief says that. Cancel does not `git reset`.
-
-### What "resume" means
-
-`ralph resume` and `ralph run --continue` are the same operation: attach to the live conversation. They do not start iteration N+1 of a dead autoloop run. If the user wants a new goal, that is a new session.
+`ralph.workflow` holds `{ hat, activations, goal, wokenEntry }`. Routing reads it. The transcript is the history. Folding a JSONL log to rebuild this is the design that was withdrawn.
 
 ## Interactivity
 
-The input path is always available. A running turn, a running job, and an unanswered question do not close it.
+The input path is `submit`. A running turn, a running child, and an unanswered question do not close it. A busy root queues the submission in `pi.inbox`.
 
-| User action | Foreground idle | Turn in flight | Jobs running |
-|---|---|---|---|
-| Message | `user.message`, then a hat wake | Pi `steer` (`user.steer`) | same, jobs keep going |
-| Cancel | no-op on the turn | Pi `abort`, then the prompt returns | abort every worker, append `job.cancelled`, then `run.cancelled` |
-| Quit | exit | abort, then exit | abort workers, then exit |
-| Answer an ask | `ask.answered` | steer the answer | same |
+| User action | What the host calls |
+|---|---|
+| Message while idle | `submit({ type: "input", content, requestId })` |
+| Message during a turn | `submit({ type: "input", content, whenBusy: "steer", requestId })`. Placed after the current tool round. |
+| Message that should wait for the answer | default follow-up (`whenBusy` omitted). |
+| Cancel | `root.abort(context, { background: true })`. Queued inputs are withdrawn. Background anchors and their conversations abort. The root stays open. |
+| Quit | that abort, then `harness.close()`. |
+| Answer a question | a follow-up or steer whose content is the answer. |
 
-Cancel is not quit. After cancel the user is still in the session and can say what to do next. A second signal, or an explicit quit, exits.
+Cancel is not quit. After cancel the user is in the same root and can submit again. Ordinary `abort()` without `background: true` leaves background anchors running (`23-subagent-background.ts`). Ralph's cancel passes `background: true` because cancel stops everything. A future "leave it running" command can call the narrower abort. That is not the default.
 
-Asks: a hat may emit `ask.raised`. The UI shows it. The supervisor keeps accepting input and keeps running jobs. Nothing in the core waits. A hat that truly cannot proceed simply does not enqueue the next step. When `ask.answered` arrives it wakes the hat like any other event.
+Asks do not block the Harness. A hat that needs the user emits a `ralph.event` topic `ask` and stops enqueueing children. The inbox still accepts steers. Nothing in the host waits on Telegram.
 
 ### Surfaces
 
-One protocol. Pi speaks RPC; Ralph's stdin/stdout RPC is that conversation plus the bus.
+- **Host.** The TypeScript process above. Headless attaches stdout to the event stream.
+- **CLI.** `ralph` with a TTY spawns the host and attaches. `ralph run -p "..."` submits the goal and attaches. `--detach` spawns the host and returns. `ralph attach` reconnects: the host is still up, or a new client opens nothing and a new host does `Harness.open` + `resume` if the previous host died.
+- **TUI.** A client. Transcript from agent events, hat badge from `ralph.workflow`, job strip from the task graph. Enter submits. Ctrl-C aborts with `background: true`. Ctrl-D quits. Late join uses the `snapshot` event (`21-late-join.ts`); nothing is replayed from a Ralph log.
+- **Telegram and web.** Same commands. They are clients. They are not on the critical path of the first three milestones.
 
-- **CLI.** `ralph` with a TTY attaches to the session. `ralph run -p "..."` starts (or continues) and attaches. `--detach` enqueues `run.start` and returns the session id. `ralph attach` reconnects.
-- **TUI.** Transcript, hat badge, job strip, input on the bottom row. Enter sends. Ctrl-C cancels. Ctrl-D quits. Job completions render as lines in the transcript and wake the agent.
-- **RPC.** Existing `RpcCommand` values, plus `cancel_job` and `answer`. Outbound events are the real Pi stream (`TextDelta`, `ToolCallStart`, `ToolCallEnd`, usage on turn end) and every bus record as `OrchestrationEvent`. The coarse "one blob per iteration" mapping goes away.
-- **Telegram and web.** Same commands: message, steer, cancel, answer. Progress notifications stay non-blocking (`ralph tools interact progress`). They are not on the critical path of M1–M3.
+The TUI is not a second loop. It does not tail `.ralph/autoloop-events.ndjson` or a private `pi-stream` file.
 
-The TUI is a client of RPC, not a second loop. Headless and TUI cannot drift the way the autoloop event mapper and the TUI source can drift today.
+## Background work
 
-## Background work and concurrency
+The root conversation is one run at a time. That is the Harness rule, and it is what keeps the conversation intelligible. Parallelism is owned work.
 
-Pi is one turn at a time per session. That is a feature. The foreground session is the conversation. Parallelism is the job queue.
+**Agent-shaped work** (review this diff, implement this step) follows `23-subagent-background.ts`:
 
-A job:
+- A background anchor task owns the child conversation, so the root's idle wait and a plain abort stop at the anchor.
+- The child starts as a copy of the root agent, then `configure` narrows it: no nested subagents, the brief as `instructions`, read-only tools when the hat says so.
+- A reporter task submits to the child with `requestId: "job:<anchorId>"` and, when the child answers, submits a follow-up to the root with `requestId: "report:<anchorId>"`. A restart returns the same submissions.
+- The child's transcript is not copied into the root. The report is the payload. That is what keeps the root cache and the root context small.
 
-```json
-{
-  "topic": "job.enqueue",
-  "idempotency_key": "test:cargo-test",
-  "payload": {
-    "hat": "builder",
-    "brief": "Run cargo test -p ralph-core. Report pass or the first failure.",
-    "wave_id": null
-  }
-}
-```
+**Fan-out** (many files, then one synthesizer) follows `24-child-tasks.ts`. One parent task creates N children and commits `status: "waiting"` with `policy: "allSettled"` or `"failFast"`. The parent runs no code while it waits. Hat `concurrency` caps how many children the parent creates at once. Hat `aggregate.timeout` is host policy on that wait, not an autoloop field. There is no `ralph wave` command and no `job.enqueue` record outside the task graph.
 
-The supervisor starts `pi --mode rpc` in `.ralph/pi/jobs/<id>/` with a short system prompt and the brief. The worker does not get the foreground transcript, the hat catalog, or the right to append arbitrary topics. It writes a result. The supervisor appends `job.done` or `job.failed`. Waking the parent hat is the supervisor's decision, from triggers.
+A "run cargo test" job is a `replay: "safe"` tool on a child, or a child task whose phase execs through the conversation's `ExecutionEnv`, with its own idempotency. It is not a row in a Ralph queue. Nested tool calls already record their task id and, for a replay-safe caller, return the call a crash interrupted (`README`, calling tools from tools).
 
-Default cap: one foreground turn, two workers (`jobs.max_parallel`). Hat `concurrency` raises the cap for jobs wearing that hat. Hat `aggregate: wait_for_all` means the hat does not wake on each `job.done`; it wakes once when every job sharing `wave_id` is terminal, or when `aggregate.timeout` fires with whatever has finished. That replaces waves. There is no `ralph wave` command.
-
-Foreground instructions, including the default hat, tell the agent to enqueue anything that is a long command or a multi-file change, then yield. The user can say "do it here." The supervisor allows a foreground tool call in that case. Steer still works, because Pi `steer` exists. The input box still works. The turn occupies the session until it ends or the user cancels.
-
-Worker limits use the `#377` rule: open tool or open model request extends to `adapters.pi.tool_timeout`; true silence with nothing open dies at `adapters.pi.timeout`.
-
-Cancel walks every non-terminal job, sends Pi `abort`, then kills the process group. Each gets `job.cancelled`. Workers do not get a vote.
+Cancel walks from the root with `background: true`, which aborts anchors, reporters, and payment-style children bottom-up (spec §5.4). Ralph does not kill a process group it invented. The Harness aborts the tasks; tool code must honor the context signal. Spec §13 says the Harness will not force-kill non-cooperative extension code inside the process. A bash tool that ignores abort is a tool bug, fixed in the tool, not with a supervisor SIGKILL table.
 
 ## Prompt cache
 
-The foreground system prompt is written once, at session start, and then frozen:
+The stable prefix is the `ralph` sections: identity and the hat catalog, rendered identically on every request. The variable suffix is the newest user message (the wake) plus the model's reply. Hat instructions change as a one-key `pi.system` patch, which is the provider-cache behavior spec §7.4 describes: only what changed is sent again.
 
-1. Identity. One agent, hats are modes, the user may interrupt.
-2. Hat catalog, sorted by id: id, description, triggers, publishes. Not the instruction bodies.
-3. Emit and job contracts, in a fixed wording.
-4. Tool list. Pi's default tools, fixed for the session.
+Acceptance for the cache slice is structural, checked against the transcript the way `15-system-prompt.ts` and `27-plan-mode.ts` print system entries:
 
-Hat instruction bodies, the triggering event, the open-job table, a bounded memory and task suffix, and the latest steer are the new user message. They are supposed to be a cache miss. Everything before them is supposed to be a hit.
+- The second wake of a session, with the same hat, appends no `pi.system` entry.
+- A hat switch appends one `pi.system` whose `sections` touch `instructions` and do not null out the catalog.
+- A section render that includes a timestamp or the live task list fails that test.
 
-Rules that follow from that:
+`pi.usage` is the cost authority. Do not scrape a CLI stream for `cacheRead`. If a provider reports cache tokens inside pi-ai usage, they show up in `usage_changed`. The gate is the delta shape, which we control.
 
-- Do not change the system prompt when the hat changes. `--append-system-prompt` per hat would bust the cache on every switch.
-- Do not rewrite or reorder history. The supervisor does not call Pi `compact`. If Pi compacts itself, record `session.compacted` and accept one miss.
-- Do not paste worker transcripts into the foreground. Paste the `job.done` payload, truncated.
-- Do not inject skills, memories, or the event log into the prefix. Skills and memories are suffix, under a token budget. Prior wakes are already in the transcript; a new wake carries the new event only.
-- Workers use a different, tiny system prompt. They are separate sessions, so they cannot invalidate the foreground cache. That isolation is the reason jobs are not "more turns on the same session."
+Child conversations are separate sessions with short prompts. They do not share the root's provider session id, so they cannot invalidate it.
 
-Acceptance for the cache slice: on the second wake of a session, Pi's `turn_end` usage reports `cacheRead` greater than zero, and a hat switch does not drop `cacheRead` to zero. `PiUsage` already has the fields.
+## What stays from this repo
+
+### Keep
+
+Coordination the Harness does not do:
+
+- Worktrees, merge queue, loop registry, loop lock, loop history, landing, handoff, summary writer, `completion_coord.rs`. Each worktree is its own Harness file. The primary loop still holds `.ralph/loop.lock` and drains the queue when the host reports the root done, cancelled, or failed.
+- `HatConfig` and the YAML the user already writes: triggers, publishes, instructions, description, `extra_instructions`, `default_publishes`, `max_activations`, `disallowed_tools`, `concurrency`, `aggregate`. The loader can stay in Rust and pass the parsed config to the host, or move with the host. The schema stays.
+- The TUI widgets, as a client of the protocol.
+- Telegram and the web robot as transports that send `submit` and `abort`.
+- Diagnostics and doctor, minus engine-binary install.
+- `event_parser` evidence checks, called from the emit tool (port the predicate, or have the host reject a payload the Rust helper rejects).
+
+### Adapt
+
+- `ralph run` / `ralph resume` spawn or reattach the host. Resume is `Harness.open` + `resume()`, not `autoloop resume`.
+- The TUI source (`ralph-tui/src/autoloop_source.rs`) consumes agent events and the task graph.
+- `RpcEvent` becomes a projection written by the host for legacy clients.
+- `urgent_steer` becomes `whenBusy: "steer"`.
+- Memories and tasks move into documents. The CLI can project them back to files for `ralph tools` during migration. The document is the authority.
+- `engine_state.rs` fail-closed path checks apply to the directory that contains `harness.sqlite`. They stop creating `.ralph/autoloop` and the `.autoloop` symlink.
+
+### Drop
+
+- Autoloop subprocess machinery: `autoloop_runner`, `autoloop_backend`, `autoloop_events`, `autoloop_event_tailer`, `autoloop_journal`, `autoloop_rpc`, `autoloop_preset_gen`, `autoloop_health`, `engine_install`, `engine_provision`, fake-autoloop fixtures as the CI gate.
+- `core.engine` and `core.autoloop_preset`.
+- Per-hat `backend` and `backend_args`.
+- The v2 shell hook engine. It does not run on this branch. pi-durable hooks are the extension point.
+- `pi_stream.rs` and `CliBackend::pi()` on this path, including `--no-session`.
+- A Ralph-owned event log, job queue, session file, and crash-retry policy.
+- Scratchpad injection. The transcript and `ralph.workflow` are the handoff.
+- Cassette replay of the deleted in-house loop. Tests drive a Harness with the faux provider, as the package examples do.
+
+`docs/migration/v3-autoloop-engine.md` describes this branch as it is. This document replaces that direction once accepted.
 
 ## Migration
 
@@ -299,54 +259,55 @@ Acceptance for the cache slice: on the second wake of a session, Pi's `turn_end`
 
 | Input | Successor |
 |---|---|
-| `hats.*.triggers/publishes/instructions/description/extra_instructions` | Unchanged. |
-| `default_publishes`, `max_activations`, `disallowed_tools`, `timeout`, `concurrency`, `aggregate` | Enforced. v3 accepted these and dropped them on the floor. |
-| `hats.*.backend`, `backend_args` | Config error. One Pi. |
-| `cli.backend` other than `pi` | Config error on this path, with the list of removed backends. |
-| `event_loop` budgets, `completion_promise`, `starting_event`, `required_events` | Kept. Promise string aliases `loop.complete`. |
-| `memories`, `tasks` | Same files, suffix injection, and the completion rule above. |
-| `hooks` | Config error. Point at events. |
-| Scratchpad | Ignored. The log is the handoff. |
-| `ralph wave` | Already gone. Use `concurrency` and `aggregate`. |
+| Hat triggers, publishes, instructions, description, `extra_instructions` | Unchanged schema. Loaded into the `ralph` extension and `instructions`. |
+| `default_publishes`, `max_activations`, `disallowed_tools`, `concurrency`, `aggregate` | Enforced in the host. v3 accepted these and dropped them in `generate_preset`. |
+| `timeout` | Child-task and tool bounds via Harness settings, not a per-hat process kill. |
+| `hats.*.backend`, `backend_args` | Config error. One root model. A child may pin a model in its own `configure`. |
+| `cli.backend` other than the pi-durable host | Config error on this path. |
+| `event_loop` budgets, `completion_promise`, `starting_event` | Host policy above. The promise string is `loop.complete`. |
+| `memories`, `tasks` | Imported once into `ralph.memories` and `ralph.tasks`. Files become a projection. |
+| `hooks` | Config error. An extension hook is the replacement. |
+| Scratchpad | Ignored. |
+| `ralph wave` | Already gone. `concurrency` and `aggregate` are child tasks. |
 
-### From v3 configs and ops
+### From v3
 
 | Input | Successor |
 |---|---|
-| `core.engine`, `core.autoloop_preset` | Config error. Hats are the workflow. |
-| `ralph resume`, `run --continue` | Pi session plus event cursor. |
-| `.ralph/autoloop/`, `.autoloop` symlink | Not created. Leftover directories are unused. |
-| `ralph run --rpc` | Same command. Richer events. |
+| `core.engine`, `core.autoloop_preset` | Config error. |
+| `ralph resume`, `run --continue` | Reopen `.ralph/harness.sqlite`. |
+| `.ralph/autoloop/`, `.autoloop` symlink | Not created. |
+| `ralph run --rpc` | The host protocol. Legacy `RpcEvent` is a projection. |
 | Autoloop task and memory files | Not read. |
-| Dashboard `.ralph/current-events` | Stale until the watcher moves. Documented as unwired, not silently wrong. |
+| Dashboard `.ralph/current-events` | Unwired until a client speaks the protocol. Say so. Do not point it at a log we are not writing. |
 
-Presets that are hat YAML keep loading through `-H`. Presets that are only an autoloop TOML topology have to be rewritten as hats. No dual-engine flag.
+Hat YAML presets keep loading through `-H`. An autoloop TOML topology has to be rewritten as hats.
 
 ## Milestones
 
-Each milestone is shippable on its own and leaves `ralph run` on the previous engine until M6. New code lives beside `autoloop_engine` until the cut.
+Until M6, `ralph run` on this branch stays on autoloop. The host lands beside it. Each milestone is a program you can kill and reopen.
 
-**M1. One session.** Spawn `pi --mode rpc`, record the `session` id, round-trip one user message, stream text to stdout. `kill -9` then `ralph resume` reattaches and does not repeat a finished turn. Cancel aborts and returns to a prompt. No hats, no jobs.
+**M1. Host.** A TypeScript package opens SQLite, `root()`, submits one input, prints `watchEvents`. `kill -9`, then `Harness.open` + `resume()`, and the unfinished run continues. Same `requestId` does not double-submit. No hats.
 
-**M2. Log and hats.** Authority `events.jsonl` with `id` and `seq`. Load `HatConfig`. A wake is a user message in the same session. `ralph emit` routes. Enforce `publishes`, `default_publishes`, `max_activations`, and `build.done` evidence. Empty hats get the default hat. Completion requires `loop.complete` and no open tasks.
+**M2. Hats.** The `ralph` extension, frozen catalog section, `configure({ instructions })` on switch, `ralph.workflow` document, `emit` tool writing `ralph.event`. Trigger routing. `default_publishes`, `max_activations`, `build.done` evidence. Default hat when YAML is empty. Completion is `loop.complete` and no open tasks.
 
-**M3. Jobs.** `job.*` events, worker sessions, `jobs.max_parallel`, idempotency keys, the one crash retry, cancel-all. `concurrency` and `aggregate` implemented as waves of jobs. Foreground copy tells the agent to enqueue long work.
+**M3. Children.** Background subagents as in `23-subagent-background.ts`. Fan-out as in `24-child-tasks.ts` with `allSettled` / `failFast` and a concurrency cap. Cancel is `abort({ background: true })`. Idempotency is `requestId` only.
 
-**M4. Clients.** TUI input always live. Steer maps to Pi `steer`. RPC emits live deltas and bus events. Telegram and web send steer, cancel, and answers. An ask does not block.
+**M4. Clients.** Rust TUI and CLI speak the protocol. Steer and follow-up. Task-graph strip. Telegram sends the same commands. A second client can attach after the first disconnects and get a `snapshot`.
 
-**M5. Cache.** Frozen system prompt. Persist `cacheRead` / `cacheWrite`. A test asserts the second wake and a hat switch still read cache.
+**M5. Cache.** Tests on the faux provider assert the system-entry shape in the cache section. No timestamp in a section. Hat switch is a one-key delta.
 
-**M6. Cut.** `ralph run` uses the supervisor. Delete the autoloop spawn path, preset generator, engine installer, symlink, and both autoloop RPC mappers. v2 configs load under the table above. Worktree, merge, and landing run off `run.completed` / cancel / failure. Event-log fixtures replace fake-autoloop fixtures.
+**M6. Cut.** `ralph run` spawns the host. Delete the autoloop spawn path, preset generator, engine installer, symlink, and both RPC mappers. v2 YAML loads under the table above. Worktree, merge, and landing run off the host's terminal status. Faux-provider Harness tests replace fake-autoloop fixtures.
 
 ## Open questions
 
-1. Pi binary. This design assumes the CLI in `specs/pi-agent-support/` (`--mode rpc`, `session` event, `-c`/`--continue`, `cacheRead`/`cacheWrite`). Confirm that is the harness, and whether session files must be copied under `.ralph/pi/` so resume works off this machine.
-2. Jobs are separate sessions so the foreground stays short and cacheable. Is there a case that must share the foreground transcript instead?
-3. May a background job pin a different Pi `--model` in v1, or is one model the rule until M6 ships?
-4. Completion is `loop.complete` and zero open tasks, with the promise string as an alias. Should "zero open tasks" alone be enough, the way some v2 loops treated the task list?
-5. Hooks become a config error. Are there hook commands that have to survive as event subscribers in M6?
-6. Telegram in M4, or after the TTY and RPC loop have been used for real?
-7. Accepting this doc: does autoloop feature work on `integration/v3-prerelease` stop, or do both tracks continue until M6?
-8. The "do it here" escape lets a long tool run in the foreground while steer still works. Is that the right escape, or should long foreground tools be refused?
-9. One automatic retry, only for a crash before any `job.progress`. Should auth and quota stay inside Pi and never surface as job failures the hat has to handle?
-10. The web dashboard keeps reading `.ralph/current-events` until a later change. Is a loud warning enough through M6?
+1. Pin `8a9c051`, or wait for a release tag before M1? The README says the API changes without notice. The host should depend on an exact version either way.
+2. Is `configure({ instructions })` the hat switch you want for every same-model hat, with `27-plan-mode.ts` reserved for hats that change tools? A child conversation for every hat would throw away the root cache.
+3. Default for "run the tests": a replay-safe bash on a child conversation, or a child task that never calls a model? Agent work stays on the example 23 shape either way.
+4. The TUI protocol is experimental `watchEvents` plus the task graph. Raw `watch()` Chord ops are the normative stream. Prefer events unless you want the UI to apply Chord frames.
+5. Ctrl-C is `abort({ background: true })`, so background work dies. A narrower abort leaves it running. Confirm cancel means everything.
+6. v2 shell hooks become a config error. Any hook command that has to survive as an extension in M6?
+7. Memories: a document the section renders, knowing that an edit appends one system delta. Is a mid-run memory write acceptable, or should memory edits wait until the root is idle?
+8. Does accepting this stop autoloop feature work on `integration/v3-prerelease`, or do both continue until M6?
+9. Spawn `node`, or bundle a runtime next to the Rust binary? One process must own the SQLite file.
+10. The web dashboard stays unwired through M5. Is a warning enough, or does M4 include a thin client?
