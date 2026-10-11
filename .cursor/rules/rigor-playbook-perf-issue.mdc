@@ -1,0 +1,30 @@
+---
+description: Perf issue playbook. Read for a one-off measured slowness. Capture a baseline, tie the fix to a trace, and report before and after numbers.
+alwaysApply: false
+---
+
+### Perf issue
+
+**You own the measurement story.** Tie every fix to a measurement.
+
+Host mapping is in `.cursor/rules/rigor-mode.mdc`. Omit `model`.
+
+1. Capture a baseline trace on the matching surface. Done when a baseline artifact and number exist.
+2. Ground hypotheses with a how-note. A family earns an attempt only when the trace shows the signal it names.
+   - **Elimination.** The hot path may not need to exist.
+   - **Divide and conquer.** Dominant cost scales with input size.
+   - **Caching.** The same computation repeats on identical inputs. Name what invalidates it.
+   - **Indirection.** A cheaper intermediate absorbs expensive work.
+   - **Batching.** Many small operations each pay a fixed overhead.
+   - **Redundancy.** The wait hangs on one slow instance. Duplicate and take the fastest.
+   - **Lazy evaluation.** Cost lands on results never used or not needed yet.
+   - **Scheduling.** The work must happen, but not during the interactive moment.
+   Done when each live hypothesis names a family and a trace signal.
+3. Plan the fix from the trace. If it crosses a function boundary, write the architect sketch first. Dispatch implementation. Review the diff. Capture a post-fix trace. Each unit ends in a check. Done when a post-fix trace exists next to a reviewed diff.
+4. Parse and compare the artifacts. Inconclusive or the wrong surface is not a pass. Done when baseline vs post-fix numbers exist with units.
+5. Cite the measurement in the PR. Done when the PR body has `before → after`.
+6. Run Opening a PR (`.cursor/rules/rigor-playbook-opening-a-pr.mdc`). Done when the PR URL exists.
+
+For sustained improvement against a metric, use Hillclimb (`.cursor/rules/rigor-playbook-hillclimb.mdc`).
+
+**Reply:** baseline number, post-fix number, delta, artifact path.

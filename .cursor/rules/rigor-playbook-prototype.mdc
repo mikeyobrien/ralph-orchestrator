@@ -1,0 +1,21 @@
+---
+description: Prototype playbook. Read when a design or behavior fork should be settled with a throwaway sketch before production code. The prototype is not the build.
+alwaysApply: false
+---
+
+### Prototype
+
+**You own the design decision, not the code. The prototype is a throwaway instrument. The real build follows Feature.**
+
+This is the one playbook where the smallest-change bias and the verification bar invert. Speed over polish. The rigor is in picking the right design cheaply.
+
+Host mapping is in `.cursor/rules/rigor-mode.mdc`.
+
+1. Scope the decision the prototype exists to make. Which layout, which interaction, which density, or for an empirical fork which behavior, timing, or approach. No decision means no prototype. Route to Feature. Done when the decision is one sentence.
+2. Gather references when the design space is open. Search for prior art, summarize a moodboard, let the user pick directions before building. Skip when the direction is set. Done when directions are chosen or `skip: direction set` is on the todo.
+3. Build throwaway in an isolated scratch dir, separate from production source. For a visual decision, vanilla HTML/CSS/JS or the lightest stack that renders the idea. For a behavioral or timing decision, the smallest script that exercises the question. No production framework, no tests, no abstractions. Done when the scratch artifact runs.
+4. When comparing alternatives, build them behind one switcher, each variant labeled. Done when every variant is reachable from one switcher, or only one variant was in scope.
+5. Verify on the matching surface. For a visual decision, screenshot each variant and drive the interaction. For a behavioral or timing decision, observe by logging, printing, or watching the render. The observation is the test. Done when each variant has an observation artifact.
+6. Present alternatives, tradeoffs, and a recommendation. Hand the chosen direction to Feature (or an architect sketch) for the real build. Done when the recommendation and scratch path are in the reply.
+
+**Reply:** the variants explored, the evidence, tradeoffs, your recommendation, and the scratch path. Say plainly that the prototype is throwaway.

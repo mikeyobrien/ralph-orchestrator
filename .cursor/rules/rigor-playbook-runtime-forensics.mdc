@@ -1,0 +1,18 @@
+---
+description: Runtime forensics playbook. Read to diagnose a live runtime symptom from instrumentation (CPU profile, heap snapshot, CDP trace). Diagnosis only, no fix unless asked.
+alwaysApply: false
+---
+
+### Runtime forensics
+
+**You own the diagnosis. Instrument the live process. Do not theorize from source alone.** The deliverable is a cited diagnosis, not a fix.
+
+Host mapping is in `.cursor/rules/rigor-mode.mdc`.
+
+1. Capture the live signal on the matching surface. A CPU profile for a spinning process, a heap snapshot for a leak, a CDP trace for a visual glitch. A real artifact, not a guess. Done when the artifact path exists.
+2. Reduce the artifact to the smoking gun. The function on the hot path, the retainer chain from the leaked object to a GC root, the loop firing without input. Parse a large artifact in a dispatched worker. Keep the reduced finding in the parent. Done when the reduced finding is one paragraph with pointers into the artifact.
+3. Prove the mechanism before believing it. Inject instrumentation on the running process (CDP eval, a hotfix without reload, extra logging) to confirm the hypothesis cheaply. Done when the confirmation artifact exists.
+4. Map the finding back to source. File, symbol, the line that allocates or schedules. Done when `file:symbol:line` exists.
+5. Throughput checkpoint stays one line. `throughput checkpoint: n/a, read-only forensics`. Done when that line is on the todo.
+
+**Reply:** the signal captured, the reduced finding, how you proved the mechanism, the source location, artifact paths. No fix unless asked. Hand back to Bug fix or Perf issue once the cause is known.

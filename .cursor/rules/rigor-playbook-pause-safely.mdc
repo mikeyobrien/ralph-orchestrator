@@ -1,0 +1,15 @@
+---
+description: Pause safely playbook. Read when the user asks to pause, stop for now, or hand work to a later session. Leave a checkpoint a cold start can resume. Do not pause on "keep going".
+alwaysApply: false
+---
+
+### Pause safely
+
+**You own a clean stop. Leave a checkpoint a cold-start agent can resume from.** This is explicit only. On "keep going", "going to bed, keep going", or "don't stop", do not pause.
+
+1. Stop at a safe boundary. Finish the current atomic step or back out of it. Start nothing new. Cancel in-flight dispatches. Done when the tree is not mid-edit in a known-broken state.
+2. Take no irreversible action to pause. No PR and no push unless you already had one out. Done when no new irreversible write was made for the pause.
+3. Make the work durable. Commit uncommitted edits as one clear `wip:` commit on the current branch. If the tree is broken, say so in the commit body in one line. Done when `git status` is clean or the broken state is named in the commit body.
+4. Write the resume note off the product tree. Capture intent, progress, what's verified, current state, next steps, key files, and gotchas. Write `/tmp/<slug>-resume.md`. If a decision trail exists, point at it. Do not duplicate it into the repo. Done when that file or trail pointer exists.
+
+**Reply:** where you are in the loop, what's on disk versus still in your head (paths, no diff dumps), the commits you made and whether the tree is clean, and the first action on resume. This is a pause, not a final report.

@@ -1,0 +1,23 @@
+---
+description: Bug fix playbook. Read when a reported defect must be reproduced, root-caused, and fixed with runtime evidence before any speculative patch.
+alwaysApply: false
+---
+
+### Bug fix
+
+**You own this task. Plan, review, verify.** Delegate investigation and the fix. Stay in the lead.
+
+Be scientific. Every shipped line traces to runtime evidence. A change that "might help" is a hypothesis. It does not ship. When evidence refutes a hypothesis, revert what it motivated.
+
+Host mapping is in `.cursor/rules/rigor-mode.mdc`. Code-writing goes to a `generalPurpose` subagent. Omit `model`.
+
+1. Reproduce it yourself on the matching surface. You drive the instrumented runtime. Ask the user only with a stated reason the surface cannot reach the target, and only after driving it as far as it goes. When it will not reproduce directly, force it. Synthesize the trigger, tighten conditions, or instrument until it fires. Done when a failing repro exists on the matching surface.
+2. Binary-search the cause. Seed hypotheses with a how-note over the affected subsystem and a why-note for regression history. Each pass, take the split that cuts the most remaining problem space, get runtime evidence, and eliminate. When program state is unclear, add instrumentation and read it as the code runs. For a long hunt, name a cadence and keep going. Confirm the surviving mechanism with runtime evidence before step 3. Done when one mechanism is confirmed by runtime evidence and the others are eliminated.
+3. Plan the fix. If it crosses a function boundary, write the architect sketch first. Dispatch implementation with a specific scope. Review the diff. Done when the reviewed fix is in the tree.
+4. Verify on the same surface. The original repro now passes. Inconclusive or the wrong surface is not a pass. Unit tests show branch behavior. They do not show the bug is gone. Done when the original repro passes on the matching surface.
+5. Stage the commits so the failing repro lands before the fix. Do this when the bug has a cheap local test. Skip when the test would be expensive, integration-heavy, or unclear, and record `skip: <reason>`. Each unit ends in a check. Done when git history is fail-then-pass, or the skip is on the todo.
+6. Run Opening a PR (`.cursor/rules/rigor-playbook-opening-a-pr.mdc`). Done when the PR URL exists.
+
+How and why may run as parallel read-only dispatches.
+
+**Reply:** what was broken, root cause, fix, how you verified. Paste failing-then-passing repro output verbatim.

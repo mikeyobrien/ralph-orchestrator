@@ -1,0 +1,24 @@
+---
+description: Shipping playbook. Read when asked to land, ship, or merge a green stack. Verify each PR independently, then land only the contiguous verified run from the root.
+alwaysApply: false
+---
+
+### Shipping
+
+**You own what lands. Verify each PR independently, land only the verified run from the root, then keep your hands off the queue.**
+
+This is the half after Babysit (`.cursor/rules/rigor-playbook-babysit.mdc`).
+
+Host mapping is in `.cursor/rules/rigor-mode.mdc`. One independent verifier per PR, each in its own worktree. GitHub status comes from `gh pr view` and `gh pr checks`. There is no `scripts/watch-pr` in this repo.
+
+1. **Resolve the forge, then verify every PR independently.** GitHub via `gh`, or the host PR tool when the session requires it for writes. Never require Graphite. Dispatch one verifier per PR, not batched. Each exercises the real surface against parent versus head. Each returns `PASS`, `PASS+NOTES`, or `FAIL` and posts that verdict on its own PR. Safe means a verdict from an agent that did not write the code. CI green is not a verdict. Done when every PR in the run has a posted `PASS`, `PASS+NOTES`, or `FAIL` from an independent verifier.
+2. **Land only the contiguous verified run rooted at the bottom.** Walk up from the lowest unmerged PR and stop at the first one without a passing verdict. `PASS` and `PASS+NOTES` pass. Report the ceiling as a PR number. Done when the landable run and the ceiling PR are named.
+3. **Re-check that each verdict still describes the patch.** Record verdict head SHA, base SHA, and stable `git patch-id` of that PR's base-to-head diff. Before landing, compare patch-ids. Re-verify when the patch changed. When it did not, keep the code verdict but re-run mergeability and CI at the current head. Done when the bottom PR's current patch-id matches the verdict, or a fresh verdict exists.
+4. **Prepare only the bottom PR.** Fetch current trunk (`origin/integration/v3-prerelease`). Rebase the lowest verified branch onto that exact tip when needed, push it, and retarget only that PR to `integration/v3-prerelease`. Re-run step 3 after the push. Do not retarget descendants yet. Done when the bottom PR targets `integration/v3-prerelease` and step 3 still holds.
+5. **Land one PR at a time.** If mergeable now, squash with `gh pr merge <pr> --squash`. If requirements are still running and the user asked for merge-when-ready, arm only that PR. Wait for that PR to merge before preparing the next one. Done when that one PR is merged or armed, and no descendant was touched.
+6. **Do not read a stale auto-merge flag as stack readiness.** Confirm the forge state for the current bottom PR with `gh pr view`. Say unknown if the forge cannot report it. Done when the bottom PR's forge state is quoted or labeled unknown.
+7. **Recompute after every merge.** Fetch trunk, confirm the merged SHA is present, drop the merged PR from the frozen bottom-to-top list, inspect the new bottom. Repeat steps 3 through 6 for that one PR. Done when the list no longer contains the merged PR and the new bottom has been inspected.
+8. **Watch the current frontier until it merges or fails.** Subscribe to the PR and its checks when the host has subscriptions. Otherwise poll `gh pr view` until `mergedAt` is set or `state` is `MERGED`. Hard-fail only when `state` is `CLOSED` with no `mergedAt`, a required check is `FAILURE` or `CANCELLED` and blocks merge after auto-merge is no longer pending, or merge state is `UNSTABLE` or `DIRTY` with no auto-merge pending. `BLOCKED` while checks are pending is not failure. Done when the frontier merged or a hard-fail is diagnosed.
+9. **Stop at the ceiling.** When the verified run is merged, report what landed, what the next unverified PR is, and what verifying it would take. Done when that report is the reply.
+
+**Reply:** the verified run and its ceiling, each PR's verdict and who produced it, what you armed and how you confirmed it, what landed, and what the next gap needs.

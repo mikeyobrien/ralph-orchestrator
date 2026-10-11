@@ -1,0 +1,19 @@
+---
+description: Autonomous run playbook. Read for one long task to drive to a checkable done predicate without stopping. Distinct from a multi-day program (Orchestrate) and from a plan-only pass (Multi-phase plan).
+alwaysApply: false
+---
+
+### Autonomous run
+
+**You own the exit condition. Define done, then drive to it without stopping.**
+
+Host mapping is in `.cursor/rules/rigor-mode.mdc`.
+
+1. State the exit condition as a checkable predicate before the first iteration (tests green, repro fixed, all N PRs merged, pixel-diff zero). Done when the predicate is one sentence a stranger could check.
+2. Pick the wake. An event to watch (CI, a merge, a ref advancing) uses a PR, CI, or timer subscription when this session has one, with a long heartbeat as fallback. No event gets a fixed-interval heartbeat sized to when the result is worth re-checking. If this host cannot subscribe, stay in the session and re-check on that cadence. Done when the wake is named and armed, or the in-session cadence is named.
+3. Each iteration makes the smallest change the evidence justifies, verifies it against the predicate, commits if it advanced, and discards changes that did not help. Revert a change that "might help". Each unit ends in a check. Done (per iteration) when the predicate was checked and the tree either advanced or the attempt was discarded.
+4. Mid-run discoveries are yours. Address broken rules, related bugs, flaky verifiers, review noise, tooling failures, orphaned follow-ups, and fixable drift through the matching playbook. Put out-of-band fixes in their own PR. Reversible work proceeds. Ask only for irreversible actions, genuine product or preference calls no experiment can settle, or a real dead end. Keep the predicate as the main drive. Done when side fixes are in their own PRs or named as parked, and the predicate is still the drive.
+5. Checkpoint every iteration in the decision trail (agent store or `/tmp/<slug>-decisions.tsv`). A row for what changed and whether the predicate moved. Do not commit that file. Done when that row exists.
+6. Stop when the predicate is met. A plateau is not a stop. Surface a genuine dead end. Never relax the predicate to declare victory. Done when the predicate is true or a dead end is written down.
+
+**Reply:** the exit condition, iterations run, what landed, what was discarded, final predicate state.

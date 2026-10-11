@@ -1,0 +1,18 @@
+---
+description: Session pickup playbook. Read when resuming in-flight work from a transcript, agent trail, or pushed branch. Reconstruct state and continue. Do not redo finished work.
+alwaysApply: false
+---
+
+### Session pickup
+
+**You own the resume point. Read the prior trail. Do not redo it.**
+
+Stay inside this workspace. A pushed branch is a valid trail. A host cloud-agent URL is optional. Skip it when you cannot open it.
+
+1. Locate the prior trail. This workspace's session files, the agent store, or a pushed branch. Read the metadata overview and last messages first, then scan back for the decision points. Parse a long transcript in a dispatched worker and keep the reduced timeline in the parent. Done when a reduced timeline exists.
+2. Reconstruct operational state. The branch and worktree, what already landed (`git log`, `git diff` against the base), the open todos, the decisions made. The prior trail is authoritative input. Done when branch, landed work, and open todos are named from the trail plus git.
+3. Diff done vs pending. Name the resume point. Do not re-run a prior repro or redo completed work. Done when the resume point is one sentence. Next action, not a replay.
+4. Route the remaining work to the matching playbook and pick the verdict. Continue the execution, ship a finished recommendation, ratify or override a prior conclusion, or postmortem a failed run. The pickup playbook ends here. Done when the routed playbook is named.
+5. Verify the inherited claims against the original goal on the real artifact. A passing prior self-report is not the proof. Done when inherited claims are confirmed or labeled unproven.
+
+**Reply:** where the prior agent stopped, what you inherited vs redid (ideally nothing redone), the resume point, and the outcome.
