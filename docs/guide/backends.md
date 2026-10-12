@@ -378,6 +378,22 @@ hats:
       args: ["--provider", "anthropic", "--model", "claude-sonnet-4"]
 ```
 
+**Adapter settings:**
+
+```yaml
+adapters:
+  pi:
+    timeout: 300        # inactivity outside tools and pending model requests
+    tool_timeout: 3600  # ceiling for a tool or pending model request
+    enabled: true
+```
+
+Pi uses `adapters.pi`, falling back to `adapters.default` when no Pi override is
+present; it does not inherit `adapters.claude`. Silent long-running tools and
+pending model requests are bounded by `tool_timeout` instead of the inactivity
+timer; a silent Pi process with neither still times out.
+See [adapter configuration](configuration.md#adapters).
+
 **Doctor checks:**
 - `pi --version` must succeed
 - Warns if no provider API key is set

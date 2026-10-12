@@ -53,6 +53,7 @@ pub struct ExecutionResult {
 #[derive(Debug)]
 pub struct CliExecutor {
     backend: CliBackend,
+    tool_timeout: Duration,
 }
 
 enum StreamEvent {
@@ -70,7 +71,18 @@ enum StreamKind {
 impl CliExecutor {
     /// Creates a new executor with the given backend.
     pub fn new(backend: CliBackend) -> Self {
-        Self { backend }
+        Self {
+            backend,
+            tool_timeout: Duration::from_secs(ralph_core::DEFAULT_TOOL_TIMEOUT_SECS),
+        }
+    }
+
+    /// Sets how long a Pi tool execution or pending model request may run before
+    /// the process is terminated as stuck. Ignored for other output formats.
+    #[must_use]
+    pub fn with_tool_timeout(mut self, tool_timeout: Duration) -> Self {
+        self.tool_timeout = tool_timeout;
+        self
     }
 
     /// Executes a prompt and streams output to the provided writer.
@@ -78,7 +90,12 @@ impl CliExecutor {
     /// Output is streamed line-by-line to the writer while being accumulated
     /// for the return value. If `timeout` is provided and the execution produces
     /// no stdout/stderr activity for longer than that duration, the process
-    /// receives SIGTERM and the result indicates timeout.
+    /// receives SIGTERM and the result indicates timeout. For Pi JSON streams,
+    /// this timer is replaced while a tool is open or a turn's assistant message
+    /// has not ended. Such work may be silent, but is bounded by the configured
+    /// tool timeout measured from its start. After the assistant message ends
+    /// and all tools end, the full inactivity window resumes. Other
+    /// formats are unchanged.
     ///
     /// When `verbose` is true, stderr output is also written to the output writer
     /// with a `[stderr]` prefix. When false, stderr is captured but not displayed.
@@ -189,7 +206,25 @@ impl CliExecutor {
 
         while !stdout_done || !stderr_done {
             let now = tokio::time::Instant::now();
-            let effective_timeout = match (timeout, post_event_deadline) {
+            // Pi tool updates are not heartbeats, and a model can be silent
+            // between turn_start and its assistant message_end. Both phases
+            // use the existing ceiling, never a deadline reset by output.
+            // Keep this exemption Pi-only even though OMP shares the parser.
+            let open_tool_start = family_state
+                .oldest_active_tool_start()
+                .filter(|_| self.backend.output_format == OutputFormat::PiStreamJson);
+            let pending_request_start = family_state
+                .pending_model_request_start()
+                .filter(|_| self.backend.output_format == OutputFormat::PiStreamJson);
+            let bounded_activity_start = open_tool_start
+                .into_iter()
+                .chain(pending_request_start)
+                .min();
+            let inactivity_timeout = match bounded_activity_start {
+                Some(started) => Some(self.tool_timeout.saturating_sub(started.elapsed())),
+                None => timeout,
+            };
+            let effective_timeout = match (inactivity_timeout, post_event_deadline) {
                 (_, Some(deadline)) if deadline <= now => Some(Duration::ZERO),
                 (Some(duration), Some(deadline)) => {
                     Some(duration.min(deadline.saturating_duration_since(now)))
@@ -203,10 +238,24 @@ impl CliExecutor {
                 Some(duration) => match tokio::time::timeout(duration, event_rx.recv()).await {
                     Ok(event) => event,
                     Err(_) => {
-                        warn!(
-                            timeout_secs = duration.as_secs(),
-                            "Execution inactivity timeout reached, sending SIGTERM"
-                        );
+                        if pending_request_start.is_some()
+                            && bounded_activity_start == pending_request_start
+                        {
+                            warn!(
+                                tool_timeout_secs = self.tool_timeout.as_secs(),
+                                "Pi model request exceeded tool_timeout, sending SIGTERM"
+                            );
+                        } else if open_tool_start.is_some() {
+                            warn!(
+                                tool_timeout_secs = self.tool_timeout.as_secs(),
+                                "Pi tool execution exceeded tool_timeout, sending SIGTERM"
+                            );
+                        } else {
+                            warn!(
+                                timeout_secs = duration.as_secs(),
+                                "Execution inactivity timeout reached, sending SIGTERM"
+                            );
+                        }
                         timed_out = true;
                         terminated_status = Some(Self::terminate_child_and_wait(&mut child).await?);
                         break;
@@ -909,6 +958,312 @@ mod tests {
             result.protocol_error.is_none(),
             "clean stream must not surface a protocol error"
         );
+    }
+
+    fn fake_pi_executor() -> CliExecutor {
+        CliExecutor::new(CliBackend {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string()],
+            prompt_mode: PromptMode::Arg,
+            prompt_flag: None,
+            output_format: OutputFormat::PiStreamJson,
+            env_vars: vec![],
+        })
+    }
+
+    #[tokio::test]
+    async fn test_execute_pi_silent_tool_does_not_time_out() {
+        let result = fake_pi_executor()
+            .with_tool_timeout(Duration::from_secs(5))
+            .execute_capture_with_timeout(
+                r#"
+                printf '%s\n' '{"type":"tool_execution_start","toolCallId":"a","toolName":"bash","args":{"command":"sleep 1.2"}}'
+                printf '%s\n' '{"type":"tool_execution_update","toolCallId":"a","toolName":"bash","args":{},"partialResult":{"content":[]}}'
+                sleep 1.2
+                printf '%s\n' '{"type":"tool_execution_end","toolCallId":"a","toolName":"bash","result":{"content":[]},"isError":false}'
+                printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"done"}}'
+                "#,
+                Some(Duration::from_millis(400)),
+            )
+            .await
+            .unwrap();
+
+        assert!(!result.timed_out, "An open Pi tool may be silent");
+        assert!(result.success);
+        assert_eq!(result.extracted_text.as_deref(), Some("done"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_pi_pending_model_request_survives_inactivity() {
+        let result = fake_pi_executor()
+            .with_tool_timeout(Duration::from_secs(5))
+            .execute_capture_with_timeout(
+                r#"
+                printf '%s\n' '{"type":"turn_start"}'
+                printf '%s\n' '{"type":"message_start","message":{"role":"user","content":"test"}}'
+                printf '%s\n' '{"type":"message_end","message":{"role":"user","content":"test"}}'
+                sleep 1.2
+                printf '%s\n' '{"type":"message_start","message":{"role":"assistant","content":[]}}'
+                printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"done"}}'
+                printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}'
+                printf '%s\n' '{"type":"turn_end","message":{"stopReason":"stop"}}'
+                "#,
+                Some(Duration::from_millis(400)),
+            )
+            .await
+            .unwrap();
+
+        assert!(!result.timed_out, "A pending Pi model request is not idle");
+        assert!(result.success);
+        assert_eq!(result.extracted_text.as_deref(), Some("done"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_pi_pending_model_request_ceiling_has_own_reason() {
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone)]
+        struct LogWriter(Arc<Mutex<Vec<u8>>>);
+        impl Write for LogWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let logs = Arc::new(Mutex::new(Vec::new()));
+        let writer = LogWriter(logs.clone());
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(move || writer.clone())
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let started = Instant::now();
+        let result = fake_pi_executor()
+            .with_tool_timeout(Duration::from_millis(800))
+            .execute_capture_with_timeout(
+                r#"printf '%s\n' '{"type":"turn_start"}'; sleep 10"#,
+                Some(Duration::from_millis(400)),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.timed_out);
+        assert!(!result.success);
+        assert!(started.elapsed() >= Duration::from_millis(700));
+        assert!(started.elapsed() < Duration::from_secs(5));
+        let logs = String::from_utf8(logs.lock().unwrap().clone()).unwrap();
+        assert!(
+            logs.contains("Pi model request exceeded tool_timeout"),
+            "{logs}"
+        );
+        assert!(
+            !logs.contains("Execution inactivity timeout reached"),
+            "{logs}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_pi_started_assistant_message_survives_inactivity() {
+        let result = fake_pi_executor()
+            .with_tool_timeout(Duration::from_secs(5))
+            .execute_capture_with_timeout(
+                r#"
+                printf '%s\n' '{"type":"turn_start"}'
+                printf '%s\n' '{"type":"message_start","message":{"role":"assistant","content":[]}}'
+                sleep 1.2
+                printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"done"}}'
+                printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}'
+                printf '%s\n' '{"type":"turn_end","message":{"stopReason":"stop"}}'
+                "#,
+                Some(Duration::from_millis(400)),
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            !result.timed_out,
+            "A streaming Pi model request is not idle"
+        );
+        assert!(result.success);
+        assert_eq!(result.extracted_text.as_deref(), Some("done"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_pi_inactivity_resumes_after_assistant_message_end() {
+        let started = Instant::now();
+        let result = fake_pi_executor()
+            .with_tool_timeout(Duration::from_secs(5))
+            .execute_capture_with_timeout(
+                r#"
+                printf '%s\n' '{"type":"turn_start"}'
+                sleep 1.2
+                printf '%s\n' '{"type":"message_end","message":{"role":"assistant","content":[]}}'
+                sleep 10
+                "#,
+                Some(Duration::from_millis(400)),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.timed_out);
+        assert!(result.output.contains("\"role\":\"assistant\""));
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn test_execute_omp_pending_model_request_keeps_inactivity_timeout() {
+        let mut executor = fake_pi_executor();
+        executor.backend.output_format = OutputFormat::OmpStreamJson;
+        let started = Instant::now();
+        let result = executor
+            .with_tool_timeout(Duration::from_secs(5))
+            .execute_capture_with_timeout(
+                r#"printf '%s\n' '{"type":"turn_start"}'; sleep 10"#,
+                Some(Duration::from_millis(400)),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.timed_out);
+        assert!(!result.success);
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn test_execute_pi_without_open_activity_still_times_out() {
+        let started = Instant::now();
+        let result = fake_pi_executor()
+            .with_tool_timeout(Duration::from_secs(5))
+            .execute_capture_with_timeout(
+                r#"printf '%s\n' '{"type":"agent_start"}'; sleep 10"#,
+                Some(Duration::from_millis(400)),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.timed_out);
+        assert!(!result.success);
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn test_execute_pi_timeout_resumes_after_tool_end() {
+        for is_error in [false, true] {
+            let script = format!(
+                r#"
+                printf '%s\n' '{{"type":"tool_execution_start","toolCallId":"a","toolName":"bash","args":{{}}}}'
+                sleep 1.2
+                printf '%s\n' '{{"type":"tool_execution_end","toolCallId":"a","toolName":"bash","result":{{"content":[]}},"isError":{is_error}}}'
+                sleep 0.1
+                printf '%s\n' '{{"type":"message_update","assistantMessageEvent":{{"type":"text_delta","delta":"after tool"}}}}'
+                sleep 10
+                "#
+            );
+            let result = fake_pi_executor()
+                .execute_capture_with_timeout(&script, Some(Duration::from_millis(400)))
+                .await
+                .unwrap();
+
+            assert!(result.timed_out);
+            assert!(!result.success);
+            assert_eq!(result.extracted_text.as_deref(), Some("after tool"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_pi_waits_for_all_matching_tool_ends() {
+        let result = fake_pi_executor()
+            .execute_capture_with_timeout(
+                r#"
+                printf '%s\n' '{"type":"tool_execution_start","toolCallId":"a","toolName":"bash","args":{}}'
+                printf '%s\n' '{"type":"tool_execution_start","toolCallId":"a","toolName":"bash","args":{}}'
+                printf '%s\n' '{"type":"tool_execution_start","toolCallId":"b","toolName":"bash","args":{}}'
+                printf '%s\n' '{"type":"tool_execution_end","toolCallId":"a","toolName":"bash","result":{"content":[]},"isError":false}'
+                printf '%s\n' '{"type":"tool_execution_end","toolCallId":"unmatched","toolName":"bash","result":{"content":[]},"isError":false}'
+                printf '%s\n' '{"type":"tool_execution_update","toolCallId":"b","toolName":"bash","args":{},"partialResult":{"content":[]}}'
+                sleep 1.2
+                printf '%s\n' '{"type":"tool_execution_end","toolCallId":"b","toolName":"bash","result":{"content":[]},"isError":false}'
+                printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"all closed"}}'
+                sleep 10
+                "#,
+                Some(Duration::from_millis(400)),
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            result.timed_out,
+            "Duplicate starts must not leave tools open"
+        );
+        assert_eq!(result.extracted_text.as_deref(), Some("all closed"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_pi_stuck_tool_times_out_at_tool_timeout() {
+        let started = Instant::now();
+        let result = fake_pi_executor()
+            .with_tool_timeout(Duration::from_millis(800))
+            .execute_capture_with_timeout(
+                r#"
+                printf '%s\n' '{"type":"tool_execution_start","toolCallId":"a","toolName":"bash","args":{}}'
+                sleep 0.3
+                printf '%s\n' '{"type":"tool_execution_update","toolCallId":"a","toolName":"bash","args":{},"partialResult":{"content":[]}}'
+                sleep 10
+                "#,
+                Some(Duration::from_millis(400)),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.timed_out, "A tool open past the ceiling is stuck");
+        assert!(!result.success);
+        let elapsed = started.elapsed();
+        assert!(elapsed >= Duration::from_millis(700) && elapsed < Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn test_execute_pi_unparsed_tool_end_closes_open_call() {
+        for end in [
+            r#"{"type":"tool_execution_end","toolCallId":"a","toolName":"bash","isError":false}"#,
+            r#"{"type":"tool_execution_end","toolCallId":"a","toolName":"bash","result":"oops","isError":"no"}"#,
+        ] {
+            let script = format!(
+                r#"
+                printf '%s\n' '{{"type":"tool_execution_start","toolCallId":"a","toolName":"bash","args":{{}}}}'
+                printf '%s\n' '{end}'
+                sleep 10
+                "#
+            );
+            let started = Instant::now();
+            let result = fake_pi_executor()
+                .execute_capture_with_timeout(&script, Some(Duration::from_millis(400)))
+                .await
+                .unwrap();
+
+            assert!(result.timed_out, "Unparsed end must close the open call");
+            assert!(started.elapsed() < Duration::from_secs(5));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_omp_open_tool_keeps_existing_timeout() {
+        let mut executor = fake_pi_executor();
+        executor.backend.output_format = OutputFormat::OmpStreamJson;
+        let result = executor
+            .execute_capture_with_timeout(
+                r#"printf '%s\n' '{"type":"tool_execution_start","toolCallId":"a","toolName":"bash","args":{}}'; sleep 10"#,
+                Some(Duration::from_millis(400)),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.timed_out);
+        assert!(!result.success);
     }
 
     #[tokio::test]
