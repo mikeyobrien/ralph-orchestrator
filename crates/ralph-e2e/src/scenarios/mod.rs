@@ -100,6 +100,8 @@ pub enum ScenarioError {
 /// - Set up the necessary configuration files
 /// - Execute against a backend via RalphExecutor
 /// - Validate the results with assertions
+// async_trait adds #[must_use] to methods returning already-must-use futures.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait TestScenario: Send + Sync {
     /// Unique identifier for the scenario (e.g., "connect").
