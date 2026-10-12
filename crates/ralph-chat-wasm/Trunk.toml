@@ -1,0 +1,5 @@
+[build]
+target = "index.html"
+dist = "dist"
+# wasm-opt is optional and not part of the Rust toolchain this page needs.
+wasm_opt = false
