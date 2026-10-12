@@ -143,8 +143,8 @@ mod tests {
         assert!(preset.is_some(), "code-assist preset should exist");
         let preset = preset.unwrap();
         assert_eq!(preset.name, "code-assist");
-        assert!(!preset.description.is_empty());
-        assert!(!preset.content.is_empty());
+        assert_ne!(preset.description, "");
+        assert_ne!(preset.content, "");
     }
 
     #[test]

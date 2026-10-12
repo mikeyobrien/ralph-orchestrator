@@ -616,7 +616,7 @@ mod tests {
             CopilotStreamEvent::AssistantMessage { data } => {
                 assert_eq!(data.message_id.as_deref(), Some("msg-1"));
                 assert_eq!(data.content, Value::String("hello world".to_string()));
-                assert!(data.tool_requests.is_empty());
+                assert_eq!(data.tool_requests, [] as [super::CopilotToolRequest; 0]);
             }
             _ => panic!("Expected AssistantMessage event"),
         }
@@ -812,8 +812,8 @@ mod tests {
             handler.tool_results,
             vec![("tool-1".to_string(), "hi\n".to_string())]
         );
-        assert!(handler.errors.is_empty());
-        assert!(extracted.is_empty());
+        assert_eq!(handler.errors, [] as [String; 0]);
+        assert_eq!(extracted, "");
     }
 
     #[test]
@@ -845,12 +845,12 @@ mod tests {
         .unwrap();
         dispatch_copilot_stream_event(complete, &mut handler, &mut extracted, &mut state);
 
-        assert!(handler.tool_results.is_empty());
+        assert_eq!(handler.tool_results, [] as [(String, String); 0]);
         assert_eq!(
             handler.errors,
             vec!["rg: unrecognized file type: rs".to_string()]
         );
-        assert!(extracted.is_empty());
+        assert_eq!(extracted, "");
     }
 
     #[test]

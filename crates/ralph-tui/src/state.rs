@@ -1435,7 +1435,7 @@ mod tests {
         fn visible_lines_handles_empty_buffer() {
             let buffer = IterationBuffer::new(1);
             let visible = buffer.visible_lines(5);
-            assert!(visible.is_empty());
+            assert_eq!(visible, [] as [ratatui::prelude::Line<'_>; 0]);
         }
 
         #[test]
@@ -2498,7 +2498,7 @@ mod tests {
 
             // Then query = None, matches cleared, search_mode = false
             assert!(state.search_state.query.is_none());
-            assert!(state.search_state.matches.is_empty());
+            assert_eq!(state.search_state.matches, [] as [(usize, usize); 0]);
             assert!(!state.search_state.search_mode);
         }
 
@@ -2515,7 +2515,7 @@ mod tests {
 
             // Then matches is empty but query is set
             assert_eq!(state.search_state.query, Some("xyz".to_string()));
-            assert!(state.search_state.matches.is_empty());
+            assert_eq!(state.search_state.matches, [] as [(usize, usize); 0]);
             assert_eq!(state.search_state.current_match, 0);
         }
 
@@ -2529,7 +2529,7 @@ mod tests {
             state.search("anything");
 
             // Then no panic, empty matches
-            assert!(state.search_state.matches.is_empty());
+            assert_eq!(state.search_state.matches, [] as [(usize, usize); 0]);
         }
 
         #[test]
@@ -2695,7 +2695,7 @@ mod tests {
             state.guidance_input = "leftover".to_string();
             state.start_guidance(GuidanceMode::Next);
             assert_eq!(state.guidance_mode, Some(GuidanceMode::Next));
-            assert!(state.guidance_input.is_empty());
+            assert_eq!(state.guidance_input, "");
         }
 
         #[test]
@@ -2712,7 +2712,7 @@ mod tests {
             state.guidance_input = "some text".to_string();
             state.cancel_guidance();
             assert!(state.guidance_mode.is_none());
-            assert!(state.guidance_input.is_empty());
+            assert_eq!(state.guidance_input, "");
         }
 
         #[test]
@@ -2722,7 +2722,7 @@ mod tests {
             state.guidance_input = "check auth.rs".to_string();
             assert!(state.send_guidance());
             assert!(state.guidance_mode.is_none());
-            assert!(state.guidance_input.is_empty());
+            assert_eq!(state.guidance_input, "");
 
             let queue = state.guidance_next_queue.lock().unwrap();
             assert_eq!(queue.len(), 1);

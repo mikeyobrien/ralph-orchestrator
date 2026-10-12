@@ -148,13 +148,13 @@ mod tests {
 
     #[test]
     fn test_text_to_lines_empty() {
-        assert!(text_to_lines("").is_empty());
+        assert_eq!(text_to_lines(""), [] as [ratatui::prelude::Line<'_>; 0]);
     }
 
     #[test]
     fn test_text_to_lines_plain() {
         let lines = text_to_lines("hello world");
-        assert!(!lines.is_empty());
+        assert_ne!(lines, [] as [ratatui::prelude::Line<'_>; 0]);
     }
 
     #[test]
@@ -168,7 +168,7 @@ mod tests {
         // ANSI red text
         let ansi_text = "\x1b[31mred text\x1b[0m";
         let lines = text_to_lines(ansi_text);
-        assert!(!lines.is_empty());
+        assert_ne!(lines, [] as [ratatui::prelude::Line<'_>; 0]);
     }
 
     #[test]

@@ -98,9 +98,9 @@ mod pty_executor_integration {
 
         assert!(result.success);
         assert!(result.output.contains("not-json-line"));
-        assert!(handler.texts.is_empty());
+        assert_eq!(handler.texts, [] as [String; 0]);
         assert!(handler.completions.is_empty());
-        assert!(result.extracted_text.is_empty());
+        assert_eq!(result.extracted_text, "");
     }
 
     #[tokio::test]
@@ -141,7 +141,7 @@ mod pty_executor_integration {
         assert_eq!(handler.errors.len(), 1);
         assert_eq!(handler.completions.len(), 1);
         assert!(handler.completions[0].is_error);
-        assert!(result.extracted_text.is_empty());
+        assert_eq!(result.extracted_text, "");
     }
 
     #[tokio::test]
@@ -1370,7 +1370,7 @@ NDJSON
             handler.tool_results,
             vec![("tool-1".to_string(), "hi\n".to_string())]
         );
-        assert!(handler.errors.is_empty());
+        assert_eq!(handler.errors, [] as [String; 0]);
         assert_eq!(handler.completions.len(), 1);
         assert!(!handler.completions[0].is_error);
         assert_eq!(result.extracted_text, "Checking parser\nDone\n");

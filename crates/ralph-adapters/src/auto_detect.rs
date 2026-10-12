@@ -167,7 +167,7 @@ mod tests {
         // Should return error since all are disabled (empty checked list)
         assert!(result.is_err());
         if let Err(e) = result {
-            assert!(e.checked.is_empty());
+            assert_eq!(e.checked, [] as [String; 0]);
         }
     }
 
@@ -341,7 +341,7 @@ mod tests {
         // Should fail with empty checked list
         assert!(result.is_err());
         if let Err(e) = result {
-            assert!(e.checked.is_empty());
+            assert_eq!(e.checked, [] as [String; 0]);
         }
     }
 
@@ -354,7 +354,7 @@ mod tests {
         // Should fail with empty checked list since all are disabled
         assert!(result.is_err());
         if let Err(e) = result {
-            assert!(e.checked.is_empty());
+            assert_eq!(e.checked, [] as [String; 0]);
         }
     }
 

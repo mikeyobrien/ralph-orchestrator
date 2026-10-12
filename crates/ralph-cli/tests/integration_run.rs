@@ -577,3 +577,95 @@ fn test_run_continue_requires_scratchpad() {
         "stderr: {stderr}"
     );
 }
+
+#[test]
+fn test_termination_hook_reports_executed_hat_not_coordinator() {
+    // The terminal event (LOOP_COMPLETE) has no subscribing hat, so the
+    // pending-derived active hat resolves to the coordinator id. A
+    // pre.loop.complete hook must still observe which hat actually
+    // executed last — here the builder, which emits completion.
+    let temp_dir = TempDir::new().expect("temp dir");
+    // Isolated home: a developer's user-level Ralph configuration must not
+    // affect the hats, hooks, or backends under test.
+    let home_dir = TempDir::new().expect("temp home");
+    let temp_path = temp_dir.path();
+    let payload_log = temp_path.join("termination-payload.jsonl");
+    let backend_script = temp_path.join("backend.sh");
+
+    std::fs::write(
+        &backend_script,
+        format!(
+            "#!/bin/sh\ncat >/dev/null\nn=$(cat counter 2>/dev/null || echo 0)\nn=$((n + 1))\necho \"$n\" > counter\nif [ \"$n\" = 1 ]; then\n  \"{}\" emit plan.ready first\nelse\n  \"{}\" emit LOOP_COMPLETE done\nfi\n",
+            env!("CARGO_BIN_EXE_ralph"),
+            env!("CARGO_BIN_EXE_ralph"),
+        ),
+    )
+    .expect("write backend script");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut permissions = std::fs::metadata(&backend_script)
+            .expect("metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&backend_script, permissions).expect("set executable permissions");
+    }
+
+    std::fs::write(
+        temp_path.join("ralph.yml"),
+        format!(
+            r#"
+cli:
+  backend: custom
+  command: "./backend.sh"
+  prompt_mode: stdin
+event_loop:
+  completion_promise: LOOP_COMPLETE
+  max_iterations: 5
+  max_runtime_seconds: 60
+hooks:
+  enabled: true
+  events:
+    pre.loop.complete:
+      - name: payload-recorder
+        command: ["sh", "-c", "cat > \"{}\""]
+        on_error: warn
+hats:
+  planner:
+    name: Planner
+    description: Plans work
+    triggers: [work.start]
+    publishes: [plan.ready]
+  builder:
+    name: Builder
+    description: Builds work
+    triggers: [plan.ready]
+    publishes: [build.done]
+"#,
+            payload_log.display()
+        ),
+    )
+    .expect("write local config");
+
+    let output = run_ralph_with_home(
+        temp_path,
+        home_dir.path(),
+        &["run", "--no-tui", "--prompt", "provenance"],
+    );
+    assert!(
+        output.status.success(),
+        "run failed: {}\nstdout:{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let raw = std::fs::read_to_string(&payload_log).expect("read recorded payload");
+    let payload: serde_json::Value = serde_json::from_str(raw.trim()).expect("parse payload");
+    assert_eq!(
+        payload["context"]["active_hat"],
+        serde_json::json!("builder"),
+        "termination hook must report the executed hat, got: {payload}"
+    );
+}

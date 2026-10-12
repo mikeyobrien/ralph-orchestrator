@@ -152,7 +152,7 @@ mod tests {
             } => {
                 assert_eq!(session_id, "abc123");
                 assert_eq!(model, "claude-opus");
-                assert!(tools.is_empty());
+                assert_eq!(tools, [] as [serde_json::Value; 0]);
             }
             _ => panic!("Expected System event"),
         }
