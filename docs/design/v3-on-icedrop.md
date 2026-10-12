@@ -17,7 +17,7 @@ Hats are a policy over those mechanisms. A second durability store, a second pro
 | | |
 |---|---|
 | Preserve | Ralph stays a thin coordination layer, not a platform. Issue [#256](https://github.com/mikeyobrien/ralph-orchestrator/issues/256) (closed 2026-06-21, not planned) rejected a git-as-message-bus protocol and named the then-current files as the durability model. Three days later [#342](https://github.com/mikeyobrien/ralph-orchestrator/issues/342) made `run_autoloop_engine` the sole engine. Treat #256 as "do not become a platform." Treat the cutover spec (`docs/superpowers/specs/2026-06-23-autoloop-cutover-design.md`, Chosen) as "do not embed a JS engine in Rust and do not rewrite the engine in Rust." One process owns storage. Phone Send versus Steer stays `whenBusy`. Ordinary abort stays ordinary abort. |
-| Change | Hat policy moves into the icedrop daemon, beside the process that already resumes on boot. `.ralph/events.jsonl` is not the authority. It is already off the `ralph run` path (`EventLogger::enabled` is false in `crates/ralph-cli/src/main.rs`). |
+| Change | Hat policy moves into the icedrop daemon, beside the process that already resumes on boot. `.ralph/events.jsonl` is not the authority. It is already off the `ralph run` path (`EventLogger::enabled` is false in `crates/ralph-cli/src/main.rs`). The Ralph web dashboard is out of scope and is removed in v3 (Mikey, this design). The person watches and steers from the icedrop phone. |
 | Avoid | The first commit of [PR #381](https://github.com/mikeyobrien/ralph-orchestrator/pull/381), `ba4e31d`. A Rust brain that selects hats while TypeScript only runs the model. A new daemon, a new protocol, a new sqlite. Hat lines stuffed into `projects.jsonl`. A watchdog timer inside the policy. |
 | Risk | This environment could not `git clone` the private app (see below). `docs/projects-v2.md` and `docs/steer-arbiter.md` are not in the repo. Background `claude_code` survives ordinary abort. Ralph v3 depends on a private repository. |
 
@@ -50,7 +50,25 @@ A root pipeline the person watches in the conversation they already have open:
 
 `abort`, `/media`, and every other existing command hit the existing handler. Abort stays `DurableAgent.abort()` with no background flag.
 
-A terminal, later, is a client of the same protocol the phone speaks. `ralph run` posts a submit and attaches to `GET /events`. It does not parse a hat and it does not open the sqlite.
+The person-facing surface is the icedrop phone. A Rust terminal, if one remains, is a client of that same protocol: `ralph run` posts a submit and attaches to `GET /events`. It does not parse a hat and it does not open the sqlite.
+
+### The web dashboard is removed
+
+Mikey’s scope decision: the Ralph Orchestrator web dashboard is out of v3, and v3 deletes it. There is no port onto `GET /events`, no replacement page in this repo, and no shim that keeps `ralph web` alive for old bookmarks.
+
+What leaves:
+
+| Piece | Where it lives today |
+|---|---|
+| React dashboard (`@ralph-web/dashboard`) | `frontend/ralph-web` |
+| Legacy Node server (Fastify, tRPC, its own SQLite) | `backend/ralph-web-server` |
+| `ralph web` launcher, including `--legacy-node-api` | `crates/ralph-cli/src/web.rs` |
+| `ralph-api`, the RPC server that launcher starts | `crates/ralph-api` |
+| TUI attach over that RPC (`ralph attach`, `rpc_client`, `rpc_bridge`) | `crates/ralph-cli`, `crates/ralph-tui` |
+
+`ralph-api` exists to feed the dashboard, and the attach command exists to feed a TUI from that same server. Both go when the dashboard goes. The daemon the phone already talks to is the live view. `docs/guide/cli-reference.md` already records that the dashboard does not render live loop state under the autoloop engine (`ga3-c4-dashboard-dead-svf`). v3 does not finish that port.
+
+The ratatui widgets are not the dashboard. Keeping them means rewriting their source to the icedrop event stream. That rewrite is a later client, and it is optional. It is not a reason to keep `frontend/`, `backend/`, or `ralph-api`.
 
 ## Shape
 
@@ -140,6 +158,8 @@ New, all inside that app, all in one process:
 - One extension with one tool and no hooks.
 
 Rust keeps git coordination the daemon does not do: worktrees, the merge queue, the loop lock, landing. Those files are not the hat authority and the hat path does not read them. A parallel checkout is a second registered project, which the app already supports. Deleting the merge queue was the other candidate's graft. It loses the only component that lands a finished worktree branch, and the daemon has no replacement. Hat YAML stays an authoring format `importHats` consumes. Rust does not keep a run path. `HatRegistry`, the event bus, preset generation, and `.ralph/events.jsonl` are not called by v3 `ralph run`. A Rust TTY that wants a live view subscribes to `GET /events` and posts `submit`. It does not open the sqlite.
+
+Rust does not keep a web front-end. v3 deletes `frontend/ralph-web`, `backend/ralph-web-server`, `ralph web`, and `ralph-api`. The phone is the product UI.
 
 ```mermaid
 flowchart TD
@@ -231,6 +251,8 @@ The reader is new code. It is the one place that understands transcript entries 
 
 Git coordination stays in Rust. That is a second set of files (`.ralph/merge-queue.jsonl`, the loop lock). They coordinate checkouts, not hats. The hat path does not read them. Folding git landing into the daemon would make the daemon a platform.
 
+The web dashboard is a second UI with its own server and its own SQLite (`backend/ralph-web-server`). v3 removes that stack. Anyone who opened `ralph web` uses the phone, which already shows the conversation, the queue, and the delegation cards. A desktop page that re-renders `GET /events` would be a new product, and this decision leaves it unbuilt.
+
 ## Alternatives
 
 **A loop is a side session, and hats rotate there** (the other arena candidate). The person asks in their thread, the agent starts a loop beside it, and one `side.result` comes back at the end. This keeps the root cache warm and gives every hat a fresh-ish transcript. It loses the conversation the person is already in: Send and Steer on the thread they opened do not wear the hat, and each activation reconfigures model and tools inside the loop, which is the cache break the root-hat type exists to forbid. It also adds `SideOrigin` `"loop"`, three entry kinds (`ralph.loop`, `ralph.publish`, `ralph.hat`), and a driver that interprets steps. That driver is a second loop living next to the queue keeper. The pure `next()` and the "wait while delegations are live" rule were the parts worth keeping. The second is grafted, as a count on the view, not as a new entry kind.
@@ -246,6 +268,8 @@ Git coordination stays in Rust. That is a second set of files (`.ralph/merge-que
 **Every hat is a side conversation.** Honors "long work leaves" and drops "wake in the same root when that is cache-safe." A cold provider session per persona. The phone's one conversation stops being where the goal is pursued.
 
 **Embed a JS engine in Rust, or rewrite the harness in Rust.** The cutover spec already rejected both.
+
+**Port the Ralph web dashboard onto the icedrop event stream.** That finishes `ga3-c4-dashboard-dead-svf` by giving `frontend/ralph-web` a new backend. Mikey’s decision removes the dashboard instead. The phone already is the interactive client. A port would keep a second Node server, a second SQLite file, and a view that can drift from the conversation the policy reads.
 
 ## Open questions
 
@@ -267,3 +291,5 @@ One faux-provider test inside `icedrop-labs/pi-durable`, two root hats, no sides
 - Killing the process after the emit and reopening via the app's existing resume wears the builder once.
 
 Side forks are the step after that test is green.
+
+Deleting the dashboard is removal, not a feature. It drops `frontend/ralph-web`, `backend/ralph-web-server`, `crates/ralph-cli/src/web.rs`, `crates/ralph-api`, and the TUI’s `ralph-api` attach path. It does not add a page, a route, or a compatibility server.
