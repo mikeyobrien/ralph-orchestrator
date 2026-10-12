@@ -1,0 +1,9 @@
+{
+  "$schema": "https://www.cursor.com/schemas/environment.schema.json",
+  "name": "ralph-orchestrator",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "install": "cargo fetch && npm install"
+}

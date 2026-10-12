@@ -228,8 +228,7 @@ impl StreamDomain {
     pub fn has_subscription(&self, subscription_id: &str) -> bool {
         self.state
             .lock()
-            .ok()
-            .is_some_and(|state| state.subscriptions.contains_key(subscription_id))
+            .is_ok_and(|state| state.subscriptions.contains_key(subscription_id))
     }
 
     pub fn matches_subscription(&self, subscription_id: &str, event: &StreamEventEnvelope) -> bool {
