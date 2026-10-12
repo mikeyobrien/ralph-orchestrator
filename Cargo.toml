@@ -70,6 +70,9 @@ manual_pattern_char_comparison = "allow"
 used_underscore_binding = "allow"
 field_reassign_with_default = "allow"
 struct_excessive_bools = "allow"
+# Keep boolean emptiness assertions; comparing to empty collections can require
+# Debug/PartialEq implementations unrelated to the behavior under test.
+assert_is_empty = "allow"
 
 [workspace.dependencies]
 # Async runtime

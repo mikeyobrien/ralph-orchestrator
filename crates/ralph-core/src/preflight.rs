@@ -61,6 +61,8 @@ impl CheckResult {
 }
 
 /// A single preflight check.
+// async_trait adds #[must_use] to methods returning already-must-use futures.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait PreflightCheck: Send + Sync {
     fn name(&self) -> &'static str;

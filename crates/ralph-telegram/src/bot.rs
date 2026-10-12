@@ -7,6 +7,8 @@ use crate::error::{TelegramError, TelegramResult};
 /// Trait abstracting Telegram bot operations for testability.
 ///
 /// Production code uses [`TelegramBot`]; tests can provide a mock implementation.
+// async_trait adds #[must_use] to methods returning already-must-use futures.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait BotApi: Send + Sync {
     /// Send a text message to the given chat.
