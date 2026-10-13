@@ -10,6 +10,8 @@ members = [
     "crates/ralph-e2e",
     "crates/ralph-telegram",
     "crates/ralph-api",
+    "crates/ralph-chat-wasm",
+    "crates/ralph-chat-mock",
 ]
 exclude = [
     ".eval-sandbox",  # Evaluation sandbox - should never be in workspace
@@ -149,6 +151,7 @@ ralph-bench = { version = "3.0.0", path = "crates/ralph-bench" }
 ralph-e2e = { version = "3.0.0", path = "crates/ralph-e2e" }
 ralph-telegram = { version = "3.0.0", path = "crates/ralph-telegram" }
 ralph-api = { version = "3.0.0", path = "crates/ralph-api" }
+ralph-chat-wasm = { version = "3.0.0", path = "crates/ralph-chat-wasm" }
 
 # Telegram bot framework
 teloxide = { version = "0.13", default-features = false, features = ["macros", "rustls", "ctrlc_handler"] }

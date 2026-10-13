@@ -1,0 +1,49 @@
+[package]
+name = "ralph-chat-wasm"
+description = "Browser test client for the Ralph v3 POST /commands and GET /events contract"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+
+# A cdylib for the browser. cargo-dist publishes the ralph binary, not this page.
+[package.metadata.dist]
+dist = false
+
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook = "0.1"
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = [
+    "console",
+    "Document",
+    "Element",
+    "Event",
+    "EventSource",
+    "EventTarget",
+    "Headers",
+    "HtmlButtonElement",
+    "HtmlElement",
+    "HtmlFormElement",
+    "HtmlInputElement",
+    "Location",
+    "MessageEvent",
+    "Node",
+    "Request",
+    "RequestInit",
+    "RequestMode",
+    "Response",
+    "SubmitEvent",
+    "Window",
+] }

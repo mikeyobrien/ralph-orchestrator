@@ -1,0 +1,28 @@
+[package]
+name = "ralph-chat-mock"
+description = "Mock POST /commands and GET /events for the Ralph v3 chat test page"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+
+# cargo-dist publishes the ralph binary. This mock is a local test double.
+[package.metadata.dist]
+dist = false
+
+[lints]
+workspace = true
+
+[dependencies]
+ralph-chat-wasm.workspace = true
+axum = "0.8"
+clap.workspace = true
+futures.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tower-http = { version = "0.6", features = ["cors", "fs"] }
+
+[dev-dependencies]
+reqwest = { workspace = true, features = ["stream"] }
+tokio.workspace = true

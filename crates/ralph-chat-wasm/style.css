@@ -1,0 +1,143 @@
+:root {
+  color-scheme: light;
+  font-family: "Iowan Old Style", Palatino, Georgia, serif;
+  background: #f3efe6;
+  color: #1d1a16;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0 auto;
+  max-width: 52rem;
+  padding: 1.25rem 1.25rem 2rem;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  border-bottom: 1px solid #d9d0c1;
+  padding-bottom: 0.75rem;
+}
+
+h1, h2 { font-weight: 600; margin: 0; }
+
+h1 { font-size: 1.4rem; }
+
+h2 {
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #6d6458;
+}
+
+#banner, #conversation, #inbox, #last-result {
+  margin: 0.35rem 0 0;
+  color: #5c5348;
+  font-size: 0.95rem;
+}
+
+#status {
+  margin: 0;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  background: #efe6d4;
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 0.8rem;
+}
+
+#status[data-state="live"] { background: #d9eadb; color: #1d5c32; }
+#status[data-state="reconnecting"],
+#status[data-state="closed"] { background: #f3d6d0; color: #8a2e22; }
+
+#messages, #events {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+}
+
+#messages {
+  min-height: 16rem;
+  max-height: 24rem;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+#messages li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  max-width: 40rem;
+}
+
+#messages li.user { align-self: flex-end; }
+#messages li.assistant, #messages li.empty { align-self: flex-start; }
+
+#messages .role {
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 0.72rem;
+  color: #6d6458;
+}
+
+#messages p {
+  margin: 0;
+  padding: 0.55rem 0.7rem;
+  white-space: pre-wrap;
+  background: #fff;
+  border: 1px solid #e2d9cb;
+}
+
+#messages li.user p { background: #e5efe4; }
+#messages li.live p { border-style: dashed; border-color: #8a5a2a; }
+#messages li.empty p, #messages li.empty { color: #6d6458; }
+
+#stream { margin-top: 1rem; }
+
+#events {
+  max-height: 9rem;
+  overflow: auto;
+  padding: 0.4rem 0.55rem;
+  background: #1d1a16;
+  color: #f3efe6;
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 0.75rem;
+}
+
+#events li { margin: 0.12rem 0; }
+
+#composer {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.9rem;
+}
+
+#text {
+  flex: 1;
+  font: inherit;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid #cbbfae;
+  background: #fff;
+}
+
+button {
+  font: inherit;
+  padding: 0.4rem 0.7rem;
+  border: 1px solid #1d1a16;
+  background: #1d1a16;
+  color: #f3efe6;
+  cursor: pointer;
+}
+
+button:disabled {
+  background: #d9d0c1;
+  border-color: #d9d0c1;
+  color: #6d6458;
+  cursor: default;
+}
+
+#steer { background: #fff; color: #1d1a16; }
+#cancel { background: #8a2e22; border-color: #8a2e22; }

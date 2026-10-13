@@ -1,0 +1,13 @@
+{
+  "name": "ralph-v3-hat-seam",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "seam": "node seam.mjs"
+  },
+  "dependencies": {
+    "@earendil-works/chord": "1.1.0",
+    "@earendil-works/pi-ai": "1.1.0",
+    "@earendil-works/pi-durable": "1.1.0"
+  }
+}

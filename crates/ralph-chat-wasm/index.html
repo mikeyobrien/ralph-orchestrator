@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ralph v3 chat</title>
+    <link rel="icon" href="data:," />
+    <link data-trunk rel="css" href="style.css" />
+    <link data-trunk rel="rust" data-wasm-opt="0" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>Ralph v3 chat</h1>
+        <p id="banner">Test surface for POST /commands and GET /events.</p>
+      </div>
+      <p id="status" data-state="connecting">connecting</p>
+    </header>
+    <p id="conversation"></p>
+    <ol id="messages">
+      <li class="empty">Loading the event stream…</li>
+    </ol>
+    <section id="stream">
+      <h2>Event stream</h2>
+      <ol id="events"></ol>
+    </section>
+    <form id="composer">
+      <input id="text" name="text" autocomplete="off" placeholder="Message the run" />
+      <button id="send" type="submit" title="POST /commands submit">Send</button>
+      <button id="steer" type="button" title="POST /commands submit with whenBusy steer">Steer</button>
+      <button id="cancel" type="button" title="POST /commands abort" disabled>Cancel</button>
+    </form>
+    <p id="inbox"></p>
+    <p id="last-result"></p>
+  </body>
+</html>
