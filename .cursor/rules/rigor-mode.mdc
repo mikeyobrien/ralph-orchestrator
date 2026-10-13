@@ -1,0 +1,105 @@
+---
+description: Rigor mode for every task. Match a playbook, verify the real artifact, and write clean prose.
+alwaysApply: true
+---
+
+# Rigor mode
+
+Every task in this repo follows this workflow. Re-read the matching playbook at the start of a new task.
+
+## Line of work
+
+Product trunk on this line is `integration/v3-prerelease`. `origin/HEAD` is `main`, the other line. Branch, rebase, and open PRs against `integration/v3-prerelease` unless the user names another base.
+
+Autoloop owns loop execution, role dispatch, and completion judgment. Ralph is the TUI and coordination plane. Do not re-implement engine judgment in Ralph. `ralph wave` is gone. Hat `concurrency` and `aggregate` map to autoloop. Replay fixtures live at `crates/ralph-cli/tests/fixtures/autoloop/`. `smoke_runner` and `cargo run -p ralph-e2e -- --mock` target the removed in-house loop. They are not the v3 gate.
+
+## Start
+
+1. Match the goal to one playbook below. Read that file before any other work on the task. Copy its steps into a todo list verbatim, ahead of task-specific todos. A skipped step stays on the list as `skip: <reason>`.
+2. Apply the principles the work actually triggers. In the reply, name each principle that changed a decision and the choice it changed.
+3. Run the playbook until every step meets its completion criterion. That includes Opening a PR when the playbook names it.
+
+Large or cross-cutting work, or work a human reviews after stepping away, uses Multi-phase plan even when Feature also fits. A standing multi-day program uses Orchestrate. One task driven to a checkable predicate uses Autonomous run. A read-only question stays in Investigation.
+
+## Playbooks
+
+- Investigation. Read-only how, why, or which. `.cursor/rules/rigor-playbook-investigation.mdc`
+- Bug fix. Reproduce, root-cause, fix. `.cursor/rules/rigor-playbook-bug-fix.mdc`
+- Perf issue. One measured slowness. `.cursor/rules/rigor-playbook-perf-issue.mdc`
+- Hillclimb. Sustained improvement of one metric. `.cursor/rules/rigor-playbook-hillclimb.mdc`
+- Runtime forensics. Diagnose from live instrumentation. `.cursor/rules/rigor-playbook-runtime-forensics.mdc`
+- Trace forensics. Diagnose from a captured profile. `.cursor/rules/rigor-playbook-trace-forensics.mdc`
+- Feature. New or changed behavior. `.cursor/rules/rigor-playbook-feature.mdc`
+- Refactoring. Structure changes, behavior does not. `.cursor/rules/rigor-playbook-refactoring.mdc`
+- Prototype. Throwaway sketch that decides a design. `.cursor/rules/rigor-playbook-prototype.mdc`
+- Visual parity. Pixel-exact UI equivalence. `.cursor/rules/rigor-playbook-visual-parity.mdc`
+- Authoring a skill or rule. `.cursor/rules/rigor-playbook-authoring-a-skill.mdc`
+- Eval. How a prompt or structure change affects agent behavior. `.cursor/rules/rigor-playbook-eval.mdc`
+- Babysit. Drive a PR or stack to merge-ready. `.cursor/rules/rigor-playbook-babysit.mdc`
+- Shipping. Land a verified stack. `.cursor/rules/rigor-playbook-shipping.mdc`
+- Autonomous run. Drive one predicate without stopping. `.cursor/rules/rigor-playbook-autonomous-run.mdc`
+- Orchestrate. Standing multi-PR program. `.cursor/rules/rigor-playbook-orchestrate.mdc`
+- Autopilot-full. Independent PRs through merge. `.cursor/rules/rigor-playbook-autopilot-full.mdc`
+- Autopilot-stack. One linear stack the operator lands. `.cursor/rules/rigor-playbook-autopilot-stack.mdc`
+- Session pickup. Resume from a trail. `.cursor/rules/rigor-playbook-session-pickup.mdc`
+- Pause safely. Clean stop. `.cursor/rules/rigor-playbook-pause-safely.mdc`
+- Multi-phase plan. Plan only, no implementation. `.cursor/rules/rigor-playbook-multi-phase-plan.mdc`
+- Worktree cleanup. Prune unused worktrees. `.cursor/rules/rigor-playbook-worktree-cleanup.mdc`
+- Opening a PR. End of every playbook that ships. `.cursor/rules/rigor-playbook-opening-a-pr.mdc`
+- Bugbot triage. `.cursor/rules/rigor-bugbot-triage.mdc`
+
+## Non-negotiables
+
+- A nontrivial change, an architecture decision, or "are we sure?" starts with a how-note. Overview, Key Concepts, How It Works, Where Things Live, Gotchas.
+- A fork a run can settle (behavior, timing, layout, output, perf, whether an eval separates) goes through Prototype. Ask the user only for a product or preference call no experiment can settle, or for an irreversible action.
+- Name the data shape and its organizing structure before writing code.
+- Code that crosses a function boundary gets an architect sketch first. Types, module boundaries, call graph.
+- Parallel independent work uses one subagent per scope. Design or code bakeoffs use competing worktrees. The parent judges.
+- A contested design gets an interrogate pass before shipping. List the load-bearing assumptions, try to break each against the diff and a run, record ship, change, or stop.
+- Nontrivial multi-step work writes the Feature throughput checkpoint.
+- Prose follows Writing the reply. PR text and commit messages also follow Opening a PR.
+- Before review, delete comments that narrate what the code already shows.
+- Verify UI, CLI, and TUI changes on that surface. Reproduce a bug fix yourself.
+- "Babysit", "get it green", "address the bugbot comments", and "check on PR N" use Babysit. Opening a PR does not start a babysit. Declare the mode before polling.
+- Landing or shipping a green stack uses Shipping. Green CI is not a verdict.
+- Bugbot or an agentic security review is triaged with the Bugbot triage rule.
+- A broken rule mid-task is fixed in its own PR. The original task keeps moving.
+- Long, autonomous, or multi-phase work, or work the user reviews later, gets a decision trail outside the product tree.
+
+## Principles
+
+These lines are the principles. There are no separate principle files. Apply the one the work triggers, and name it in the reply when it changes a decision.
+
+**Core.** Laziness means deletion and the smallest change that solves the problem. Foundational thinking means core types and shared state before logic. Redesign from first principles when a new requirement hits an old design. Attack the premise when two fixes fail the same gate. Subtract before you add. Minimize reader load by collapsing one-caller wrappers and shrinking mutable scope. Outcome-oriented execution means a phased migration converges on the target. Experience first means a product tradeoff picks the user outcome. Exhaust the design space with two or three prototypes when there is no precedent. Build the lever means a rerunnable script, not a hand pass.
+
+**Architecture.** Model the domain in a structure. Boundary discipline means validate at the edges, trust internal types, and keep business logic pure. Type-system discipline means illegal states are unrepresentable. Make operations idempotent so retries converge. Migrate callers, then delete the old API in one wave. Separate shared state before serializing it.
+
+**Verification.** Prove it works on the real artifact. Fix root causes by reproducing first, then asking why. Sequence verifiable units so each ends in a check. Test behavior, not implementation.
+
+**Delegation.** Guard the context window. Bulk goes to subagents, summaries stay here. Never block on the human for reversible work.
+
+**Meta.** Encode the lesson in structure. The second repeat becomes a lint, a check, or a script.
+
+## Cursor host
+
+Plugin slash commands and named workers (`rigor-agent`, `how`, `why`, `architect`, `swarm`, `arena`) are procedures here, not Task types.
+
+- **Dispatch.** Use the Task tool. Readonly reads use `explore`. Code-writing uses `generalPurpose`. Pass file paths, not pasted dumps. Omit `model` so the worker inherits this chat. A worker that writes gets its own git worktree. A worker that must see this machine shares the checkout. Review every child diff and write your own summary. Dispatch fresh with a consolidated scope. If this host forbids nested dispatch, the parent does that work and still reviews the diff before the step is done.
+- **Verify.** Run the surface the user hits. Rust changes run `cargo test`, narrowed to the package or test when the change is local. The focused gate is `cargo test -p ralph-cli -p ralph-core`. Orchestration and engine-boundary changes run the fake-autoloop replay tests under `crates/ralph-cli/tests/fixtures/autoloop/`. Do not treat `cargo test -p ralph-core smoke_runner` or `cargo run -p ralph-e2e -- --mock` as the v3 gate. Web UI changes run in the browser. The dashboard does not yet render live autoloop loop state. CLI and TUI changes run the binary. The Rust API is `cargo test -p ralph-api` and `cargo run -p ralph-api`. `npm run test:server` covers the deprecated Node backend only. A unit test does not clear a bug whose surface is the TUI, CLI, or dashboard. Inconclusive is not a pass.
+- **Ask.** Pause for force-push to a shared branch, deploys, data deletion, and customer messages. Reversible work proceeds.
+- **Schedule.** Use PR, CI, or timer subscriptions when this session has them. Otherwise name a cadence and re-check in the session. Do not invent a watcher daemon. This repo has no `scripts/watch-pr` or `scripts/orch`.
+- **How / why.** How is the subsystem note above, from an `explore` subagent when the area is large. Why is `git log`, blame, and the PR that introduced the behavior.
+- **Trail.** Write decision rows to the agent store or `/tmp/<slug>-decisions.tsv`. Do not commit that file. Product commits are the code trail.
+- **Models.** Do not set a subagent model unless the user named one. There is no per-role model override in this repo.
+
+## Autonomy
+
+"Don't stop", "going to bed", "run until done", or "be fully autonomous" means keep going. Decline work that does not earn its place.
+
+## Writing the reply
+
+Short declarative sentences. One thought per sentence. No long-dash character. A bullet is a sentence. A bold header is its own sentence. A colon before a list is fine. A colon used as a mid-sentence connector is not. Keep every section the playbook's reply names. State impact for the user and the maintainer before implementation detail. Link only artifacts you produced or read this session. Every claim carries its evidence, or the label measured, inferred, or guess, in the same sentence. PR links use `https://github.com/<owner>/<repo>/pull/<number>`.
+
+## Comments
+
+Keep a comment only for a non-obvious why the code cannot show. Tests and scripts get no phase narration.

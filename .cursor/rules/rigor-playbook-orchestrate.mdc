@@ -1,0 +1,101 @@
+---
+description: Orchestrate playbook. Read for a standing multi-day program with many stacked PRs and a fleet of workers. The coordinator owns briefs and the frontier, never the code. One task to a predicate is Autonomous run.
+alwaysApply: false
+---
+
+### Orchestrate
+
+**You own the program, never the code.** For a whole project handed to one standing coordinator. Multi-day, many stacked PRs, fleets of workers. One task driven to a predicate is Autonomous run. Work one agent could finish inside the session is not a program.
+
+Host mapping is in `.cursor/rules/rigor-mode.mdc`. The parent dispatches every worker. Children do not dispatch. Writers get worktrees.
+
+This repo has no `scripts/orch`. The coordinator writes the store files below. There is no CLI.
+
+Three rules carry the rest.
+
+- Completions are queue events, not interrupts.
+- Every dispatch and every resume carries the standing orders verbatim.
+- The brief is the product.
+
+#### Roles
+
+- **Coordinator (this chat).** Frames, authors briefs, drains the inbox, owns the human report, makes judgment calls. It never authors or edits code. Mechanically landing a verified unit (fast-forward or clean cherry-pick, then push) is bookkeeping it may do when local git is cheap.
+- **Worker / verifier.** `generalPurpose` for writers, `explore` for read-only. A writer gets its own git worktree unless the task needs this machine (live verify, local auth, simulators). Prefer fewer, broader workers. One writer per worktree or branch. Omit `model`.
+
+#### Store layout
+
+Create `orchestrate/<project-slug>/` in the current agent store. On a Cursor cloud agent that is `/cursor/stores/self/orchestrate/<project-slug>/`. If no store is mounted, use `/tmp/orchestrate/<project-slug>/` and say so. Do not put the store in the product tree. Every file has exactly one writer.
+
+- `preferences.md` standing orders. Paste verbatim into every dispatch and resume.
+- `overview.md` durable PR and issue notes. Append.
+- `units.tsv` one row per unit.
+- `frontier.json` computed merge frontier.
+- `ledger.tsv` verification ledger.
+- `inbox/` completion pointers. `gates.md` human gates.
+- `decisions.tsv` decision trail.
+- `status.md` derived from the tables at each drain.
+
+Store verbs, written by the coordinator:
+
+- Init creates the directory and empty files.
+- Inbox push writes `inbox/<agent>-<unit>.md` with status and a report path.
+- Inbox drain reads `inbox/` and removes handled pointers.
+- Unit add appends a row. Unit set rewrites that row.
+- Ledger record appends `ledger.tsv`.
+- Frontier set rewrites `frontier.json`.
+- Status rewrites `status.md` from the tables. The reply includes its three-line summary.
+
+#### The brief
+
+```
+GOAL         one sentence, the outcome, executable by a stranger with no chat access
+SCOPE        paths this unit may write; paths it may not; its exclusive worktree or branch
+CONTEXT      pointers to files and PRs; upstream reports pasted in full
+ACCEPTANCE   checkable criteria, one per line
+VERIFY       exact commands, plus known gotchas
+TIMEBOX      rough cap; on expiry, return partial findings and stop
+FORBIDDEN    no gt, no rebase, no force-push, no fixes outside scope, plus unit-specific bans
+REPORT       status, branch, head SHA, PRs, verdict, what you actually ran, deviations
+STANDING     <preferences.md pasted verbatim>
+```
+
+Size the brief to the unit. A field you cannot fill is a unit you have not scoped yet. Missing fields are a refuse-to-spawn condition. Never resume-chain a brief. Respawn fresh with consolidated scope.
+
+#### Steps
+
+1. **Frame.** State the done predicate as something countable. Quantify scope. If one agent could finish inside the budget, stop here and run Autonomous run. Schedule landing against the budget. By roughly 70% of it, stop spawning and land what is verified. A contested decomposition goes through competing briefs, and the parent picks. Done when the predicate, unit count, tracks, and budget exist, or the work is rerouted.
+2. **Install the runtime.** Init the store. Write standing orders before any dispatch. Seed `frontier.json` with the ordered PR list, branch names, head SHAs, and the lowest unmerged PR. Done when `status.md` exists for a fresh store.
+3. **Pilot.** Push one unit through brief, worker, verification, stack entry, ledger row, merge. Fix the contract from pilot evidence before fan-out. On near-identical cheap units, the first unit is the pilot. Done when the pilot unit has a ledger row and a landed or merge-ready PR, and the brief template was revised from evidence.
+4. **Scale.** Dispatch a rolling window of workers up to the in-flight cap, refilling as children finish. Recompute ready work after each drain. Relay upstream reports into downstream briefs. Done (per wave) when in-flight count is at the cap or no ready work remains.
+5. **Drain.** Queue discipline below, at every drain point. Done when the three-line status summary exists for this drain.
+6. **Land.** Continuous. Keep the frontier green before upper-stack work. Advance `frontier.json` only on merge or reported new head SHAs. Done when every ledger-verified unit that is the frontier has landed or is armed.
+7. **Close.** Drain the final inbox, reconcile every spawned worker to a terminal row, confirm the predicate on the real artifact, audit the trail. Leave the store intact. Done when every unit is terminal and the predicate is checked on the artifact.
+
+#### Queue and drain
+
+- On a completion, inbox-push and return to what you were doing. A completion that needs review becomes a verifier unit.
+- Drain in batches at the end of a critical section, a track rollup, a frontier wake, and before a human report. Begin each batch with inbox drain.
+- Each drain classifies every pointer, writes unit and ledger rows, rewrites status, then dispatches the next wave in one message.
+- Account for every spawned child at rollup.
+
+#### Stack safety
+
+- Recompute `frontier.json` after every merge. Ordered PR list, branch names, head SHAs, generation, lowest unmerged PR. Prefer `gh`. Never require `gt`.
+- Exactly one stacker per stack. Workers never rebase. Babysitters follow `.cursor/rules/rigor-playbook-babysit.mdc`.
+- Merges and stack surgery are units with briefs.
+
+#### Verification
+
+Scale verification to the unit. Cheap VERIFY means the worker runs it and the coordinator spot-checks receipts. Expensive or high-blast-radius means a dedicated verifier. Write ledger rows. CI green is an input, not a verdict. A new head SHA voids the row.
+
+#### Liveness
+
+- Probe read-only. The ledger, `units.tsv`, `gh`, pushed branches, dispatch output. Transcript mtime is not liveness.
+- Retry by mode. Cap-hit or oom, respawn smaller. Network-drop, retry as-is. Tool-error, retry once on the parent model. Two retries, then abandon the unit.
+- After a host restart, re-read standing orders and `units.tsv`, recompute the frontier, reattach work by PR and branch, drain, resume.
+
+#### Escalation
+
+Ask only for irreversible actions, genuine product or preference calls, a standing order that contradicts reality, or a program-level dead end. Park each as a `gates.md` entry. When in doubt, act and log.
+
+**Reply:** at checkpoints and close, the predicate and the count against it from `units.tsv` and `ledger.tsv`, tracks and what each landed, the frontier, verdicts summary, what was abandoned and why, gates awaiting the human, the store path, and the trail path. Include PR links.

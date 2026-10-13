@@ -1,0 +1,20 @@
+---
+description: Autopilot-full playbook. Read for a queue of independent PRs to build, verify, and merge with full autonomy. Nothing merges without a clean parent verdict. Operator-named items stop at merge-ready.
+alwaysApply: false
+---
+
+### Autopilot-full
+
+**You own the verdicts, never the PRs.** One owner runs each PR from build to merge. Nothing merges without your clean verdict from independent verifiers.
+
+Host mapping is in `.cursor/rules/rigor-mode.mdc`. One owner per PR, `generalPurpose`, own worktree. Audit on a 30-minute cadence. Live lanes verify on the real surface.
+
+1. **Mark the operator's items and honor state-then-wait.** Items the operator names stay with the operator. When the operator asks for the protocol, deliver it and stop. Execution starts only on an explicit go. On that go, write the program objective as a durable goal the root re-reads every tick. Done when operator items are listed and either the protocol is delivered (wait) or the goal is armed (go).
+2. **Dispatch one owner per PR** with the full lifecycle and an early trail. `gh` by default. The host PR tool when the session requires it. Never require Graphite. Each owner owns build, first push, a ready PR, self-proof on the real artifact, Bugbot triage per `.cursor/rules/rigor-bugbot-triage.mdc`, the comment purge, a rebase onto current trunk, and Babysit to green (`.cursor/rules/rigor-playbook-babysit.mdc`). The merge is gated by step 4. Within about 15 minutes, every owner starts a `decisions.tsv` outside the product tree, pushes its first branch snapshot, and opens the PR. Cloud owners follow the host's draft rule and say so. Done when every PR has an owner, a branch, a PR URL, and a trail path.
+3. **Run owners in true parallel and never stack.** Many owners at once when PRs are self-contained. Sequenced work is merge-then-branch. Done when overlapping work is serialized and independent work is parallel.
+4. **Verify every merge-ready head before its merge.** At the owner's merge-ready head SHA, fan out independent verifiers. Lanes cover re-running the gates at that SHA, live verify of load-bearing behavior on the real surface, an audit of receipts and the diff, and a regression lane against trunk. No merge without the root's clean verdict. Findings go back to the owner. A new head gets a fresh fan-out. Done when the head SHA has a clean aggregated verdict, or findings are back with the owner.
+5. **On a clean verdict the owner merges and takes the next item.** Merge only from a head freshly rebased onto trunk. The patch-id rule in Shipping governs re-verification. Operator-named items stop at merge-ready. Done when the PR is merged or waiting on the operator, and the owner has picked up the next item or is idle.
+6. **Run the root layer.** A genuinely new raise of a pinned gate needs your fresh countersign. Every 30 minutes, re-read this file and the armed goal. Probe each owner by side effects only. Commits, pushes, PR or check deltas, store reports. A lane that passes its expected runtime without a side effect is stuck. Stand it down and dispatch a replacement. Done (per tick) when every owner has a side-effect status or has been replaced, and a status message exists.
+7. **Stand down instantly on the operator's stop.** Hold is a zero-writes order to every owner. Done when every owner has acknowledged hold or been stood down.
+
+**Reply:** the queue with each PR's owner, state, and head SHA. Each verdict and the lanes that produced it. What merged and what each owner took next. Countersigns granted and why. Open operator gates. Where the collected decision trails live.

@@ -1,0 +1,23 @@
+---
+description: Autopilot-stack playbook. Read when a queue should become one linear reviewed stack the operator lands. Build and verify with autonomy. Do not merge. Use Autopilot-full when PRs are independent and landing authority is granted.
+alwaysApply: false
+---
+
+### Autopilot-stack
+
+**You own the stack, never the landing.** Build and verify the queue with full autonomy, then hand the operator one linear base-branch stack to review and land.
+
+Host mapping is in `.cursor/rules/rigor-mode.mdc`. Same owner loop as Autopilot-full, without merge.
+
+1. **Run the owner loop without merge.** Resolve the forge once. Dispatch one `generalPurpose` owner per PR, own worktree. Each owner owns build, first push, a PR opened before self-proof, self-proof, Bugbot triage (`.cursor/rules/rigor-bugbot-triage.mdc`), the comment purge, and Babysit to green. No owner merges, arms auto-merge, or closes. Within about 15 minutes, every owner starts a `decisions.tsv` outside the product tree, pushes, and opens the PR. Done when every PR has an owner, a URL, and a trail.
+2. **Audit on the wake chain.** Every 30 minutes, re-read this file and the armed goal. Probe each owner by side effects. Stand down a stuck lane and dispatch a replacement. Done (per tick) when every owner has a side-effect status or has been replaced.
+3. **Hold the operator gates.** State-then-wait. On explicit go, arm the goal. On stop, every owner takes a zero-writes hold. Done when the goal is armed or hold is acknowledged.
+4. **Verify at STACK-READY.** The owner reports STACK-READY with the exact head SHA. The root fans out verifiers on that SHA. Gates, a live verify floor, a receipts-and-diff audit. Findings go back to the owner. Nothing enters the stack unverified. Done when the SHA has a clean verdict or findings are back with the owner.
+5. **Append on a clean verdict, never ship.** A clean verdict appends the PR to the one linear base-branch stack, in verified order or an order the operator specified. Done when the PR base is the parent branch and the stack order is recorded.
+6. **Single writer on topology, parallel writers on builds.** Owners push only their own branches and report tip, current base, and intended parent. The root is the only topology writer. To append, fetch the intended parent, rebase the child onto that exact parent tip, push with `--force-with-lease` only after `ls-remote`, and set the PR base to the parent branch. Only the root PR targets trunk (`origin/integration/v3-prerelease`). Never require `gt`. Done when topology matches the recorded stack and only the root wrote bases.
+7. **Absorb drift at the root, then re-verify what moved.** Fetch current trunk and rebase the chain from bottom to top. Conflicts in an owner's files go back to that owner. Compare `git patch-id` at the verdict SHA against the new base-to-head diff. Unchanged patch-id preserves the code verdict. A changed patch goes through step 4. Re-run mergeability and CI after every rewritten push. Done when every link has a current verdict or is back in step 4.
+8. **Deliver the chain.** One linear chain of verified PRs, reviewable bottom-up, every link carrying its verifier verdict in the PR body or a comment. The operator reviews and lands it. Done when the stack root and tip URLs exist and every link has a verdict.
+
+**Choosing between the autopilots.** Autopilot-full when the PRs are independent and landing authority is granted. Autopilot-stack when the operator wants review before landing, the work is sequenced or coupled, or merge authority is withheld.
+
+**Reply:** links to the stack root and tip, a one-line verdict summary per link, and anything parked or excluded with the reason.

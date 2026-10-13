@@ -1,0 +1,30 @@
+---
+description: Eval playbook. Read when testing how a skill, rule, prompt, or structure change affects agent behavior. Blind the candidates, then judge from transcripts and outputs.
+alwaysApply: false
+---
+
+### Eval
+
+**You own the experiment design. Plan, blind, run, synthesize.**
+
+**Non-negotiables for blinding:**
+
+- No `eval`, `test`, `judge`, `experiment`, `rubric`, `score`, `compare`, `benchmark`, `candidate`, or `arena` in any directory, file, or prompt the candidate sees.
+- The candidate prompt looks like an organic user request.
+- No chain-eliciting cues. Grade chain-following from code shape and files actually read.
+- Sanitize directory and slug names.
+- Do not tell the candidate other candidates exist.
+- The judge can know it is judging but sees outputs by sanitized label only, never by model name.
+- Comparing two variants. One judge scores both sets in a single pass on one scale, blind to which set each came from.
+
+Host mapping is in `.cursor/rules/rigor-mode.mdc`. Transcripts stay inside this workspace.
+
+1. **Frame.** State what variant is under test and what behavior counts as success. Write the rubric (3 to 6 concrete criteria) for the judge only. Done when variant, success behavior, and rubric exist and the rubric is held back from candidates.
+2. **Set up sanitized environments.** Per-candidate working dir with the variant in place. Plant any context an organic task would have. Done when each candidate dir exists and names are sanitized.
+3. **Author one organic prompt.** What a user would type. Done when that prompt has none of the banned words.
+4. **Dispatch N parallel candidates.** Each is a `generalPurpose` subagent in its own sanitized dir. Same prompt to each. Omit `model` unless the user named models to compare. Done when every candidate has produced an output artifact.
+5. **Dispatch one blinded judge.** The judge sees outputs by sanitized label and the rubric. Done when the judge's scored verdict exists.
+6. **Verify the chain from transcripts, not self-report.** Read each candidate's local transcript from this workspace when one exists. Look at which files each candidate actually opened. Grade chain-following from the files it really read plus the shape of the code. Done when each candidate has a chain-following grade with cited file reads.
+7. **Read every candidate output yourself** end to end. Compare to the judge's verdict. Synthesize. Done when the synthesis names agreement or explains disagreement.
+
+**Reply:** variant under test, rubric, per-candidate notes, judge's verdict, your synthesis, and a recommendation for whether to promote the variant.

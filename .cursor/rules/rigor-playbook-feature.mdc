@@ -1,0 +1,28 @@
+---
+description: Feature playbook. Read when adding or changing behavior. Start from a named data shape, then implement, verify on the real surface, and open a PR.
+alwaysApply: false
+---
+
+### Feature
+
+**You own the design. Plan, review, verify.** Delegate implementation. Stay in the lead.
+
+Host mapping is in `.cursor/rules/rigor-mode.mdc`. Code-writing goes to a `generalPurpose` subagent. Omit `model`. A worker that writes uses its own git worktree.
+
+1. Write the how-note over the affected subsystem. Done when that note exists.
+2. Write an architect sketch for parallel design exploration. Two or three shapes, then a synthesis. Skipping stays as `architect skipped: <reason>`. Done when a synthesized sketch exists or the skip reason is on the todo.
+3. Write the throughput checkpoint as four todo items. A dimension that does not apply keeps its item with `n/a: <reason>`.
+   - **Blocking first steps.** Gates run before fan-out.
+   - **Independent workstreams.** Disjoint files, services, or layers parallelize. Shared writes serialize.
+   - **Shared mutable state.** Default to splitting the target. Serialize only for a real invariant.
+   - **Smallest safe decomposition.** If one worker is best, name why.
+   Done when all four items exist.
+4. Dispatch code-writing with a specific scope. File paths, the named data shape and its organizing structure, success criteria. Review the diff yourself. When the implementation admits multiple valid shapes, run them as competing worktrees and judge. No skip. If the host forbids nested dispatch, the parent owns the diff with the same review separation. Comments follow `.cursor/rules/rigor-mode.mdc`. Surgical edits. Port a shared-primitive improvement to every consumer and verify each. Commit liberally. Done when the reviewed diff is in the tree and you have written your own summary.
+5. Verify on the matching surface. Inconclusive or the wrong surface is not a pass. Flag it. Done when the real artifact shows the new behavior.
+6. Rebase into small, ordered commits. Stack follow-ups. Each commit is landable. Done when each commit is landable and ordered.
+7. If the design is contested, interrogate before shipping. List load-bearing assumptions, try to break each against the diff and a run, record a verdict. Done when a verdict exists or the design is uncontested.
+8. Run Opening a PR (`.cursor/rules/rigor-playbook-opening-a-pr.mdc`). Done when the PR URL exists.
+
+Code-coupled work goes to a single owner with the checkpoint inline. Parent-level fan-out is for independent artifacts. Spawn a fresh owner with a consolidated scope.
+
+**Reply:** what you built, what you chose and why, the throughput checkpoint, open decisions. Tables for design alternatives.

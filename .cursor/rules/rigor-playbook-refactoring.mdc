@@ -1,0 +1,23 @@
+---
+description: Refactoring playbook. Read for a behavior-preserving structure change. Pin current behavior first, then reshape, then prove equivalence.
+alwaysApply: false
+---
+
+### Refactoring
+
+**You own the contract. The structure changes. The behavior does not.** Feature adds behavior. Bug fix corrects it.
+
+If the cleanup reveals a missing feature or a real bug, split it out and ship the structural change first against the pinned contract. A redesign is allowed when you name it and route to Feature. Large or cross-cutting structural work uses Multi-phase plan (`.cursor/rules/rigor-playbook-multi-phase-plan.mdc`).
+
+Host mapping is in `.cursor/rules/rigor-mode.mdc`. Omit `model`.
+
+1. Pin the behavior contract first. Write the how-note over the affected subsystem, then a characterization test, snapshot, or equivalence harness that captures current behavior before any structure moves. Type check and lint are not a pin. Done when the pin is green on current behavior.
+2. Name the structure the code is missing. Boring code stays when the shape is already clear and local. The reshape must delete branches or invalid states. It must not add indirection. Done when the missing structure is named in one sentence.
+3. Name the target shape. State what the module layout, types, and call graph should be if built today. If the target crosses a function boundary, write the architect sketch. Done when the target shape is written, plus an architect sketch when required.
+4. Subtract before you add. Delete dead code, collapse one-caller wrappers, drop redundant validators, and remove orphan references before introducing the new shape. Revert a speculative cleanup that "might help". Done when dead weight is gone and the pin is still green.
+5. Move in small behavior-preserving steps, each keeping the pin green. For an API reshape, migrate every caller and delete the old API in the same wave. Spot-check every rename against the actual files. Dispatch mechanical edits with a specific scope. Review the diff yourself. Done when the target shape is in the tree and the pin is green.
+6. Prove behavior is unchanged on the real artifact. For a larger reshape, run an equivalence check. A script that diffs old-vs-new outputs, a recorded baseline replayed against the new code, or a smoke run on the matching surface. Own the verification. Done when equivalence evidence exists.
+7. Confirm the change is worth keeping. The success measure is reduced reader load. If the diff does not lower reader load somewhere, revert it. Done when the reader-load delta is stated, or the diff is reverted.
+8. Rebase into small ordered commits. A subtraction commit, then the reshape, then any follow-on cleanup. Run Opening a PR (`.cursor/rules/rigor-playbook-opening-a-pr.mdc`). Done when the PR URL exists.
+
+**Reply:** the structure that changed, the pin you held it against, the equivalence proof, the reader-load delta, what shipped and what got reverted. No new behavior.
