@@ -2435,12 +2435,15 @@ mod tests {
         );
 
         assert!(result.is_none());
-        assert!(handler.texts.is_empty());
-        assert!(handler.tool_calls.is_empty());
-        assert!(handler.tool_results.is_empty());
-        assert!(handler.errors.is_empty());
+        assert_eq!(handler.texts, [] as [String; 0]);
+        assert_eq!(
+            handler.tool_calls,
+            [] as [(String, String, serde_json::Value); 0]
+        );
+        assert_eq!(handler.tool_results, [] as [(String, String); 0]);
+        assert_eq!(handler.errors, [] as [String; 0]);
         assert!(handler.completions.is_empty());
-        assert!(extracted_text.is_empty());
+        assert_eq!(extracted_text, "");
     }
 
     #[test]
@@ -2884,7 +2887,7 @@ mod tests {
         assert!(captured.contains("alpha"), "captured: {captured}");
         assert!(captured.contains("beta"), "captured: {captured}");
         assert!(handler.completions.is_empty());
-        assert!(result.extracted_text.is_empty());
+        assert_eq!(result.extracted_text, "");
     }
 
     #[cfg(unix)]

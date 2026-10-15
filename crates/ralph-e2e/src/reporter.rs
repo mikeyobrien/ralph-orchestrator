@@ -2141,7 +2141,7 @@ mod reporter_tests {
         let paths = writer
             .write(&results, None, crate::models::ReportFormat::Markdown)
             .unwrap();
-        assert!(!paths.is_empty());
+        assert_ne!(paths, [] as [PathBuf; 0]);
         assert!(temp_dir.exists());
 
         // Cleanup

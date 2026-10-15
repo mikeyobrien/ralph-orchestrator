@@ -771,7 +771,7 @@ mod tests {
         dispatch_pi_family_event(event, &mut handler, &mut state, true);
         assert_eq!(handler.texts, vec!["thinking..."]);
         // Thinking should NOT go into extracted_text (not part of output)
-        assert!(state.extracted_text.is_empty());
+        assert_eq!(state.extracted_text, "");
     }
 
     #[test]
@@ -786,8 +786,8 @@ mod tests {
         };
 
         dispatch_pi_family_event(event, &mut handler, &mut state, false);
-        assert!(handler.texts.is_empty());
-        assert!(state.extracted_text.is_empty());
+        assert_eq!(handler.texts, [] as [String; 0]);
+        assert_eq!(state.extracted_text, "");
     }
 
     #[test]
@@ -845,7 +845,7 @@ mod tests {
         assert_eq!(handler.tool_results.len(), 1);
         assert_eq!(handler.tool_results[0].0, "toolu_123");
         assert_eq!(handler.tool_results[0].1, "hello\n");
-        assert!(handler.errors.is_empty());
+        assert_eq!(handler.errors, [] as [String; 0]);
     }
 
     #[test]
@@ -866,7 +866,7 @@ mod tests {
 
         dispatch_pi_family_event(event, &mut handler, &mut state, false);
 
-        assert!(handler.tool_results.is_empty());
+        assert_eq!(handler.tool_results, [] as [(String, String); 0]);
         assert_eq!(handler.errors, vec!["file not found"]);
     }
 
@@ -940,12 +940,15 @@ mod tests {
 
         dispatch_pi_family_event(PiFamilyEvent::Other, &mut handler, &mut state, false);
 
-        assert!(handler.texts.is_empty());
-        assert!(handler.tool_calls.is_empty());
-        assert!(handler.tool_results.is_empty());
-        assert!(handler.errors.is_empty());
+        assert_eq!(handler.texts, [] as [String; 0]);
+        assert_eq!(
+            handler.tool_calls,
+            [] as [(String, String, serde_json::Value); 0]
+        );
+        assert_eq!(handler.tool_results, [] as [(String, String); 0]);
+        assert_eq!(handler.errors, [] as [String; 0]);
         assert!(handler.completions.is_empty());
-        assert!(state.extracted_text.is_empty());
+        assert_eq!(state.extracted_text, "");
         assert_eq!(state.num_turns, 0);
     }
 
@@ -960,8 +963,8 @@ mod tests {
 
         dispatch_pi_family_event(event, &mut handler, &mut state, false);
 
-        assert!(handler.texts.is_empty());
-        assert!(handler.errors.is_empty());
+        assert_eq!(handler.texts, [] as [String; 0]);
+        assert_eq!(handler.errors, [] as [String; 0]);
     }
 
     // =========================================================================
@@ -1187,7 +1190,7 @@ mod tests {
         let pe = summary.protocol_error.expect("case-1 mismatch");
         assert!(pe.contains("no usable"), "case-1 wording: {pe}");
         assert!(summary.session_result.is_error);
-        assert!(summary.extracted_text.is_empty());
+        assert_eq!(summary.extracted_text, "");
     }
 
     #[test]
@@ -1361,7 +1364,7 @@ mod tests {
         assert_eq!(session.duration_ms, 250);
         // The tool end (isError omitted) was dispatched as a success result.
         assert_eq!(handler.tool_results.len(), 1);
-        assert!(handler.errors.is_empty());
+        assert_eq!(handler.errors, [] as [String; 0]);
     }
 
     #[test]

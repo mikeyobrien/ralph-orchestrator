@@ -1258,7 +1258,7 @@ mod tests {
             });
 
             let lines = collect_lines(&handler);
-            assert!(!lines.is_empty());
+            assert_ne!(lines, [] as [ratatui::prelude::Line<'_>; 0]);
 
             // Last line should be red styled for error
             let last_line = lines.last().unwrap();
@@ -1281,7 +1281,7 @@ mod tests {
             });
 
             let lines = collect_lines(&handler);
-            assert!(!lines.is_empty());
+            assert_ne!(lines, [] as [ratatui::prelude::Line<'_>; 0]);
 
             // Last line should be green styled for success
             let last_line = lines.last().unwrap();

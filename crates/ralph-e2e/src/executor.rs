@@ -536,7 +536,7 @@ mod tests {
         assert!(matches!(config.prompt, PromptSource::Inline(p) if p == "Say hello"));
         assert_eq!(config.max_iterations, 1);
         assert_eq!(config.timeout, Duration::from_mins(5));
-        assert!(config.extra_args.is_empty());
+        assert_eq!(config.extra_args, [] as [String; 0]);
     }
 
     #[test]

@@ -3804,7 +3804,7 @@ core:
 
         let config = load_config_with_overrides(&sources).unwrap();
 
-        assert!(!config.core.scratchpad.path.is_empty());
+        assert_ne!(config.core.scratchpad.path, "");
         let expected_root = std::fs::canonicalize(temp_dir.path())
             .unwrap_or_else(|_| temp_dir.path().to_path_buf());
         let actual_root = std::fs::canonicalize(&config.core.workspace_root)

@@ -191,7 +191,7 @@ async fn mcp_stream_tools_support_polling() -> Result<()> {
     let events = next.structured_content.as_ref().unwrap()["events"]
         .as_array()
         .unwrap();
-    assert!(!events.is_empty());
+    assert_ne!(events.as_slice(), [] as [serde_json::Value; 0]);
     let cursor = events[0]["cursor"]
         .as_str()
         .expect("stream event cursor")
@@ -243,7 +243,7 @@ async fn mcp_accepts_paginated_tools_requests() -> Result<()> {
             PaginatedRequestParams::default().with_cursor(Some("0".to_string())),
         ))
         .await?;
-    assert!(!result.tools.is_empty());
+    assert_ne!(result.tools, [] as [rmcp::model::Tool; 0]);
 
     client.cancel().await?;
     server_handle.await??;
