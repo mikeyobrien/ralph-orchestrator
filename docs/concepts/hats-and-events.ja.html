@@ -1,0 +1,601 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ハットとイベント — Ralph Orchestrator 日本語ドキュメント</title>
+<style>
+
+:root{
+  --bg:#ffffff; --fg:#1f2328; --muted:#57606a; --border:#d0d7de;
+  --link:#6f42c1; --accent:#8250df; --code-bg:#f6f8fa; --topbar:#faf8ff;
+  --sidebar:#fbfaff; --mark:#fff3bf;
+}
+:root[data-theme="dark"]{
+  --bg:#0d1117; --fg:#e6edf3; --muted:#9198a1; --border:#30363d;
+  --link:#d2a8ff; --accent:#bc8cff; --code-bg:#161b22; --topbar:#161b22;
+  --sidebar:#0f141b; --mark:#5c4a00;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0d1117; --fg:#e6edf3; --muted:#9198a1; --border:#30363d;
+    --link:#d2a8ff; --accent:#bc8cff; --code-bg:#161b22; --topbar:#161b22;
+    --sidebar:#0f141b; --mark:#5c4a00;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Kaku Gothic ProN","Noto Sans JP",Meiryo,sans-serif;
+  line-height:1.75; font-size:16px;
+}
+.topbar{
+  position:sticky; top:0; z-index:30; display:flex; align-items:center; gap:.6rem;
+  padding:.5rem .9rem; background:var(--topbar); border-bottom:1px solid var(--border);
+  backdrop-filter:saturate(1.2) blur(4px);
+}
+.brand{font-weight:700} .brand small{color:var(--muted); font-weight:500; font-size:.75em}
+.spacer{flex:1}
+.icon-btn{
+  border:1px solid var(--border); background:transparent; color:var(--fg);
+  border-radius:8px; padding:.35rem .55rem; cursor:pointer; font-size:1rem; line-height:1;
+}
+.icon-btn:hover{border-color:var(--accent)}
+.search{
+  border:1px solid var(--border); background:var(--bg); color:var(--fg);
+  border-radius:8px; padding:.4rem .6rem; min-width:8rem; max-width:16rem;
+}
+.layout{display:flex; align-items:flex-start; max-width:1200px; margin:0 auto}
+.toc{
+  position:sticky; top:56px; align-self:flex-start; width:270px; flex:0 0 270px;
+  max-height:calc(100vh - 56px); overflow:auto; padding:1rem .75rem;
+  background:var(--sidebar); border-right:1px solid var(--border);
+}
+.toc-title{font-size:.8rem; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin-bottom:.5rem}
+.toc ul{list-style:none; margin:0; padding:0}
+.toc li{margin:.05rem 0}
+.toc a{display:block; text-decoration:none; color:var(--muted); padding:.2rem .5rem; border-radius:6px; font-size:.9rem}
+.toc a:hover{background:rgba(130,80,223,.1); color:var(--fg)}
+.toc a.active{color:var(--accent); background:rgba(130,80,223,.14); font-weight:600}
+.toc .lvl-3{padding-left:1rem} .toc .lvl-4{padding-left:1.75rem; font-size:.85rem}
+.content{flex:1 1 auto; min-width:0; padding:1.5rem 2rem 6rem; max-width:820px}
+.content h1{font-size:1.9rem; border-bottom:2px solid var(--border); padding-bottom:.3rem; margin-top:0}
+.content h2{font-size:1.45rem; border-bottom:1px solid var(--border); padding-bottom:.25rem; margin-top:2rem}
+.content h3{font-size:1.2rem; margin-top:1.6rem}
+.content a{color:var(--link)}
+.content code{background:var(--code-bg); padding:.15em .4em; border-radius:6px; font-size:.88em;
+  font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.content pre{background:var(--code-bg); border:1px solid var(--border); border-radius:10px;
+  padding:1rem; overflow-x:auto; position:relative}
+.content pre code{background:none; padding:0}
+.content blockquote{border-left:4px solid var(--accent); margin:1rem 0; padding:.2rem 1rem; color:var(--muted)}
+.content table{border-collapse:collapse; width:100%; display:block; overflow-x:auto}
+.content th,.content td{border:1px solid var(--border); padding:.5rem .75rem}
+.content th{background:var(--code-bg)}
+.content img{max-width:100%; height:auto}
+.content .headerlink{opacity:0; text-decoration:none; margin-left:.35rem; color:var(--muted)}
+.content h1:hover .headerlink,.content h2:hover .headerlink,
+.content h3:hover .headerlink,.content h4:hover .headerlink{opacity:1}
+mark{background:var(--mark); color:inherit; border-radius:3px}
+.copy-btn{
+  position:absolute; top:.5rem; right:.5rem; font-size:.72rem; padding:.2rem .5rem;
+  border:1px solid var(--border); background:var(--bg); color:var(--muted);
+  border-radius:6px; cursor:pointer; opacity:0; transition:opacity .15s;
+}
+pre:hover .copy-btn{opacity:1}
+.copy-btn.copied{color:var(--accent); border-color:var(--accent)}
+.backdrop{display:none; position:fixed; inset:56px 0 0 0; background:rgba(0,0,0,.4); z-index:20}
+@media (max-width:820px){
+  .toc{position:fixed; top:56px; left:0; bottom:0; transform:translateX(-100%);
+       transition:transform .2s ease; z-index:25; width:80%; max-width:320px}
+  .toc.open{transform:translateX(0)}
+  .backdrop.show{display:block}
+  .content{padding:1.25rem 1.1rem 5rem}
+  .search{min-width:5rem}
+}
+@media (min-width:821px){ #menuBtn{display:none} }
+
+/* --- Pygments (light) --- */
+pre { line-height: 125%; }
+td.linenos .normal { color: inherit; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+span.linenos { color: inherit; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+td.linenos .special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+.codehilite .hll { background-color: #ffffcc }
+.codehilite { background: #f8f8f8; }
+.codehilite .c { color: #3D7B7B; font-style: italic } /* Comment */
+.codehilite .err { border: 1px solid #F00 } /* Error */
+.codehilite .k { color: #008000; font-weight: bold } /* Keyword */
+.codehilite .o { color: #666 } /* Operator */
+.codehilite .ch { color: #3D7B7B; font-style: italic } /* Comment.Hashbang */
+.codehilite .cm { color: #3D7B7B; font-style: italic } /* Comment.Multiline */
+.codehilite .cp { color: #9C6500 } /* Comment.Preproc */
+.codehilite .cpf { color: #3D7B7B; font-style: italic } /* Comment.PreprocFile */
+.codehilite .c1 { color: #3D7B7B; font-style: italic } /* Comment.Single */
+.codehilite .cs { color: #3D7B7B; font-style: italic } /* Comment.Special */
+.codehilite .gd { color: #A00000 } /* Generic.Deleted */
+.codehilite .ge { font-style: italic } /* Generic.Emph */
+.codehilite .ges { font-weight: bold; font-style: italic } /* Generic.EmphStrong */
+.codehilite .gr { color: #E40000 } /* Generic.Error */
+.codehilite .gh { color: #000080; font-weight: bold } /* Generic.Heading */
+.codehilite .gi { color: #008400 } /* Generic.Inserted */
+.codehilite .go { color: #717171 } /* Generic.Output */
+.codehilite .gp { color: #000080; font-weight: bold } /* Generic.Prompt */
+.codehilite .gs { font-weight: bold } /* Generic.Strong */
+.codehilite .gu { color: #800080; font-weight: bold } /* Generic.Subheading */
+.codehilite .gt { color: #04D } /* Generic.Traceback */
+.codehilite .kc { color: #008000; font-weight: bold } /* Keyword.Constant */
+.codehilite .kd { color: #008000; font-weight: bold } /* Keyword.Declaration */
+.codehilite .kn { color: #008000; font-weight: bold } /* Keyword.Namespace */
+.codehilite .kp { color: #008000 } /* Keyword.Pseudo */
+.codehilite .kr { color: #008000; font-weight: bold } /* Keyword.Reserved */
+.codehilite .kt { color: #B00040 } /* Keyword.Type */
+.codehilite .m { color: #666 } /* Literal.Number */
+.codehilite .s { color: #BA2121 } /* Literal.String */
+.codehilite .na { color: #687822 } /* Name.Attribute */
+.codehilite .nb { color: #008000 } /* Name.Builtin */
+.codehilite .nc { color: #00F; font-weight: bold } /* Name.Class */
+.codehilite .no { color: #800 } /* Name.Constant */
+.codehilite .nd { color: #A2F } /* Name.Decorator */
+.codehilite .ni { color: #717171; font-weight: bold } /* Name.Entity */
+.codehilite .ne { color: #CB3F38; font-weight: bold } /* Name.Exception */
+.codehilite .nf { color: #00F } /* Name.Function */
+.codehilite .nl { color: #767600 } /* Name.Label */
+.codehilite .nn { color: #00F; font-weight: bold } /* Name.Namespace */
+.codehilite .nt { color: #008000; font-weight: bold } /* Name.Tag */
+.codehilite .nv { color: #19177C } /* Name.Variable */
+.codehilite .ow { color: #A2F; font-weight: bold } /* Operator.Word */
+.codehilite .w { color: #BBB } /* Text.Whitespace */
+.codehilite .mb { color: #666 } /* Literal.Number.Bin */
+.codehilite .mf { color: #666 } /* Literal.Number.Float */
+.codehilite .mh { color: #666 } /* Literal.Number.Hex */
+.codehilite .mi { color: #666 } /* Literal.Number.Integer */
+.codehilite .mo { color: #666 } /* Literal.Number.Oct */
+.codehilite .sa { color: #BA2121 } /* Literal.String.Affix */
+.codehilite .sb { color: #BA2121 } /* Literal.String.Backtick */
+.codehilite .sc { color: #BA2121 } /* Literal.String.Char */
+.codehilite .dl { color: #BA2121 } /* Literal.String.Delimiter */
+.codehilite .sd { color: #BA2121; font-style: italic } /* Literal.String.Doc */
+.codehilite .s2 { color: #BA2121 } /* Literal.String.Double */
+.codehilite .se { color: #AA5D1F; font-weight: bold } /* Literal.String.Escape */
+.codehilite .sh { color: #BA2121 } /* Literal.String.Heredoc */
+.codehilite .si { color: #A45A77; font-weight: bold } /* Literal.String.Interpol */
+.codehilite .sx { color: #008000 } /* Literal.String.Other */
+.codehilite .sr { color: #A45A77 } /* Literal.String.Regex */
+.codehilite .s1 { color: #BA2121 } /* Literal.String.Single */
+.codehilite .ss { color: #19177C } /* Literal.String.Symbol */
+.codehilite .bp { color: #008000 } /* Name.Builtin.Pseudo */
+.codehilite .fm { color: #00F } /* Name.Function.Magic */
+.codehilite .vc { color: #19177C } /* Name.Variable.Class */
+.codehilite .vg { color: #19177C } /* Name.Variable.Global */
+.codehilite .vi { color: #19177C } /* Name.Variable.Instance */
+.codehilite .vm { color: #19177C } /* Name.Variable.Magic */
+.codehilite .il { color: #666 } /* Literal.Number.Integer.Long */
+/* --- Pygments (dark) --- */
+:root[data-theme="dark"] .codehilite,
+@media (prefers-color-scheme: dark) {}
+</style>
+<style id="pygments-dark" media="not all">
+pre { line-height: 125%; }
+td.linenos .normal { color: inherit; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+span.linenos { color: inherit; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+td.linenos .special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+.codehilite .hll { background-color: #49483e }
+.codehilite { background: #272822; color: #F8F8F2 }
+.codehilite .c { color: #959077 } /* Comment */
+.codehilite .err { color: #ED007E; background-color: #1E0010 } /* Error */
+.codehilite .esc { color: #F8F8F2 } /* Escape */
+.codehilite .g { color: #F8F8F2 } /* Generic */
+.codehilite .k { color: #66D9EF } /* Keyword */
+.codehilite .l { color: #AE81FF } /* Literal */
+.codehilite .n { color: #F8F8F2 } /* Name */
+.codehilite .o { color: #FF4689 } /* Operator */
+.codehilite .x { color: #F8F8F2 } /* Other */
+.codehilite .p { color: #F8F8F2 } /* Punctuation */
+.codehilite .ch { color: #959077 } /* Comment.Hashbang */
+.codehilite .cm { color: #959077 } /* Comment.Multiline */
+.codehilite .cp { color: #959077 } /* Comment.Preproc */
+.codehilite .cpf { color: #959077 } /* Comment.PreprocFile */
+.codehilite .c1 { color: #959077 } /* Comment.Single */
+.codehilite .cs { color: #959077 } /* Comment.Special */
+.codehilite .gd { color: #FF4689 } /* Generic.Deleted */
+.codehilite .ge { color: #F8F8F2; font-style: italic } /* Generic.Emph */
+.codehilite .ges { color: #F8F8F2; font-weight: bold; font-style: italic } /* Generic.EmphStrong */
+.codehilite .gr { color: #F8F8F2 } /* Generic.Error */
+.codehilite .gh { color: #F8F8F2 } /* Generic.Heading */
+.codehilite .gi { color: #A6E22E } /* Generic.Inserted */
+.codehilite .go { color: #66D9EF } /* Generic.Output */
+.codehilite .gp { color: #FF4689; font-weight: bold } /* Generic.Prompt */
+.codehilite .gs { color: #F8F8F2; font-weight: bold } /* Generic.Strong */
+.codehilite .gu { color: #959077 } /* Generic.Subheading */
+.codehilite .gt { color: #F8F8F2 } /* Generic.Traceback */
+.codehilite .kc { color: #66D9EF } /* Keyword.Constant */
+.codehilite .kd { color: #66D9EF } /* Keyword.Declaration */
+.codehilite .kn { color: #FF4689 } /* Keyword.Namespace */
+.codehilite .kp { color: #66D9EF } /* Keyword.Pseudo */
+.codehilite .kr { color: #66D9EF } /* Keyword.Reserved */
+.codehilite .kt { color: #66D9EF } /* Keyword.Type */
+.codehilite .ld { color: #E6DB74 } /* Literal.Date */
+.codehilite .m { color: #AE81FF } /* Literal.Number */
+.codehilite .s { color: #E6DB74 } /* Literal.String */
+.codehilite .na { color: #A6E22E } /* Name.Attribute */
+.codehilite .nb { color: #F8F8F2 } /* Name.Builtin */
+.codehilite .nc { color: #A6E22E } /* Name.Class */
+.codehilite .no { color: #66D9EF } /* Name.Constant */
+.codehilite .nd { color: #A6E22E } /* Name.Decorator */
+.codehilite .ni { color: #F8F8F2 } /* Name.Entity */
+.codehilite .ne { color: #A6E22E } /* Name.Exception */
+.codehilite .nf { color: #A6E22E } /* Name.Function */
+.codehilite .nl { color: #F8F8F2 } /* Name.Label */
+.codehilite .nn { color: #F8F8F2 } /* Name.Namespace */
+.codehilite .nx { color: #A6E22E } /* Name.Other */
+.codehilite .py { color: #F8F8F2 } /* Name.Property */
+.codehilite .nt { color: #FF4689 } /* Name.Tag */
+.codehilite .nv { color: #F8F8F2 } /* Name.Variable */
+.codehilite .ow { color: #FF4689 } /* Operator.Word */
+.codehilite .pm { color: #F8F8F2 } /* Punctuation.Marker */
+.codehilite .w { color: #F8F8F2 } /* Text.Whitespace */
+.codehilite .mb { color: #AE81FF } /* Literal.Number.Bin */
+.codehilite .mf { color: #AE81FF } /* Literal.Number.Float */
+.codehilite .mh { color: #AE81FF } /* Literal.Number.Hex */
+.codehilite .mi { color: #AE81FF } /* Literal.Number.Integer */
+.codehilite .mo { color: #AE81FF } /* Literal.Number.Oct */
+.codehilite .sa { color: #E6DB74 } /* Literal.String.Affix */
+.codehilite .sb { color: #E6DB74 } /* Literal.String.Backtick */
+.codehilite .sc { color: #E6DB74 } /* Literal.String.Char */
+.codehilite .dl { color: #E6DB74 } /* Literal.String.Delimiter */
+.codehilite .sd { color: #E6DB74 } /* Literal.String.Doc */
+.codehilite .s2 { color: #E6DB74 } /* Literal.String.Double */
+.codehilite .se { color: #AE81FF } /* Literal.String.Escape */
+.codehilite .sh { color: #E6DB74 } /* Literal.String.Heredoc */
+.codehilite .si { color: #E6DB74 } /* Literal.String.Interpol */
+.codehilite .sx { color: #E6DB74 } /* Literal.String.Other */
+.codehilite .sr { color: #E6DB74 } /* Literal.String.Regex */
+.codehilite .s1 { color: #E6DB74 } /* Literal.String.Single */
+.codehilite .ss { color: #E6DB74 } /* Literal.String.Symbol */
+.codehilite .bp { color: #F8F8F2 } /* Name.Builtin.Pseudo */
+.codehilite .fm { color: #A6E22E } /* Name.Function.Magic */
+.codehilite .vc { color: #F8F8F2 } /* Name.Variable.Class */
+.codehilite .vg { color: #F8F8F2 } /* Name.Variable.Global */
+.codehilite .vi { color: #F8F8F2 } /* Name.Variable.Instance */
+.codehilite .vm { color: #F8F8F2 } /* Name.Variable.Magic */
+.codehilite .il { color: #AE81FF } /* Literal.Number.Integer.Long */
+</style>
+</head>
+<body>
+<header class="topbar">
+  <button id="menuBtn" class="icon-btn" aria-label="目次を開閉">☰</button>
+  <span class="brand">Ralph Orchestrator <small>日本語ドキュメント</small></span>
+  <div class="spacer"></div>
+  <input id="search" class="search" type="search" placeholder="ページ内を検索…" aria-label="ページ内検索">
+  <button id="themeBtn" class="icon-btn" aria-label="テーマ切替">🌓</button>
+</header>
+<div class="layout">
+  <nav id="toc" class="toc" aria-label="目次"><div class="toc-title">目次</div><ul id="tocList"></ul></nav>
+  <main id="content" class="content">
+<h1 id="_1"><a class="toclink" href="#_1">ハットとイベント</a></h1>
+<p>ハットは、型付きイベントを通じて連携する専門の Ralph ペルソナです。これにより、役割を
+分離した複雑なワークフローが可能になります。</p>
+<h2 id="_2"><a class="toclink" href="#_2">ハットとは？</a></h2>
+<p>ハットは、Ralph が「かぶる」ことのできるペルソナです。それぞれ次を持ちます。</p>
+<ul>
+<li><strong>トリガー（Triggers）</strong> — このハットを起動するイベント</li>
+<li><strong>公開（Publishes）</strong> — このハットが発行できるイベント</li>
+<li><strong>指示（Instructions）</strong> — ハットがアクティブなときに注入されるプロンプト</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="nt">hats</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">planner</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;📋</span><span class="nv"> </span><span class="s">Planner&quot;</span>
+<span class="w">    </span><span class="nt">triggers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;task.start&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">publishes</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;plan.ready&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;plan.blocked&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">instructions</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<span class="w">      </span><span class="no">Create an implementation plan for the task.</span>
+<span class="w">      </span><span class="no">When done, emit plan.ready with a summary.</span>
+</code></pre></div>
+
+<h2 id="_3"><a class="toclink" href="#_3">イベントの仕組み</a></h2>
+<p>イベントは、次を持つ型付きメッセージです。</p>
+<ul>
+<li><strong>トピック（Topic）</strong> — どの種類のイベントか（例: <code>build.done</code>）</li>
+<li><strong>ペイロード（Payload）</strong> — 任意のデータ</li>
+<li><strong>ソースハット</strong> — どのハットが公開したか</li>
+<li><strong>ターゲットハット</strong> — 任意のルーティング</li>
+</ul>
+<h3 id="_4"><a class="toclink" href="#_4">イベントフロー</a></h3>
+<div class="codehilite"><pre><span></span><code>flowchart LR
+    task.start --&gt; Planner
+    Planner --&gt;|plan.ready| Builder
+    Builder --&gt;|build.done| Reviewer
+    Reviewer --&gt;|review.approved| LOOP_COMPLETE
+</code></pre></div>
+
+<h3 id="_5"><a class="toclink" href="#_5">イベントの公開</a></h3>
+<p>ハットは <code>ralph emit</code> を使ってイベントを公開します。</p>
+<div class="codehilite"><pre><span></span><code>ralph<span class="w"> </span>emit<span class="w"> </span><span class="s2">&quot;build.done&quot;</span><span class="w"> </span><span class="s2">&quot;tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass&quot;</span>
+</code></pre></div>
+
+<p>または JSON ペイロードで:</p>
+<div class="codehilite"><pre><span></span><code>ralph<span class="w"> </span>emit<span class="w"> </span><span class="s2">&quot;review.done&quot;</span><span class="w"> </span>--json<span class="w"> </span><span class="s1">&#39;{&quot;status&quot;: &quot;approved&quot;, &quot;issues&quot;: 0}&#39;</span>
+</code></pre></div>
+
+<h2 id="_6"><a class="toclink" href="#_6">イベントのルーティング</a></h2>
+<p>イベントは、購読パターンに基づいてハットにルーティングされます。</p>
+<h3 id="_7"><a class="toclink" href="#_7">完全一致</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="nt">triggers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;task.start&quot;</span><span class="p p-Indicator">]</span><span class="w">  </span><span class="c1"># &quot;task.start&quot; のみに一致</span>
+</code></pre></div>
+
+<h3 id="glob"><a class="toclink" href="#glob">glob パターン</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="nt">triggers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;build.*&quot;</span><span class="p p-Indicator">]</span><span class="w">     </span><span class="c1"># build.done, build.failed などに一致</span>
+<span class="nt">triggers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;*.error&quot;</span><span class="p p-Indicator">]</span><span class="w">     </span><span class="c1"># build.error, test.error などに一致</span>
+<span class="nt">triggers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;*&quot;</span><span class="p p-Indicator">]</span><span class="w">           </span><span class="c1"># すべてに一致</span>
+</code></pre></div>
+
+<h2 id="_8"><a class="toclink" href="#_8">ハットの設定</a></h2>
+<h3 id="_9"><a class="toclink" href="#_9">基本的なハット</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="nt">hats</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">builder</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;🔨</span><span class="nv"> </span><span class="s">Builder&quot;</span>
+<span class="w">    </span><span class="nt">triggers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;task.start&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;plan.ready&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">publishes</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;build.done&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;build.failed&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">instructions</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<span class="w">      </span><span class="no">Implement the task or plan.</span>
+<span class="w">      </span><span class="no">Run tests before declaring done.</span>
+</code></pre></div>
+
+<h3 id="_10"><a class="toclink" href="#_10">バックエンドを上書きするハット</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="nt">hats</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">reviewer</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;🔍</span><span class="nv"> </span><span class="s">Reviewer&quot;</span>
+<span class="w">    </span><span class="nt">triggers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;build.done&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">publishes</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;review.approved&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;review.rejected&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">backend</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;claude&quot;</span><span class="w">  </span><span class="c1"># 既定が別でも Claude を使う</span>
+<span class="w">    </span><span class="nt">instructions</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<span class="w">      </span><span class="no">Review the implementation for quality.</span>
+</code></pre></div>
+
+<h3 id="_11"><a class="toclink" href="#_11">最大起動回数を持つハット</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="nt">hats</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">refactorer</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;✨</span><span class="nv"> </span><span class="s">Refactorer&quot;</span>
+<span class="w">    </span><span class="nt">triggers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;test.passed&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">publishes</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;refactor.done&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">max_activations</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3</span><span class="w">  </span><span class="c1"># このハットが起動する回数を制限する</span>
+<span class="w">    </span><span class="nt">instructions</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<span class="w">      </span><span class="no">Clean up the code.</span>
+</code></pre></div>
+
+<h3 id="_12"><a class="toclink" href="#_12">既定の公開</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="nt">hats</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">worker</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">triggers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;task.start&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">publishes</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;work.done&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;work.blocked&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">default_publishes</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;work.done&quot;</span><span class="w">  </span><span class="c1"># 明示的な emit がない場合</span>
+</code></pre></div>
+
+<h2 id="_13"><a class="toclink" href="#_13">イベントシステムの設計</a></h2>
+<h3 id="_14"><a class="toclink" href="#_14">開始イベント</a></h3>
+<p>Ralph が起動したときに最初に公開されるイベント:</p>
+<div class="codehilite"><pre><span></span><code><span class="nt">event_loop</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">starting_event</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;task.start&quot;</span><span class="w">  </span><span class="c1"># 最初のハットを起動する</span>
+</code></pre></div>
+
+<h3 id="_15"><a class="toclink" href="#_15">完了の約束</a></h3>
+<p>ループを終わらせるシグナル:</p>
+<div class="codehilite"><pre><span></span><code><span class="nt">event_loop</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">completion_promise</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;LOOP_COMPLETE&quot;</span>
+</code></pre></div>
+
+<p>ハットはこれを直接出力するか、完了イベントを発行できます。</p>
+<div class="codehilite"><pre><span></span><code><span class="nt">hats</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">coordinator</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">triggers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;all.done&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">instructions</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<span class="w">      </span><span class="no">All work complete. Output: LOOP_COMPLETE</span>
+</code></pre></div>
+
+<h2 id="_16"><a class="toclink" href="#_16">よくあるパターン</a></h2>
+<h3 id="_17"><a class="toclink" href="#_17">パイプライン</a></h3>
+<p>あるハットから次へと直線的に流れる:</p>
+<div class="codehilite"><pre><span></span><code>flowchart LR
+    A[Planner] --&gt;|plan.ready| B[Builder]
+    B --&gt;|build.done| C[Tester]
+    C --&gt;|test.passed| D[Deployer]
+</code></pre></div>
+
+<h3 id="_18"><a class="toclink" href="#_18">スーパーバイザー・ワーカー</a></h3>
+<p>1 つのコーディネーターと複数のワーカー:</p>
+<div class="codehilite"><pre><span></span><code>flowchart TB
+    S[Supervisor] --&gt;|task.a| A[Worker A]
+    S --&gt;|task.b| B[Worker B]
+    A --&gt;|done.a| S
+    B --&gt;|done.b| S
+</code></pre></div>
+
+<h3 id="_19"><a class="toclink" href="#_19">クリティック・アクター</a></h3>
+<p>一方が提案し、もう一方が批評する:</p>
+<div class="codehilite"><pre><span></span><code>flowchart LR
+    A[Actor] --&gt;|proposal| C[Critic]
+    C --&gt;|approved| Done
+    C --&gt;|rejected| A
+</code></pre></div>
+
+<h2 id="_20"><a class="toclink" href="#_20">イベントの表示</a></h2>
+<div class="codehilite"><pre><span></span><code><span class="c1"># イベント履歴を表示する</span>
+ralph<span class="w"> </span>events
+
+<span class="c1"># 出力:</span>
+<span class="c1"># 2024-01-21 10:30:00 task.start → planner</span>
+<span class="c1"># 2024-01-21 10:32:15 plan.ready → builder</span>
+<span class="c1"># 2024-01-21 10:35:42 build.done → reviewer</span>
+</code></pre></div>
+
+<h2 id="_21"><a class="toclink" href="#_21">ベストプラクティス</a></h2>
+<h3 id="1"><a class="toclink" href="#1">1. イベントを小さく保つ</a></h3>
+<p>イベントはルーティングの信号であり、データの搬送手段ではありません。</p>
+<div class="codehilite"><pre><span></span><code><span class="c1"># 良い: 小さいペイロード</span>
+ralph<span class="w"> </span>emit<span class="w"> </span><span class="s2">&quot;build.done&quot;</span><span class="w"> </span><span class="s2">&quot;tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass&quot;</span>
+
+<span class="c1"># 悪い: 大きいペイロード</span>
+ralph<span class="w"> </span>emit<span class="w"> </span><span class="s2">&quot;build.done&quot;</span><span class="w"> </span><span class="s2">&quot;full output of all test results...&quot;</span>
+</code></pre></div>
+
+<p>詳細な出力にはメモリを使います。</p>
+<div class="codehilite"><pre><span></span><code>ralph<span class="w"> </span>tools<span class="w"> </span>memory<span class="w"> </span>add<span class="w"> </span><span class="s2">&quot;Build details: ...&quot;</span><span class="w"> </span>-t<span class="w"> </span>context
+ralph<span class="w"> </span>emit<span class="w"> </span><span class="s2">&quot;build.done&quot;</span><span class="w"> </span><span class="s2">&quot;tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass&quot;</span>
+</code></pre></div>
+
+<h3 id="2"><a class="toclink" href="#2">2. 明確なトリガー</a></h3>
+<p>トリガーを具体的にします。</p>
+<div class="codehilite"><pre><span></span><code><span class="c1"># 良い: 具体的</span>
+<span class="nt">triggers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;plan.ready&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;plan.revised&quot;</span><span class="p p-Indicator">]</span>
+
+<span class="c1"># 危険: 広すぎる</span>
+<span class="nt">triggers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;*&quot;</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+
+<h3 id="3-1"><a class="toclink" href="#3-1">3. ハットごとに 1 つの責務</a></h3>
+<p>各ハットは、明確で単一の目的を持つべきです。</p>
+<div class="codehilite"><pre><span></span><code><span class="c1"># 良い: 焦点が絞られている</span>
+<span class="nt">hats</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">tester</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">triggers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;build.done&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">instructions</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Run</span><span class="nv"> </span><span class="s">tests</span><span class="nv"> </span><span class="s">and</span><span class="nv"> </span><span class="s">report</span><span class="nv"> </span><span class="s">results.&quot;</span>
+
+<span class="c1"># 悪い: 複数の責務</span>
+<span class="nt">hats</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">do_everything</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">triggers</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;*&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">instructions</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Test,</span><span class="nv"> </span><span class="s">lint,</span><span class="nv"> </span><span class="s">deploy,</span><span class="nv"> </span><span class="s">document...&quot;</span>
+</code></pre></div>
+
+<h2 id="_22"><a class="toclink" href="#_22">次のステップ</a></h2>
+<ul>
+<li>既成のハットワークフローについては <a href="../guide/presets.ja.html">プリセット</a> を探す</li>
+<li>並列ハット実行については <a href="../advanced/agent-waves.ja.html">エージェント波</a> を学ぶ</li>
+<li><a href="memories-and-tasks.ja.html">メモリとタスク</a> について学ぶ</li>
+<li>品質ゲートについては <a href="backpressure.ja.html">バックプレッシャー</a> を理解する</li>
+</ul>
+  </main>
+</div>
+<div id="backdrop" class="backdrop"></div>
+<script>
+
+(function(){
+  var root=document.documentElement;
+  // --- テーマ ---
+  var darkStyle=document.getElementById('pygments-dark');
+  function applyTheme(t){
+    if(t==='dark'||t==='light'){root.setAttribute('data-theme',t);}
+    else{root.removeAttribute('data-theme');}
+    var isDark = t==='dark' || (t!=='light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    if(darkStyle){ darkStyle.media = isDark ? 'all' : 'not all'; }
+  }
+  var saved=localStorage.getItem('ralph-ja-theme')||'auto';
+  applyTheme(saved);
+  document.getElementById('themeBtn').addEventListener('click',function(){
+    var cur=localStorage.getItem('ralph-ja-theme')||'auto';
+    var next=cur==='auto'?'light':cur==='light'?'dark':'auto';
+    localStorage.setItem('ralph-ja-theme',next); applyTheme(next);
+  });
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',function(){
+    if((localStorage.getItem('ralph-ja-theme')||'auto')==='auto')applyTheme('auto');
+  });
+
+  var content=document.getElementById('content');
+
+  // --- 目次生成 ---
+  var tocList=document.getElementById('tocList');
+  var heads=content.querySelectorAll('h2, h3, h4');
+  var items=[];
+  heads.forEach(function(h){
+    if(!h.id){h.id=(h.textContent||'').trim().replace(/\s+/g,'-');}
+    var li=document.createElement('li');
+    var a=document.createElement('a');
+    a.href='#'+h.id; a.textContent=h.textContent.replace('¶','').trim();
+    a.className='lvl-'+h.tagName.substring(1);
+    li.appendChild(a); tocList.appendChild(li);
+    items.push({a:a,h:h});
+  });
+
+  // --- スクロール連動ハイライト ---
+  if('IntersectionObserver' in window && items.length){
+    var byId={}; items.forEach(function(it){byId[it.h.id]=it.a;});
+    var obs=new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if(e.isIntersecting){
+          items.forEach(function(it){it.a.classList.remove('active');});
+          var a=byId[e.target.id]; if(a){a.classList.add('active');
+            a.scrollIntoView({block:'nearest'});}
+        }
+      });
+    },{rootMargin:'0px 0px -75% 0px'});
+    heads.forEach(function(h){obs.observe(h);});
+  }
+
+  // --- コードコピー ---
+  content.querySelectorAll('pre').forEach(function(pre){
+    var btn=document.createElement('button');
+    btn.className='copy-btn'; btn.type='button'; btn.textContent='コピー';
+    btn.addEventListener('click',function(){
+      var code=pre.querySelector('code'); var text=code?code.innerText:pre.innerText;
+      navigator.clipboard.writeText(text).then(function(){
+        btn.textContent='コピー済み'; btn.classList.add('copied');
+        setTimeout(function(){btn.textContent='コピー'; btn.classList.remove('copied');},1500);
+      });
+    });
+    pre.appendChild(btn);
+  });
+
+  // --- モバイル目次開閉 ---
+  var toc=document.getElementById('toc'), backdrop=document.getElementById('backdrop');
+  function closeToc(){toc.classList.remove('open'); backdrop.classList.remove('show');}
+  document.getElementById('menuBtn').addEventListener('click',function(){
+    toc.classList.toggle('open'); backdrop.classList.toggle('show');
+  });
+  backdrop.addEventListener('click',closeToc);
+  tocList.addEventListener('click',function(e){ if(e.target.tagName==='A') closeToc(); });
+
+  // --- ページ内検索（ハイライト） ---
+  var search=document.getElementById('search');
+  function clearMarks(){
+    content.querySelectorAll('mark[data-s]').forEach(function(m){
+      var t=document.createTextNode(m.textContent); m.parentNode.replaceChild(t,m);
+    });
+    content.normalize();
+  }
+  var timer;
+  search.addEventListener('input',function(){
+    clearTimeout(timer);
+    timer=setTimeout(function(){
+      clearMarks();
+      var q=search.value.trim(); if(q.length<2)return;
+      var rx=new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'gi');
+      var walker=document.createTreeWalker(content,NodeFilter.SHOW_TEXT,{
+        acceptNode:function(n){
+          if(!n.nodeValue.trim())return NodeFilter.FILTER_REJECT;
+          var p=n.parentNode.nodeName;
+          if(p==='SCRIPT'||p==='STYLE'||p==='MARK')return NodeFilter.FILTER_REJECT;
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      });
+      var nodes=[],n; while(n=walker.nextNode())nodes.push(n);
+      var first=null;
+      nodes.forEach(function(node){
+        if(!rx.test(node.nodeValue))return; rx.lastIndex=0;
+        var span=document.createElement('span');
+        span.innerHTML=node.nodeValue.replace(rx,function(m){return '<mark data-s="1">'+m+'</mark>';});
+        node.parentNode.replaceChild(span,node);
+        while(span.firstChild)span.parentNode.insertBefore(span.firstChild,span);
+        span.parentNode.removeChild(span);
+      });
+      first=content.querySelector('mark[data-s]');
+      if(first)first.scrollIntoView({block:'center',behavior:'smooth'});
+    },200);
+  });
+})();
+
+</script>
+</body>
+</html>
