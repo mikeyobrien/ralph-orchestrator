@@ -35,6 +35,9 @@ pub struct ExecutionResult {
     pub exit_code: Option<i32>,
     /// Whether the execution was terminated due to timeout.
     pub timed_out: bool,
+    /// Whether the post-event grace deadline caused the executor to terminate
+    /// the process instead of the normal inactivity timeout.
+    pub post_event_grace_expired: bool,
     /// Parsed assistant text for Pi-family NDJSON backends (the processor owns
     /// extraction; the mandatory final-text fallback is already applied). `None`
     /// for backends that keep using raw/normalized output (Claude stream-json,
@@ -137,6 +140,7 @@ impl CliExecutor {
         }
 
         let mut timed_out = false;
+        let mut post_event_grace_expired = false;
         let mut post_event_deadline: Option<tokio::time::Instant> = None;
         let mut terminated_status = None;
 
@@ -189,14 +193,19 @@ impl CliExecutor {
 
         while !stdout_done || !stderr_done {
             let now = tokio::time::Instant::now();
-            let effective_timeout = match (timeout, post_event_deadline) {
-                (_, Some(deadline)) if deadline <= now => Some(Duration::ZERO),
+            let (effective_timeout, timeout_is_post_event) = match (timeout, post_event_deadline) {
+                (_, Some(deadline)) if deadline <= now => (Some(Duration::ZERO), true),
                 (Some(duration), Some(deadline)) => {
-                    Some(duration.min(deadline.saturating_duration_since(now)))
+                    let post_event_remaining = deadline.saturating_duration_since(now);
+                    if post_event_remaining <= duration {
+                        (Some(post_event_remaining), true)
+                    } else {
+                        (Some(duration), false)
+                    }
                 }
-                (None, Some(deadline)) => Some(deadline.saturating_duration_since(now)),
-                (Some(duration), None) => Some(duration),
-                (None, None) => None,
+                (None, Some(deadline)) => (Some(deadline.saturating_duration_since(now)), true),
+                (Some(duration), None) => (Some(duration), false),
+                (None, None) => (None, false),
             };
 
             let next_event = match effective_timeout {
@@ -208,6 +217,7 @@ impl CliExecutor {
                             "Execution inactivity timeout reached, sending SIGTERM"
                         );
                         timed_out = true;
+                        post_event_grace_expired = timeout_is_post_event;
                         terminated_status = Some(Self::terminate_child_and_wait(&mut child).await?);
                         break;
                     }
@@ -320,6 +330,7 @@ impl CliExecutor {
             success,
             exit_code: status.code(),
             timed_out,
+            post_event_grace_expired,
             extracted_text,
             session_result,
             protocol_error,
@@ -588,6 +599,10 @@ mod tests {
 
         assert!(result.timed_out, "Expected execution to time out");
         assert!(
+            !result.post_event_grace_expired,
+            "Normal inactivity timeout must not be classified as post-event grace expiry"
+        );
+        assert!(
             !result.success,
             "Timed out execution should not be successful"
         );
@@ -707,10 +722,41 @@ mod tests {
             "Expected lingering post-event process to be terminated"
         );
         assert!(
+            result.post_event_grace_expired,
+            "Expected termination to be attributed to the post-event grace deadline"
+        );
+        assert!(
             started.elapsed() < Duration::from_secs(10),
             "Event-emitting backends should use the short post-event grace timeout instead of the full inactivity timeout"
         );
         assert!(result.output.contains("Event emitted: task.done"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_short_inactivity_timeout_wins_over_post_event_grace() {
+        let backend = CliBackend {
+            command: "sh".to_string(),
+            args: vec![
+                "-c".to_string(),
+                "printf 'Event emitted: task.done\\n'; sleep 10".to_string(),
+            ],
+            prompt_mode: PromptMode::Stdin,
+            prompt_flag: None,
+            output_format: OutputFormat::Text,
+            env_vars: vec![],
+        };
+
+        let executor = CliExecutor::new(backend);
+        let result = executor
+            .execute_capture_with_timeout("", Some(Duration::from_millis(100)))
+            .await
+            .unwrap();
+
+        assert!(result.timed_out);
+        assert!(
+            !result.post_event_grace_expired,
+            "The shorter inactivity timeout must win over the post-event grace deadline"
+        );
     }
 
     #[tokio::test]
@@ -738,6 +784,10 @@ mod tests {
         assert!(
             result.timed_out,
             "Expected noisy post-event process to be terminated"
+        );
+        assert!(
+            result.post_event_grace_expired,
+            "Expected the fixed post-event grace deadline to terminate the noisy process"
         );
         assert!(
             started.elapsed() < Duration::from_secs(10),

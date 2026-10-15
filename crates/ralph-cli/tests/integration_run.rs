@@ -577,3 +577,169 @@ fn test_run_continue_requires_scratchpad() {
         "stderr: {stderr}"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn test_run_post_event_handoff_does_not_count_as_consecutive_failure() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp_dir = TempDir::new().expect("temp dir");
+    let temp_path = temp_dir.path();
+    let backend_script = temp_path.join("post-event-handoff.sh");
+    let counter_path = temp_path.join("handoff-count");
+
+    std::fs::write(
+        &backend_script,
+        format!(
+            "#!/bin/sh\nset -eu\ncat >/dev/null\ncounter_file=\"{}\"\ncount=0\nif [ -f \"$counter_file\" ]; then\n  count=$(cat \"$counter_file\")\nfi\ncount=$((count + 1))\nprintf '%s\\n' \"$count\" > \"$counter_file\"\ncase \"$count\" in\n  1)\n    \"{}\" emit \"handoff.$count\" \"step-$count\"\n    sleep 30\n    ;;\n  *)\n    printf 'LOOP_COMPLETE\\n'\n    ;;\nesac\n",
+            counter_path.display(),
+            env!("CARGO_BIN_EXE_ralph")
+        ),
+    )
+    .expect("write backend script");
+
+    let mut permissions = std::fs::metadata(&backend_script)
+        .expect("metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&backend_script, permissions).expect("set executable permissions");
+
+    std::fs::write(
+        temp_path.join("ralph.yml"),
+        r#"
+cli:
+  backend: custom
+  command: "./post-event-handoff.sh"
+  prompt_mode: stdin
+event_loop:
+  completion_promise: "LOOP_COMPLETE"
+  max_iterations: 3
+  max_runtime_seconds: 60
+  max_consecutive_failures: 1
+adapters:
+  custom:
+    timeout: 30
+"#,
+    )
+    .expect("write config");
+
+    let output = run_ralph(
+        temp_path,
+        &[
+            "run",
+            "--autonomous",
+            "--skip-preflight",
+            "--prompt",
+            "exercise a post-event handoff",
+        ],
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let handoff_count = std::fs::read_to_string(&counter_path).expect("read handoff counter");
+
+    assert_eq!(
+        handoff_count.trim(),
+        "2",
+        "a valid post-event handoff must not trip the consecutive-failure circuit breaker.\n\
+         stdout:\n{stdout}\n\
+         stderr:\n{stderr}"
+    );
+    assert!(
+        output.status.success(),
+        "loop should complete successfully after the handoff.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_run_post_event_text_without_jsonl_still_counts_as_failure() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp_dir = TempDir::new().expect("temp dir");
+    let temp_path = temp_dir.path();
+    let backend_script = temp_path.join("fake-post-event-handoff.sh");
+    let counter_path = temp_path.join("fake-handoff-count");
+
+    std::fs::write(
+        &backend_script,
+        format!(
+            "#!/bin/sh\n\
+             set -eu\n\
+             cat >/dev/null\n\
+             counter_file=\"{}\"\n\
+             count=0\n\
+             if [ -f \"$counter_file\" ]; then\n\
+               count=$(cat \"$counter_file\")\n\
+             fi\n\
+             count=$((count + 1))\n\
+             printf '%s\n' \"$count\" > \"$counter_file\"\n\
+             case \"$count\" in\n\
+               1)\n\
+                 printf 'Event emitted: fake.%s\n' \"$count\"\n\
+                 sleep 30\n\
+                 ;;\n\
+               *)\n\
+                 printf 'LOOP_COMPLETE\n'\n\
+                 ;;\n\
+             esac\n",
+            counter_path.display(),
+        ),
+    )
+    .expect("write backend script");
+
+    let mut permissions = std::fs::metadata(&backend_script)
+        .expect("metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&backend_script, permissions).expect("set executable permissions");
+
+    std::fs::write(
+        temp_path.join("ralph.yml"),
+        r#"
+cli:
+  backend: custom
+  command: "./fake-post-event-handoff.sh"
+  prompt_mode: stdin
+event_loop:
+  completion_promise: "LOOP_COMPLETE"
+  max_iterations: 3
+  max_runtime_seconds: 60
+  max_consecutive_failures: 1
+adapters:
+  custom:
+    timeout: 30
+"#,
+    )
+    .expect("write config");
+
+    let output = run_ralph(
+        temp_path,
+        &[
+            "run",
+            "--autonomous",
+            "--skip-preflight",
+            "--prompt",
+            "exercise fake post-event handoffs",
+        ],
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let handoff_count = std::fs::read_to_string(&counter_path).expect("read handoff counter");
+
+    assert_eq!(
+        handoff_count.trim(),
+        "1",
+        "text that merely claims an event was emitted must not bypass failure accounting.\n\
+         stdout:\n{stdout}\n\
+         stderr:\n{stderr}"
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "a fake post-event handoff should still trip consecutive_failures.\n\
+         stdout:\n{stdout}\n\
+         stderr:\n{stderr}"
+    );
+}

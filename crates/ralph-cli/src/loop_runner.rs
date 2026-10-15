@@ -48,6 +48,8 @@ use crate::{ColorMode, Verbosity};
 pub(crate) struct ExecutionOutcome {
     pub output: String,
     pub success: bool,
+    /// Whether a text CLI backend was terminated by the post-event grace deadline.
+    pub post_event_grace_expired: bool,
     pub termination: Option<TerminationReason>,
     pub total_cost_usd: f64,
     pub input_tokens: u64,
@@ -1817,6 +1819,7 @@ pub async fn run_loop_impl(
                 Ok(ExecutionOutcome {
                     output,
                     success: result.success,
+                    post_event_grace_expired: result.post_event_grace_expired,
                     termination: None,
                     total_cost_usd: metrics.as_ref().map_or(0.0, |m| m.total_cost_usd),
                     input_tokens: metrics.as_ref().map_or(0, |m| m.input_tokens),
@@ -1952,6 +1955,7 @@ pub async fn run_loop_impl(
 
         let output = outcome.output;
         let success = outcome.success;
+        let post_event_grace_expired = outcome.post_event_grace_expired;
 
         // Note: TUI lines are now written directly to IterationBuffer during streaming,
         // so no post-execution transfer is needed.
@@ -2018,6 +2022,19 @@ pub async fn run_loop_impl(
         // max_cost applies across iterations and across --continue resumes.
         event_loop.add_cost(outcome.total_cost_usd);
         let termination = event_loop.process_output(&hat_id, &output, success);
+
+        // A text backend terminated by the post-event grace deadline may have
+        // completed its semantic handoff successfully even though the process
+        // itself was force-terminated. If that apparent failure trips the
+        // consecutive-failure limit, defer only that termination until the
+        // durable JSONL event has been validated below.
+        let defer_consecutive_failures =
+            post_event_grace_expired && termination == Some(TerminationReason::ConsecutiveFailures);
+        let termination = if defer_consecutive_failures {
+            None
+        } else {
+            termination
+        };
         if let Err(e) = event_loop.save_loop_state(&loop_state_path) {
             warn!("Failed to persist loop state: {}", e);
         }
@@ -2284,6 +2301,20 @@ pub async fn run_loop_impl(
                     (None, Vec::new())
                 }
             };
+
+        // Only durable events that survived JSONL processing can turn a
+        // post-event grace termination into a successful iteration. The
+        // textual `Event emitted:` marker alone is intentionally insufficient.
+        let accepted_wave_event =
+            ralph_core::detect_wave_events(&wave_events, event_loop.registry()).is_some();
+        let accepted_jsonl_event = processed_events
+            .as_ref()
+            .is_some_and(|events| events.had_events)
+            || accepted_wave_event;
+
+        if post_event_grace_expired && accepted_jsonl_event {
+            event_loop.reconcile_iteration_success();
+        }
 
         if let Some(human_interact_context) = processed_events
             .as_ref()
@@ -4285,6 +4316,7 @@ async fn execute_acp(
     Ok(ExecutionOutcome {
         output,
         success: pty_result.success,
+        post_event_grace_expired: false,
         termination: None,
         total_cost_usd: pty_result.total_cost_usd,
         input_tokens: pty_result.input_tokens,
@@ -4441,6 +4473,7 @@ async fn execute_pty(
             Ok(ExecutionOutcome {
                 output: output_for_parsing,
                 success: pty_result.success,
+                post_event_grace_expired: false,
                 termination,
                 total_cost_usd: pty_result.total_cost_usd,
                 input_tokens: pty_result.input_tokens,
