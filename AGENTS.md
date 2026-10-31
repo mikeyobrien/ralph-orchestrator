@@ -4,6 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 > The orchestrator is a thin coordination layer, not a platform. Agents are smart; let them do the work.
 
+## Direction (v3)
+
+- Ralph is a CLI tool. Other harnesses (Claude Code, Codex, dobo, any agent) mainly drive it and use it as a tool.
+- Build a stable, machine-readable CLI surface first. The TUI is secondary: a person uses it to configure and run loops.
+- Ralph is a thin harness. Do not depend on vendor-specific surfaces such as Claude Code Channels.
+- v3 is written self-contained in this repo. There is no autoloop track and no pi-durable dependency.
+- v3 renames ralph-orchestrator to "hats". Core idea: one task moves through several hats (roles), the way a knowledge worker changes hats during a day.
+
+Direction set by Mikey, 2026-10-30.
+
 ## Build & Test
 
 ```bash
