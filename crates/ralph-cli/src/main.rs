@@ -606,7 +606,7 @@ pub(crate) fn load_config_with_overrides(
 
 /// Ralph Orchestrator - Multi-agent orchestration framework
 #[derive(Parser, Debug)]
-#[command(name = "ralph", version, about)]
+#[command(name = "ralph", version = env!("RALPH_VERSION"), about)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
