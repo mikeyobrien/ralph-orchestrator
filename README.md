@@ -282,6 +282,7 @@ Join the **ralph-orchestrator** community to discuss AI agent patterns, get help
 ## Acknowledgments
 
 - **[Geoffrey Huntley](https://ghuntley.com/ralph/)** — Creator of the Ralph Wiggum technique
+- **[“You Don’t Need Long Context” (NVIDIA, arXiv 2611.05306)](https://arxiv.org/abs/2611.05306)** — Benchmarks the externalized-state/context-reset pattern at the core of Ralph’s loop: same accuracy, up to 8.8× lower inference cost
 - **[Strands Agents SOP](https://github.com/strands-agents/agent-sop)** — Agent SOP framework
 - **[ratatui](https://ratatui.rs/)** — Terminal UI framework
 
