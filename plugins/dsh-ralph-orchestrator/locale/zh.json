@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Ralph Orchestrator",
+    "description": "运行隔离的 Ralph 循环，并设计、审阅和保存角色配置。"
+  }
+}

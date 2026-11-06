@@ -1,0 +1,40 @@
+event_loop:
+  starting_event: build.start
+  completion_promise: LOOP_COMPLETE
+  required_events:
+    - review.passed
+  max_iterations: 7
+hats:
+  builder:
+    name: Builder
+    description: Implement and verify the requested change.
+    triggers:
+      - build.start
+      - review.rejected
+    publishes:
+      - review.requested
+    instructions: Implement the objective. Run relevant checks. Publish
+      review.requested with a concise evidence-based handoff when ready for
+      independent review.
+  reviewer:
+    name: Reviewer
+    description: Independently verify the change before completion.
+    triggers:
+      - review.requested
+    publishes:
+      - review.rejected
+      - review.passed
+      - LOOP_COMPLETE
+    instructions: Inspect the actual changes and run relevant checks. If incomplete,
+      publish review.rejected with concrete feedback. If the objective is
+      verified, publish review.passed and then LOOP_COMPLETE as the final event.
+      Never claim checks you did not run.
+cli:
+  backend: custom
+  command: /fixed/node
+  args:
+    - /fixed/bridge.js
+  prompt_mode: file
+  prompt_flag: --prompt-file
+features:
+  auto_merge: false

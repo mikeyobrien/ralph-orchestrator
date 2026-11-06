@@ -1,0 +1,98 @@
+- insert:
+    - id: dsh-ralph-orchestrator
+      name: dsh-ralph-orchestrator
+      config: {}
+    - id: preset-ralph-worker
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: ralph-worker
+        name: Ralph Worker
+        plugins:
+          - id: ralph-boundaries
+            name: dsh-ralph-orchestrator/modes
+            config:
+              role: worker
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |-
+                You are a coding agent powered by the {{model}} model, executing one Ralph iteration.
+                Follow the active-hat instructions and task context assembled by Ralph. Ralph owns hat selection, events, iteration, and completion gates; do not start an independent loop or orchestrator.
+                Use the scoped ralph tool for Ralph CLI operations in this run's environment.
+              includeRuntimeContext: false
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+          - id: tool-working-directory
+            name: '@deepseek-ai/dsh-tool-working-directory'
+          - id: tool-jobs
+            name: '@deepseek-ai/dsh-tool-jobs'
+            config:
+              completionDelivery: quiet
+    - id: preset-ralph-hat-designer
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: ralph-hat-designer
+        name: Hat Designer
+        plugins:
+          - id: ralph-boundaries
+            name: dsh-ralph-orchestrator/modes
+            config:
+              role: designer
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |-
+                You design native Ralph hat configurations from the requested workflow and reference files.
+                Read and search for context, then submit configuration data through the scoped proposal tool. Do not execute tasks, modify source files, start runs, or install plugins.
+                A proposal is a draft, never an accepted configuration. Only the user may save or accept it.
+              includeRuntimeContext: false
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+            config:
+              read: true
+              readImage: false
+              write: false
+              edit: false
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+    - id: preset-ralph-summary
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: ralph-summary
+        name: Ralph Summary
+        plugins:
+          - id: ralph-boundaries
+            name: dsh-ralph-orchestrator/modes
+            config:
+              role: summary
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |-
+                You summarize a finished or interrupted Ralph run or hat-design session from its recorded outcome and available evidence.
+                State what completed, what failed or remains unverified, and where the resulting artifacts are. Distinguish observed facts from assumptions; never infer success from an incomplete run.
+                Read and search only to verify the summary. Do not execute tasks, modify files, start runs, or propose, save, or accept configuration changes.
+              includeRuntimeContext: false
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+            config:
+              read: true
+              readImage: false
+              write: false
+              edit: false
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false

@@ -1,0 +1,52 @@
+{
+  "name": "dsh-ralph-orchestrator",
+  "version": "0.1.0",
+  "description": "Run Ralph loops in isolated DSH workspaces and design hat configurations with human review.",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./modes": "./modes.js",
+    "./modes/locale/*.json": "./locale/*.json",
+    "./modes/icon": "./icon.svg",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "modes.js",
+    "process.js",
+    "configuration.js",
+    "backends.js",
+    "bridge.js",
+    "cordis.patch.yml",
+    "client.js",
+    "locale/*.json",
+    "icon.svg",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "check": "node --check index.js && node --check modes.js && node --check process.js && node --check configuration.js && node --check backends.js && node --check bridge.js && node --check client.js"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "~3.18.5",
+    "yaml": "^2.8.1",
+    "zod": "4.4.3"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-client-locale"
+      ]
+    }
+  }
+}
