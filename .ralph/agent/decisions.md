@@ -146,3 +146,21 @@ Use this template for new entries:
 - Reasoning: (A): the override's documented purpose is correcting a wrong backend default (e.g. 1M-window users); the stream reports the running model's actual window, so it can't be the wrong one, while a stale override can be. The task text also names `resolve_context_window_for_backend` (which includes the override) as the fallback for when the stream reports nothing. The window only drives display and performance.jsonl percentages, so the stakes of the choice are low. (B) is wrong when a helper/subagent model has the larger window than the session's model. (C) would leave PTY Claude runs reporting 200000 for the same stream.
 - Reversibility: High; swapping (A) in is a one-line change in `reported_or_configured_context_window`'s callers.
 - Timestamp: 2026-11-12T22:30:00Z
+
+## DEC-012 (2026-11-12T22:34Z)
+- Decision: Wave workers resolve their backend through the same `resolve_hat_backend` as the hat's own iteration (hat backend, then `backend_args`, then model, then effort; hat-level else `cli`).
+- Chosen Option: One shared resolver; `execute_wave` takes `&CliConfig`.
+- Confidence: 80
+- Alternatives Considered: (A) Add only `hat.model` to the wave path, leaving it applying effort before `backend_args` and ignoring `cli.effort`. (B) Pre-apply `cli.model` to the global backend (rejected: it would then count as an explicit flag and beat `hat.model`).
+- Reasoning: A wave worker should launch exactly what its hat launches. The old wave path applied effort before `backend_args` (so an explicit `--effort` there was duplicated) and never used `cli.effort`; sharing the resolver fixes both and keeps "explicit args win" true for model too.
+- Reversibility: High
+- Timestamp: 2026-11-12T22:34Z
+
+## DEC-013 (2026-11-12T22:34Z)
+- Decision: `model` on a script hat warns as ignored, exactly like `effort`.
+- Chosen Option: Add `("model", ...)` to the script-hat ignored-field warnings.
+- Confidence: 90
+- Alternatives Considered: Reject it as a config error.
+- Reasoning: Matches `effort`/`backend_args` handling (warn, not error); a script hat launches no backend.
+- Reversibility: High
+- Timestamp: 2026-11-12T22:34Z

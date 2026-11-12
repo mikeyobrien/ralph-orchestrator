@@ -815,6 +815,7 @@ impl RalphConfig {
                 ("backend", hat.backend.is_some()),
                 ("backend_args", hat.backend_args.is_some()),
                 ("effort", hat.effort.is_some()),
+                ("model", hat.model.is_some()),
                 ("disallowed_tools", !hat.disallowed_tools.is_empty()),
             ];
             for (field, set) in ignored {
@@ -1486,6 +1487,12 @@ pub struct CliConfig {
     /// Backends without an effort control ignore it.
     #[serde(default)]
     pub effort: Option<EffortLevel>,
+
+    /// Default model ID for every hat that doesn't set its own.
+    /// Mapped to the backend's model flag; backends without one ignore it.
+    /// An explicit model flag in `args` wins.
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 /// Reasoning effort requested from the backend for an iteration.
@@ -1542,6 +1549,7 @@ impl Default for CliConfig {
             args: Vec::new(),
             prompt_flag: None,
             effort: None,
+            model: None,
         }
     }
 }
@@ -2291,6 +2299,12 @@ pub struct HatConfig {
     /// Reasoning effort for this hat (inherits `cli.effort` if not set).
     #[serde(default)]
     pub effort: Option<EffortLevel>,
+
+    /// Model ID for this hat (inherits `cli.model` if not set).
+    /// Mapped to the backend's model flag; an explicit model flag in
+    /// `backend_args` or the hat backend's `args` wins.
+    #[serde(default)]
+    pub model: Option<String>,
 
     /// Default event to publish if hat forgets to write an event.
     #[serde(default)]
@@ -5832,10 +5846,16 @@ hats:
     #[test]
     fn test_script_hat_ignored_fields_warn() {
         let config = script_hat_config(
-            "    run: \"true\"\n    backend: \"claude\"\n    backend_args: [\"--model\", \"x\"]\n    effort: high\n    disallowed_tools: [\"Edit\"]\n",
+            "    run: \"true\"\n    backend: \"claude\"\n    backend_args: [\"--model\", \"x\"]\n    effort: high\n    model: m\n    disallowed_tools: [\"Edit\"]\n",
         );
         let warnings = config.validate().unwrap();
-        for field in ["backend", "backend_args", "effort", "disallowed_tools"] {
+        for field in [
+            "backend",
+            "backend_args",
+            "effort",
+            "model",
+            "disallowed_tools",
+        ] {
             let expected = format!("hats.advance.{field}");
             assert!(
                 warnings.iter().any(|w| matches!(w, ConfigWarning::InvalidValue { field, message } if *field == expected && message.contains("ignored"))),
@@ -5845,7 +5865,7 @@ hats:
 
         // A model hat with the same fields gets no such warning.
         let config = script_hat_config(
-            "    instructions: \"x\"\n    backend: \"claude\"\n    effort: high\n    disallowed_tools: [\"Edit\"]\n",
+            "    instructions: \"x\"\n    backend: \"claude\"\n    effort: high\n    model: m\n    disallowed_tools: [\"Edit\"]\n",
         );
         let warnings = config.validate().unwrap();
         assert!(

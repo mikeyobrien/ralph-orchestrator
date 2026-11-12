@@ -509,28 +509,38 @@ mod tests {
             );
         }
 
-        let backend = |id: &str| match multi.hats[id].backend.as_ref() {
-            Some(HatBackend::NamedWithArgs { backend_type, args }) => {
-                (backend_type.clone(), args.clone())
-            }
-            other => panic!("{id} should pin a backend with args, got {other:?}"),
-        };
-        assert_eq!(
-            backend("planner"),
-            ("claude".into(), strings(&["--model", "claude-fable-5-2"]))
-        );
-        assert_eq!(
-            backend("builder"),
-            ("claude".into(), strings(&["--model", "claude-opus-5-5"]))
-        );
-        assert_eq!(
-            backend("finalizer"),
-            ("claude".into(), strings(&["--model", "claude-opus-5-5"]))
-        );
-        assert_eq!(
-            backend("critic"),
-            ("claude".into(), strings(&["--model", "claude-opus-5-5"]))
-        );
+        // Each hat pins the claude backend and names its model with `model:`,
+        // and that model is what reaches the hat's command line.
+        let global = ralph_adapters::CliBackend::from_config(&multi.cli).unwrap();
+        for (id, model) in [
+            ("planner", "claude-fable-5-2"),
+            ("builder", "claude-opus-5-5"),
+            ("critic", "claude-opus-5-5"),
+            ("finalizer", "claude-opus-5-5"),
+        ] {
+            let hat = &multi.hats[id];
+            assert!(
+                matches!(&hat.backend, Some(HatBackend::Named(name)) if name == "claude"),
+                "{id} backend: {:?}",
+                hat.backend
+            );
+            assert_eq!(hat.model.as_deref(), Some(model), "{id} model");
+            let (backend, _) =
+                crate::loop_runner::resolve_hat_backend(id, Some(hat), &multi.cli, &global)
+                    .unwrap();
+            let args = backend.build_command("prompt", false).1;
+            let at = args.iter().position(|a| a == "--model");
+            assert_eq!(
+                at.and_then(|i| args.get(i + 1)).map(String::as_str),
+                Some(model),
+                "{id}: {args:?}"
+            );
+            assert_eq!(
+                args.iter().filter(|a| *a == "--model").count(),
+                1,
+                "{id}: {args:?}"
+            );
+        }
 
         for id in ["planner", "builder", "critic", "finalizer"] {
             assert_eq!(

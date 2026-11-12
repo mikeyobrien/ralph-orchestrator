@@ -627,6 +627,7 @@ mod tests {
             extra_instructions: vec![],
             backend_args: None,
             effort: None,
+            model: None,
             backend,
             default_publishes: None,
             max_activations: None,

@@ -128,6 +128,7 @@ cli:
   backend: "claude"                     # Backend name
   prompt_mode: "arg"                    # arg or stdin
   effort: "medium"                      # Default reasoning effort for hats without their own
+  model: "claude-opus-5-5"              # Default model ID for hats without their own
 
 # Core behaviors
 core:
@@ -188,6 +189,7 @@ hats:
     max_activations: 10                 # Activation limit
     backend: "claude"                   # Backend override
     effort: "high"                      # Reasoning effort (low|medium|high|xhigh|max)
+    model: "claude-fable-5-2"           # Model ID (inherits cli.model)
     scratchpad:                         # Per-hat scratchpad override
       enabled: true                     #   Enable scratchpad (default: true)
       path: .ralph/agent/my-hat.md      #   Scratchpad file path. Inherits from core if omitted.
@@ -426,6 +428,7 @@ Specialized personas for hat-based mode.
 | `timeout` | integer | No | Seconds before the hat's backend or script is stopped |
 | `backend` | string | No | Backend override |
 | `effort` | string | No | Reasoning effort for this hat: `low`, `medium`, `high`, `xhigh`, or `max`. Inherits `cli.effort`. Passed as `--effort` to Claude; other backends ignore it |
+| `model` | string | No | Model ID for this hat. Inherits `cli.model`. Passed as `--model <id>` to Claude and Kiro and `-m <id>` to Codex; other backends ignore it. A model flag already in the hat's backend args wins |
 | `scratchpad` | string or object | No | Per-hat scratchpad override (inherits `core.scratchpad` if omitted) |
 | `instructions` | string | Yes, unless `run` is set | Hat-specific prompt. Not allowed with `run` |
 
@@ -485,7 +488,7 @@ routing.
 - `run` can't be combined with `instructions` or `extra_instructions`. The error names the hat.
 - `run` can't be empty or contain a NUL byte, and `concurrency` must be 1 (script hats don't run as waves).
 - `default_publishes` can't be the completion promise. Ralph never completes the loop from a default event, so the script would rerun until the loop goes stale. Have the script emit the promise itself.
-- `backend`, `backend_args`, `effort`, and `disallowed_tools` are ignored on a script hat, with a warning.
+- `backend`, `backend_args`, `effort`, `model`, and `disallowed_tools` are ignored on a script hat, with a warning.
 
 **Environment.** The command inherits Ralph's environment, plus:
 

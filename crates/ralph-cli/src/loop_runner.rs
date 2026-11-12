@@ -1747,65 +1747,20 @@ pub async fn run_loop_impl(
         // Determine which backend to use for this hat and the appropriate timeout
         // Hat-level backend configuration takes precedence over global cli.backend
 
-        // Step 1: Get hat backend configuration for the active hat
+        // Step 1: Get hat configuration for the active hat
         // Use display_hat (the active hat) instead of hat_id ("ralph" in multi-hat mode)
         let hat_config_opt = event_loop.registry().get_config(&display_hat);
-        let hat_backend_opt = hat_config_opt
-            .filter(|_| script_triggers.is_none())
-            .and_then(|c| c.backend.as_ref());
-        let hat_backend_args = hat_config_opt
-            .filter(|_| script_triggers.is_none())
-            .and_then(|c| c.backend_args.clone());
 
-        // Step 2: Resolve effective backend and the backend name used for timeout
-        // resolution. An invalid hat backend fails closed (propagates the error)
-        // rather than silently falling back to the global backend — validation is
-        // the safety net, and a misconfigured hat must never launch another backend.
-        let (mut effective_backend, backend_name_for_timeout): (CliBackend, String) =
-            match hat_backend_opt {
-                Some(hat_backend) => {
-                    let hat_backend_instance = CliBackend::from_hat_backend(hat_backend)
-                        .with_context(|| {
-                            format!(
-                                "Invalid backend for hat '{}'; aborting iteration (fail-closed)",
-                                display_hat
-                            )
-                        })?;
-                    debug!(
-                        "Using hat-level backend for '{}': {:?}",
-                        display_hat, hat_backend
-                    );
-                    (hat_backend_instance, hat_backend.settings_name())
-                }
-                None => {
-                    // No custom backend - use global configuration. A script
-                    // hat never launches it; its timeout default still comes
-                    // from the global backend's adapter.
-                    debug!(
-                        "Using global backend for '{}': {}",
-                        display_hat, config.cli.backend
-                    );
-                    (backend.clone(), config.cli.backend.clone())
-                }
+        // Step 2: Resolve the backend this hat launches and the backend name used
+        // for timeout resolution. A script hat launches no backend; its timeout
+        // default still comes from the global backend's adapter.
+        let (effective_backend, backend_name_for_timeout): (CliBackend, String) =
+            if script_triggers.is_some() {
+                (backend.clone(), config.cli.backend.clone())
+            } else {
+                resolve_hat_backend(display_hat.as_str(), hat_config_opt, &config.cli, &backend)
+                    .context("aborting iteration (fail-closed)")?
             };
-
-        // Step 2.5: Apply custom hat backend args if configured
-        if let Some(args) = hat_backend_args {
-            effective_backend.args.extend(args);
-        }
-
-        // Step 2.6: Apply reasoning effort (hat-level, else cli.effort)
-        if script_triggers.is_none()
-            && let Some(effort) = hat_config_opt.and_then(|c| c.effort).or(config.cli.effort)
-            && !effective_backend.apply_effort(effort.as_str())
-        {
-            debug!(
-                "Backend '{}' has no effort control; ignoring effort '{}' for '{}'",
-                backend_name_for_timeout,
-                effort.as_str(),
-                display_hat
-            );
-        }
 
         // Step 3: R13 per-worker timeout — active hat.timeout, else the resolved
         // adapter settings timeout for the effective backend (override → default
@@ -5553,6 +5508,7 @@ async fn handle_wave_events(
     let wave_result = execute_wave(
         &detected,
         backend,
+        &config.cli,
         wave_timeout_secs,
         aggregate_wait,
         &main_events_file,
@@ -5649,6 +5605,67 @@ async fn handle_wave_events(
     }
 }
 
+/// Resolves the backend a model hat launches with, and the backend name used
+/// for timeout settings.
+///
+/// Order: the hat's backend (else the global one), then the hat's
+/// `backend_args`, then its model and effort (hat-level, else `cli`). Model
+/// and effort come last so an explicit flag in the args wins.
+///
+/// # Errors
+/// Fails closed when the hat's backend is invalid, rather than substituting
+/// the global backend.
+pub(crate) fn resolve_hat_backend(
+    hat_id: &str,
+    hat: Option<&ralph_core::HatConfig>,
+    cli: &ralph_core::CliConfig,
+    global_backend: &CliBackend,
+) -> Result<(CliBackend, String)> {
+    let (mut backend, backend_name) = match hat.and_then(|h| h.backend.as_ref()) {
+        Some(hat_backend) => {
+            let resolved = CliBackend::from_hat_backend(hat_backend)
+                .with_context(|| format!("Invalid backend for hat '{hat_id}'"))?;
+            debug!(
+                "Using hat-level backend for '{}': {:?}",
+                hat_id, hat_backend
+            );
+            (resolved, hat_backend.settings_name())
+        }
+        None => {
+            debug!("Using global backend for '{}': {}", hat_id, cli.backend);
+            (global_backend.clone(), cli.backend.clone())
+        }
+    };
+
+    if let Some(args) = hat.and_then(|h| h.backend_args.as_ref()) {
+        backend.args.extend(args.iter().cloned());
+    }
+
+    if let Some(model) = hat
+        .and_then(|h| h.model.as_deref())
+        .or(cli.model.as_deref())
+        && !backend.apply_model(model)
+    {
+        debug!(
+            "Backend '{}' has no model flag; ignoring model '{}' for '{}'",
+            backend_name, model, hat_id
+        );
+    }
+
+    if let Some(effort) = hat.and_then(|h| h.effort).or(cli.effort)
+        && !backend.apply_effort(effort.as_str())
+    {
+        debug!(
+            "Backend '{}' has no effort control; ignoring effort '{}' for '{}'",
+            backend_name,
+            effort.as_str(),
+            hat_id
+        );
+    }
+
+    Ok((backend, backend_name))
+}
+
 /// Execute a detected wave by spawning parallel backend instances.
 ///
 /// Creates per-worker event files, spawns workers with concurrency-limited
@@ -5656,6 +5673,7 @@ async fn handle_wave_events(
 async fn execute_wave(
     wave: &ralph_core::DetectedWave,
     global_backend: &CliBackend,
+    cli: &ralph_core::CliConfig,
     wave_timeout_secs: u64,
     aggregate_wait: Option<Duration>,
     main_events_file: &Path,
@@ -5713,20 +5731,12 @@ async fn execute_wave(
         };
         let prompt = build_wave_worker_prompt(&hat_config, &event, &ctx);
 
-        // Resolve backend for this worker. An invalid hat backend fails closed
-        // (propagates) rather than silently substituting the global backend.
-        let mut worker_backend = match hat_config.backend.as_ref() {
-            Some(hat_backend) => CliBackend::from_hat_backend(hat_backend).with_context(|| {
-                format!(
-                    "Invalid backend for wave hat '{}'; aborting wave (fail-closed)",
-                    hat_config.name
-                )
-            })?,
-            None => global_backend.clone(),
-        };
-        if let Some(effort) = hat_config.effort {
-            worker_backend.apply_effort(effort.as_str());
-        }
+        // Resolve backend for this worker the same way the hat's own iteration
+        // does, so a worker runs its hat's model and effort. An invalid hat
+        // backend fails closed rather than substituting the global backend.
+        let (mut worker_backend, _) =
+            resolve_hat_backend(&hat_config.name, Some(&hat_config), cli, global_backend)
+                .context("aborting wave (fail-closed)")?;
 
         #[cfg(test)]
         {
@@ -5753,11 +5763,6 @@ async fn execute_wave(
                 worker_events_file.display().to_string(),
             ),
         ]);
-
-        // Apply hat backend args
-        if let Some(ref args) = hat_config.backend_args {
-            worker_backend.args.extend(args.iter().cloned());
-        }
 
         let worker_events_path = worker_events_file.clone();
         let tx = progress_tx.clone();
@@ -10670,6 +10675,7 @@ hats:
                 backend: None,
                 backend_args: None,
                 effort: None,
+                model: None,
                 default_publishes: None,
                 max_activations: None,
                 disallowed_tools: vec![],
@@ -10730,6 +10736,7 @@ hats:
         execute_wave(
             &wave,
             &backend,
+            &ralph_core::CliConfig::default(),
             wave_per_worker_secs(&wave),
             None,
             &events_file,
@@ -10769,6 +10776,7 @@ hats:
         execute_wave(
             &wave,
             &backend,
+            &ralph_core::CliConfig::default(),
             wave_per_worker_secs(&wave),
             None,
             &events_file,
@@ -10842,6 +10850,7 @@ hats:
         let completed = execute_wave(
             &wave,
             &backend,
+            &ralph_core::CliConfig::default(),
             wave_per_worker_secs(&wave),
             None,
             &events_file,
@@ -10902,6 +10911,7 @@ hats:
         execute_wave(
             &wave,
             &global_backend,
+            &ralph_core::CliConfig::default(),
             wave_per_worker_secs(&wave),
             None,
             &events_file,
@@ -10947,6 +10957,7 @@ hats:
         let completed = execute_wave(
             &wave,
             &missing_global_wave_backend(),
+            &ralph_core::CliConfig::default(),
             wave_per_worker_secs(&wave),
             None,
             &events_file,
@@ -10992,6 +11003,7 @@ hats:
         let completed = execute_wave(
             &wave,
             &backend,
+            &ralph_core::CliConfig::default(),
             wave_per_worker_secs(&wave),
             None,
             &events_file,
@@ -11049,6 +11061,7 @@ hats:
         let completed = execute_wave(
             &wave,
             &missing_global_wave_backend(),
+            &ralph_core::CliConfig::default(),
             wave_per_worker_secs(&wave),
             None,
             &events_file,
@@ -11728,6 +11741,7 @@ EOF"#,
                 backend: None,
                 backend_args: None,
                 effort: None,
+                model: None,
                 default_publishes: None,
                 max_activations: None,
                 disallowed_tools: vec![],
@@ -11766,6 +11780,7 @@ EOF"#,
         execute_wave(
             &wave,
             &backend,
+            &ralph_core::CliConfig::default(),
             wave_per_worker_secs(&wave),
             None,
             &events_file,
@@ -13215,6 +13230,7 @@ EOF"#,
         let completed = execute_wave(
             &wave,
             &missing_global_wave_backend(),
+            &ralph_core::CliConfig::default(),
             wave_per_worker_secs(&wave),
             None,
             &events_file,
@@ -13294,6 +13310,7 @@ EOF"#,
         let result = execute_wave(
             &wave,
             &global_backend,
+            &ralph_core::CliConfig::default(),
             wave_per_worker_secs(&wave),
             None,
             &events_file,
@@ -14450,5 +14467,210 @@ hats:
             r#"[Tool] Bash: ralph emit "hypothesis.test" "payload""#
         ));
         assert!(!output_mentions_ralph_emit("[Tool] Bash: cargo test"));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Hat `model:` reaches the backend command line.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    const MODEL_CONFIG: &str = r#"
+cli:
+  backend: claude
+  model: claude-opus-5-5
+hats:
+  planner:
+    name: Planner
+    description: Planner hat
+    triggers: ["plan.start"]
+    publishes: ["plan.done"]
+    model: claude-fable-5-2
+    instructions: plan
+  builder:
+    name: Builder
+    description: Builder hat
+    triggers: ["build.start"]
+    publishes: ["build.done"]
+    instructions: build
+  reviewer:
+    name: Reviewer
+    description: Reviewer hat
+    triggers: ["review.start"]
+    publishes: ["review.done"]
+    backend: codex
+    model: gpt-review
+    instructions: review
+  pinned_backend:
+    name: Pinned Backend
+    description: Pinned Backend hat
+    triggers: ["pin.a"]
+    publishes: ["pin.done"]
+    backend:
+      type: claude
+      args: ["--model", "X"]
+    model: "Y"
+    instructions: pinned
+  pinned_args:
+    name: Pinned Args
+    description: Pinned Args hat
+    triggers: ["pin.b"]
+    publishes: ["pin.done"]
+    backend_args: ["--model", "X"]
+    model: "Y"
+    instructions: pinned
+  drafter:
+    name: Drafter
+    description: Drafter hat
+    triggers: ["draft.start"]
+    publishes: ["draft.done"]
+    backend: gemini
+    model: claude-fable-5-2
+    instructions: draft
+"#;
+
+    fn load_model_config(yaml: &str) -> RalphConfig {
+        let mut config = RalphConfig::parse_yaml(yaml).expect("config parses");
+        config.normalize();
+        config.validate().expect("config validates");
+        config
+    }
+
+    /// The argv the hat's iteration would launch, resolved the way the loop does.
+    fn hat_launch_args(config: &RalphConfig, hat_id: &str) -> Vec<String> {
+        let global = CliBackend::from_config(&config.cli).expect("global backend");
+        let (backend, _) =
+            resolve_hat_backend(hat_id, config.hats.get(hat_id), &config.cli, &global)
+                .expect("hat backend resolves");
+        backend.build_command("prompt", false).1
+    }
+
+    fn arg_after<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|i| args.get(i + 1))
+            .map(String::as_str)
+    }
+
+    fn count(args: &[String], value: &str) -> usize {
+        args.iter().filter(|a| *a == value).count()
+    }
+
+    #[test]
+    fn test_hat_model_reaches_claude_and_codex_command_lines() {
+        let config = load_model_config(MODEL_CONFIG);
+        assert_eq!(
+            config.hats["planner"].model.as_deref(),
+            Some("claude-fable-5-2")
+        );
+        assert_eq!(config.cli.model.as_deref(), Some("claude-opus-5-5"));
+
+        let planner = hat_launch_args(&config, "planner");
+        assert_eq!(arg_after(&planner, "--model"), Some("claude-fable-5-2"));
+        assert_eq!(count(&planner, "--model"), 1, "{planner:?}");
+        assert_eq!(count(&planner, "claude-opus-5-5"), 0, "{planner:?}");
+
+        // No hat-level model: cli.model applies.
+        let builder = hat_launch_args(&config, "builder");
+        assert_eq!(arg_after(&builder, "--model"), Some("claude-opus-5-5"));
+        assert_eq!(count(&builder, "--model"), 1, "{builder:?}");
+
+        let reviewer = hat_launch_args(&config, "reviewer");
+        assert_eq!(arg_after(&reviewer, "-m"), Some("gpt-review"));
+        assert_eq!(count(&reviewer, "-m"), 1, "{reviewer:?}");
+        assert!(!reviewer.iter().any(|a| a == "--model"), "{reviewer:?}");
+    }
+
+    #[test]
+    fn test_explicit_model_flag_in_hat_args_wins_over_model_field() {
+        let config = load_model_config(MODEL_CONFIG);
+        for hat in ["pinned_backend", "pinned_args"] {
+            let args = hat_launch_args(&config, hat);
+            assert_eq!(count(&args, "--model"), 1, "{hat}: {args:?}");
+            assert_eq!(arg_after(&args, "--model"), Some("X"), "{hat}: {args:?}");
+            assert!(
+                !args
+                    .iter()
+                    .any(|a| a.contains('Y') || a == "claude-opus-5-5"),
+                "{hat}: {args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_model_on_backend_without_model_flag_leaves_args_unchanged() {
+        let config = load_model_config(MODEL_CONFIG);
+        let args = hat_launch_args(&config, "drafter");
+        let (_, plain, _, _) = CliBackend::gemini().build_command("prompt", false);
+        assert_eq!(args, plain);
+    }
+
+    #[test]
+    fn test_no_model_anywhere_adds_no_model_flag() {
+        let config = load_model_config(
+            "hats:\n  builder:\n    name: Builder\n    description: Builds\n    triggers: [\"b\"]\n    publishes: [\"d\"]\n    instructions: x\n",
+        );
+        let args = hat_launch_args(&config, "builder");
+        assert!(!args.iter().any(|a| a == "--model"), "{args:?}");
+    }
+
+    /// A wave worker launches with its hat's model (else cli.model), and an
+    /// explicit flag in its `backend_args` still wins.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_wave_worker_launches_with_hat_model() {
+        let body = invocation_capture_backend_body("wave model ok");
+        let _fake = install_fake_path_backends(&[("claude", body.as_str())]);
+        let cli = ralph_core::CliConfig {
+            model: Some("claude-opus-5-5".to_string()),
+            ..ralph_core::CliConfig::default()
+        };
+
+        for (hat_model, backend_args, expected) in [
+            (Some("claude-fable-5-2"), None, "claude-fable-5-2"),
+            (None, None, "claude-opus-5-5"),
+            (
+                Some("Y"),
+                Some(vec!["--model".to_string(), "X".to_string()]),
+                "X",
+            ),
+        ] {
+            let temp_dir = tempfile::tempdir().expect("temp dir");
+            let capture_path = temp_dir.path().join("wave-w-test-0.jsonl.capture");
+            let events_file = temp_dir.path().join("events.jsonl");
+            let mut wave = make_test_wave_with_timeout_and_payload(
+                vec!["review.done".to_string()],
+                30,
+                "ROLE: model".to_string(),
+            );
+            wave.hat_config.backend = Some(ralph_core::HatBackend::Named("claude".to_string()));
+            wave.hat_config.model = hat_model.map(String::from);
+            wave.hat_config.backend_args = backend_args;
+
+            let completed = execute_wave(
+                &wave,
+                &missing_global_wave_backend(),
+                &cli,
+                wave_per_worker_secs(&wave),
+                None,
+                &events_file,
+                false,
+                false,
+                None,
+                None,
+            )
+            .await
+            .expect("wave execution");
+            assert_single_success(&completed, "wave model ok");
+            let captured: CapturedWaveInvocation = serde_json::from_str(
+                &std::fs::read_to_string(&capture_path).expect("read captured invocation"),
+            )
+            .expect("parse captured invocation");
+            assert_eq!(count(&captured.args, "--model"), 1, "{:?}", captured.args);
+            assert_eq!(
+                arg_after(&captured.args, "--model"),
+                Some(expected),
+                "{:?}",
+                captured.args
+            );
+        }
     }
 }

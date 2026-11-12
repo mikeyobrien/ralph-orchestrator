@@ -66,6 +66,7 @@ Each hat should use the fields Ralph supports today:
 - `backend`
 - `backend_args`
 - `effort`
+- `model`
 - `max_activations`
 - `disallowed_tools`
 
@@ -77,20 +78,24 @@ Notes:
 - `effort` is one of `low`, `medium`, `high`, `xhigh`, `max`, and falls back to
   `cli.effort` in the core config. It reaches Claude as `--effort`; other
   backends ignore it.
+- `model` is a model ID and falls back to `cli.model` in the core config. It
+  reaches Claude and Kiro as `--model <id>` and Codex as `-m <id>`; other
+  backends ignore it. A model flag already in the hat's `backend.args` or
+  `backend_args` wins over `model`.
 
 Per-hat model and effort:
 
 ```yaml
 hats:
   builder:
-    backend:
-      type: "claude"
-      args: ["--model", "claude-opus-5-5"]
+    backend: "claude"
+    model: "claude-opus-5-5"
     effort: "high"
   critic:
     backend:
       type: "codex"
-      args: ["-m", "<codex-model-id>", "-c", 'model_reasoning_effort="high"']
+      args: ["-c", 'model_reasoning_effort="high"']
+    model: "<codex-model-id>"
 ```
 
 Codex takes effort through its own `-c model_reasoning_effort=...` flag, so
