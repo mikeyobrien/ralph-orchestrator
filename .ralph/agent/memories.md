@@ -2,6 +2,10 @@
 
 ## Patterns
 
+### mem-1794519940-12fe
+> When a ralph-cli integration test needs a headless Claude iteration without an API call, use backend: claude with command: pointing at a script that cats a stream-json fixture, and run 'ralph run --autonomous' (not --no-tui, which conflicts with --autonomous); see tests/integration_headless_metrics.rs. Claude usage aggregation for both executors lives in claude_stream.rs ClaudeSessionMetrics.
+<!-- tags: testing, metrics, cli | created: 2026-11-12 -->
+
 ### mem-1794518972-fc67
 > ralph-core auto_commit_changes (git_ops.rs) stages git add --update plus untracked files filtered by is_run_artifact; when adding new Ralph-written runtime paths, extend that filter (and is_durable_ralph_artifact for files meant to be committed), because user repos' .gitignore does not cover Ralph's layout
 <!-- tags: git, auto-commit | created: 2026-11-12 -->

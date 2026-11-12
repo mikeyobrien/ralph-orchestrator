@@ -146,6 +146,37 @@ they go through `CliExecutor` with no API call.
 - clippy `-D warnings`: pass (`logs/step03-clippy.log`); `cargo fmt --all --check`: pass. No preset or
   `crates/ralph-core/data/` change, so no embedded-files sync.
 
+### Step 04 — stream context window (task-1794517688-dcbe)
+
+Mechanism (DEC-017): `ClaudeStreamEvent::Result` now parses `modelUsage` (a lenient deserializer, so a
+malformed map can't fail the line that also carries cost). `ClaudeSessionMetrics` remembers the init line's
+model and reports that model's `contextWindow`, else the largest reported, else the caller's fallback.
+The PTY path carries it on the new `PtyExecutionResult.context_window`; the headless path on
+`SessionResult.context_window` (CliExecutor still passes fallback `0`).
+`loop_runner::reported_or_configured_context_window` prefers a reported window (> 0) over
+`context_window_for_backend` in the headless branch and both PTY/ACP builders. Precedence: stream >
+`context_window_tokens` override > backend default.
+
+- Red (`logs/step04-red-claude-stream.log`): `session_metrics_take_context_window_from_result_model_usage`
+  got 200000 instead of 1000000; `session_metrics_prefer_the_session_models_context_window` got the fallback 123.
+- Red (`logs/step04-red-headless-context-window.log`): `headless_claude_iteration_summary_carries_stream_cost_and_tokens`
+  fails at the new assertion: `iteration.summary.context_window` is `Number(200000)`, expected 1000000
+  (real `ralph run --autonomous` binary replaying `fixtures/claude_headless_iteration.jsonl`).
+- Red (`logs/step04-red-malformed-model-usage.log`): adversarial `modelUsage: null` (also `[]`, `{"m":null}`,
+  string and negative windows) made the whole result line unparseable, which would drop its cost.
+  Fixed with the lenient deserializer.
+- Green (`logs/step04-green-context-window.log`, `logs/step04-green-malformed-model-usage.log`): claude_stream
+  tests, the new PTY test `test_stream_reported_context_window_reaches_pty_result`, the loop_runner test
+  `test_stream_reported_context_window_beats_configured_one`, and all 3 integration_headless_metrics tests pass.
+- Mutation probe (`logs/step04-mutation-probe.log`): (A) `build_result` dropping the session window fails
+  the PTY test (0 vs 1000000); (B) loop_runner ignoring the reported window fails the headless
+  integration test (200000 vs 1000000).
+- Full suites: `cargo test -p ralph-core` 1062 passed, `-p ralph-adapters` 370 passed,
+  `-p ralph-cli -- --test-threads=1` 675 passed, 0 failed (`logs/step04-test-ralph-{core,adapters,cli}.log`).
+  Live events file has no `test.topic`/`t.x`/`t.y` lines afterwards.
+- clippy `-D warnings`: pass after replacing one `Default::default()` (`logs/step04-clippy.log`);
+  `cargo fmt --all --check`: pass. No preset or `crates/ralph-core/data/` change, so no embedded-files sync.
+
 ## Follow-ups
 
 - (minor) `ralph_command_does_not_pass_loop_env_to_the_child` proves nothing when the test process has
@@ -172,6 +203,8 @@ they go through `CliExecutor` with no API call.
 - (minor, step 03) Copilot headless runs (`CopilotStreamJson`) still report zero metrics through
   `CliExecutor`. The spec only covers Claude; `copilot_stream.rs` already builds a `SessionResult` for the PTY.
 
+- (minor, step 04) Pi-family and Copilot results still set `context_window` to the configured ceiling;
+  only Claude streams report a real window. ACP has no stream window to report.
 - (minor, step 03) A Claude stream cut off before its `result` line (timeout kill, crash) reports $0 and
   zero tokens, even though assistant turns with `usage` were seen. Spent cost is unknown without the result
   line, so repeated timeouts never count toward `max_cost_usd`. Critic probe: `step03-critic-probe.log` (trunc).

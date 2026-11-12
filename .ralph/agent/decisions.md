@@ -137,3 +137,12 @@ Use this template for new entries:
 - Reasoning: (A) lets the two executors drift on the same stream. (B) couples the CLI executor to PTY internals and re-accumulates text it throws away. (C): the plan said `context_tokens = 0` caused the empty performance.jsonl; it didn't. `DiagnosticsCollector::log_performance` had no caller, so the spec's observed symptom would survive this fix. Both additions are a few lines and come with red/green tests.
 - Reversibility: High; the tracker is a move, the wiring is one method and one call.
 - Timestamp: 2026-11-12T21:45:00Z
+
+## DEC-017 (2026-11-12T22:30Z)
+- Decision: Where the per-iteration context window comes from, and its precedence over configuration (spec defect 1, third criterion).
+- Chosen Option: `ClaudeStreamEvent::Result` parses `modelUsage.<model>.contextWindow` (leniently: a malformed `modelUsage` yields no window instead of failing the line, which also carries cost). `ClaudeSessionMetrics` remembers the `system` init line's model and picks that model's window, else the largest reported one, else the caller's fallback. The PTY path gets it via a new `PtyExecutionResult.context_window`; the headless path via `SessionResult.context_window` (CliExecutor still passes fallback 0). `loop_runner::reported_or_configured_context_window` picks a reported window (> 0) over `resolve_context_window_for_backend`, in both paths. Precedence: stream > `event_loop.context_window_tokens` override > backend default.
+- Confidence: 75
+- Alternatives Considered: (A) Explicit override beats the stream. (B) Always take the max window in `modelUsage`. (C) Only the headless path (the spec's observed symptom).
+- Reasoning: (A): the override's documented purpose is correcting a wrong backend default (e.g. 1M-window users); the stream reports the running model's actual window, so it can't be the wrong one, while a stale override can be. The task text also names `resolve_context_window_for_backend` (which includes the override) as the fallback for when the stream reports nothing. The window only drives display and performance.jsonl percentages, so the stakes of the choice are low. (B) is wrong when a helper/subagent model has the larger window than the session's model. (C) would leave PTY Claude runs reporting 200000 for the same stream.
+- Reversibility: High; swapping (A) in is a one-line change in `reported_or_configured_context_window`'s callers.
+- Timestamp: 2026-11-12T22:30:00Z
