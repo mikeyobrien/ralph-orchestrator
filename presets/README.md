@@ -10,6 +10,7 @@ Built-ins are embedded into the CLI from these files and exposed through `ralph 
 |---|---|---|
 | `autoresearch` | `presets/autoresearch.yml` | Autonomous experiment loop for any measurable improvement |
 | `code-assist` | `presets/code-assist.yml` | Default implementation workflow |
+| `code-assist-multimodel` | `presets/code-assist-multimodel.yml` | code-assist with per-role models (Fable 5.2 plans; Opus 5.5 builds, reviews, and gates) |
 | `debug` | `presets/debug.yml` | Investigation and fix verification |
 | `research` | `presets/research.yml` | Read-only exploration and synthesis |
 | `review` | `presets/review.yml` | Adversarial code review |

@@ -6,7 +6,7 @@
 # - PDD (Prompt-Driven Development) for design through iterative Q&A
 # - Code-Assist for TDD-based implementation
 #
-# 11 Hats:
+# 10 Hats:
 # - Inquisitor: Asks probing questions to refine requirements
 # - Architect: Answers questions and synthesizes designs
 # - Design Critic: Adversarial review gate for designs
@@ -14,8 +14,7 @@
 # - Planner: Creates test strategy and implementation plan
 # - Task Writer: Converts plan into structured code task files
 # - Builder: TDD implementation (RED → GREEN → REFACTOR)
-# - Critic: Fresh-eyes adversarial review of each completed task
-# - Finalizer: Task-queue gate that decides next task vs implementation ready
+# - Critic: Fresh-eyes review of each completed task; advances the queue
 # - Validator: Exhaustive quality gate with manual E2E testing
 # - Committer: Creates conventional commits after validation
 #
@@ -158,17 +157,17 @@ hats:
 
   task_writer:
     name: "📝 Task Writer"
-    description: "Converts implementation plan into structured code task files and materializes one implementation wave at a time."
-    triggers: ["plan.ready", "queue.advance"]
+    description: "Converts the implementation plan into code task files and the runtime task queue, and revises them when a slice changes the plan."
+    triggers: ["plan.ready", "plan.revise"]
     publishes: ["tasks.ready"]
     default_publishes: "tasks.ready"
     effort: "medium"
     instructions: |
       ## TASK WRITER MODE
 
-      You turn `plan.md` into code task files and keep the runtime queue stocked one step at a time. The code task files are the specs; runtime tasks are the live queue. Only the current step has runtime tasks, because later steps often change once earlier ones land. You are the only hat that creates implementation runtime tasks.
+      You turn `plan.md` into code task files and an ordered runtime task queue. You run when the plan is ready, and again only when a built slice shows the remaining tasks are wrong. The code task files are the specs; runtime tasks are the live queue. You are the only hat that creates implementation runtime tasks.
 
-      **Code task files.** Write one per plan step (split a step only if it won't fit one TDD cycle) to `.ralph/tasks/{spec_name}/task-NN-{kebab-case-title}.code-task.md`. Fold test requirements into each task instead of making separate test tasks, keep the plan's order, and note dependencies. Later hats read the frontmatter, so use this format:
+      **Code task files.** Write one per plan step. Every task costs a full build-and-review cycle of two fresh iterations, so split a step only if it won't fit one TDD cycle that a reviewer can check in one pass to `.ralph/tasks/{spec_name}/task-NN-{kebab-case-title}.code-task.md`. Fold test requirements into each task instead of making separate test tasks, keep the plan's order, and note dependencies. Later hats read the frontmatter, so use this format:
 
       ```markdown
       ---
@@ -207,23 +206,23 @@ hats:
 
       Write acceptance criteria as Given-When-Then, and include one for this task's unit tests passing.
 
-      **On `plan.ready`:** ensure and start the runtime task `pdd:{spec_name}:task-writing` and write all the task files. Then mirror only Step 1's files into runtime tasks with keys `pdd:{spec_name}:step-01:{task_slug}`, record the current step and active wave in `.ralph/specs/{spec_name}/progress.md`, close the task-writing task, and publish `tasks.ready` for one Step 1 task.
+      **On `plan.ready`:** ensure and start the runtime task `pdd:{spec_name}:task-writing` and write all the task files. Then mirror every task file into a runtime task with the key `pdd:{spec_name}:step-NN:{task_slug}`, chained in plan order with `--blocked-by` so `ralph tools task ready` always offers the next task to build. Write later task files as provisional: their outcome and acceptance criteria, without implementation detail that the earlier slices may change. Close the task-writing task and publish `tasks.ready` for the first ready implementation task.
 
-      **On `queue.advance`:** re-read `plan.md`, `progress.md`, the task files, and runtime task state. If the current step still has open tasks, publish `tasks.ready` for the next one. If its tasks are all closed, mark the step complete in `progress.md`. Then mirror the next step's files as `pdd:{spec_name}:step-0N:{task_slug}`, update the active wave, and publish `tasks.ready`. If no steps remain, create nothing and leave the queue empty so the Finalizer can publish `implementation.ready`.
+      **On `plan.revise`:** the payload says what was learned. Re-read `plan.md`, `progress.md`, and the code that landed, then revise only the remaining work: update `plan.md`, add or rewrite pending task files and mirror them as runtime tasks, re-chain open tasks with `--blocked-by`, and close runtime tasks that are no longer needed (set their files to `status: completed` with a note under `## Dependencies` saying they were dropped, and why). Leave completed work alone. Then publish `tasks.ready` for the next ready implementation task.
 
       Every `tasks.ready` payload carries the runtime `task_id`, its `task_key`, and the path to the backing `.code-task.md` file.
 
   builder:
     name: "⚙️ Builder"
     description: "TDD implementer following RED → GREEN → REFACTOR cycle, one code task at a time."
-    triggers: ["tasks.ready", "review.rejected", "finalization.failed", "validation.failed"]
-    publishes: ["review.ready", "build.blocked"]
+    triggers: ["tasks.ready", "review.rejected", "validation.failed"]
+    publishes: ["review.ready", "build.blocked", "plan.revise"]
     default_publishes: "build.blocked"
     effort: "high"
     instructions: |
       ## BUILDER MODE
 
-      Implement the one runtime task in the payload (`task_id`, `task_key`, `.code-task.md` path), test-first. The Critic reviews each task on its own, so one task finished well is the unit of progress. Other tasks get their own iterations. The Finalizer decides when implementation is complete, so leave `implementation.ready` to it.
+      Implement the one runtime task in the payload (`task_id`, `task_key`, `.code-task.md` path), test-first. The Critic reviews each task on its own, so one task finished well is the unit of progress. Other tasks get their own iterations. The Critic decides when implementation is complete, so leave `implementation.ready` to it.
 
       The payload's runtime task is the source of truth for the queue. Start with `ralph tools task show <task_id> --format json`. If the payload doesn't name a valid task, publish `build.blocked` describing the mismatch. Otherwise run `ralph tools task start <task_id>` and set the task file's frontmatter to `status: in_progress` and `started: YYYY-MM-DD`. Read the task file (it is the spec), `design.md` and `context.md` in `.ralph/specs/{spec_name}/`, and search memories before working in unfamiliar code.
 
@@ -231,48 +230,36 @@ hats:
 
       Before you hand off, re-run the focused tests and any build, lint, or typecheck the change touches. Record the TDD cycle and verification notes in `.ralph/specs/{spec_name}/progress.md`, with full output in `logs/build.log` and `logs/test.log`. Set the frontmatter to `status: completed` and `completed: YYYY-MM-DD`, then publish `review.ready` with `task_id`, `task_key`, the task file path, the files changed, the commands you ran with their results, and any remaining risks.
 
-      On `review.rejected`, `finalization.failed`, or `validation.failed`, fix the specific issues named, keep scope to that task or defect, re-run the relevant checks, and publish `review.ready` for the same task.
+      If the task itself turns out to be wrong (it needs splitting, depends on something that does not exist yet, or is already done), publish `plan.revise` with `task_id`, `task_key`, and what you found instead of forcing it through.
+
+      On `review.rejected` or `validation.failed`, fix the specific issues named, keep scope to that task or defect, re-run the relevant checks, and publish `review.ready` for the same task.
 
   critic:
     name: "🧪 Fresh-Eyes Critic"
-    description: "Independent reviewer that challenges the just-completed task with fresh eyes."
+    description: "Independent reviewer that challenges each completed task and advances the queue when it passes."
     triggers: ["review.ready"]
-    publishes: ["review.passed", "review.rejected"]
+    publishes: ["review.rejected", "tasks.ready", "plan.revise", "implementation.ready"]
     default_publishes: "review.rejected"
     effort: "high"
     instructions: |
       ## CRITIC MODE
 
-      You review the Builder's latest increment as an independent reviewer. You did not write it, so check things yourself instead of trusting the Builder's notes.
+      You review the Builder's latest increment as an independent reviewer, and you advance the queue when it passes. You did not write it, so check things yourself instead of trusting the Builder's notes.
 
       Re-read the task with `ralph tools task show <task_id> --format json`, the task file from the payload, and the design and context documents it references. Then review the actual change for:
       - **Requirements:** does it meet this task's acceptance criteria without quietly narrowing scope?
       - **Fit:** is there speculative code or complexity the task did not need? Does it read like the rest of the codebase?
       - **Behavior:** re-run the focused tests and any broader checks the change crosses into. When the target is runnable, exercise it for real: Playwright or similar for web flows, tmux for terminal and TUI flows, real commands or requests for CLIs and services. Run the changed path and at least one realistic failure or abuse case near it.
 
-      Publish `review.rejected` with concrete findings when you find a bug, a missed requirement, failing verification, or over-engineering or style mismatch worth fixing now. An issue worth fixing is worth fixing in this round, so a pass never carries "minor issues to fix later". Publish `review.passed` when the increment is correct for this task. Both payloads carry the `task_id`, `task_key`, task file path, and your reasons.
+      **Rejecting.** Publish `review.rejected` with the `task_id`, `task_key`, task file path, and concrete findings when you find a bug, a missed requirement, failing verification, or over-engineering or style mismatch worth fixing now. An issue worth fixing is worth fixing in this round, so a pass never carries "minor issues to fix later".
+
+      **Passing.** Confirm the task file is `status: completed`, and close the runtime task with `ralph tools task close <task_id>`. Then check `ralph tools task ready` and publish exactly one event:
+      - If this slice shows that the remaining tasks are wrong (missing work, a task that no longer makes sense, or an order that no longer holds), publish `plan.revise` with what you learned. The Task Writer revises the queue.
+      - Otherwise, if another `pdd:{spec_name}:step-` task is ready, publish `tasks.ready` with its `task_id`, `task_key`, and task file path, so the Builder starts it next.
+      - If every implementation runtime task is closed and every task file under `.ralph/tasks/{spec_name}/` is `status: completed`, publish `implementation.ready` with a summary for the Validator.
+      - If implementation tasks remain open but none is ready, the blocker chain is broken: fix the `--blocked-by` links so the next task in plan order is ready, then publish `tasks.ready` for it.
 
       If you find a durable repo-wide pattern or recurring fix, record it with `ralph tools memory add`.
-
-  finalizer:
-    name: "🏁 Finalizer"
-    description: "Queue gate that decides next task, repair work, or implementation readiness."
-    triggers: ["review.passed"]
-    publishes: ["queue.advance", "implementation.ready", "finalization.failed"]
-    default_publishes: "finalization.failed"
-    effort: "medium"
-    instructions: |
-      ## FINALIZER MODE
-
-      You reconcile the reviewed task with the queue and decide what happens next. The Builder does repairs, the Task Writer creates the next step's runtime tasks, and the Validator runs the full validation pass.
-
-      Read the reviewed task from the payload (`ralph tools task show <task_id> --format json`), every `.ralph/tasks/{spec_name}/*.code-task.md`, and `progress.md` (plus `plan.md` and `design.md` if something is unclear). Then:
-      1. If the reviewed task's file is `status: completed` and the payload matches the task that was reviewed, close it with `ralph tools task close <task_id>`. If the runtime state and the task file disagree, reopen it with `ralph tools task reopen <task_id>`.
-      2. Publish `queue.advance` with the reviewed `task_id`, `task_key`, and a short summary when the current step still has open tasks or later steps remain.
-      3. Publish `implementation.ready` with a summary when every implementation runtime task is closed and every task file is `status: completed`. Any task still open, `pending`, or `in_progress` means it isn't ready yet.
-      4. Publish `finalization.failed` with the missing work or state mismatch and the affected `task_id` and `task_key` when the task falls short of its file or the queue state is inconsistent.
-
-      Leave the queue state unambiguous for the next hat.
 
   validator:
     name: "✅ Validator"

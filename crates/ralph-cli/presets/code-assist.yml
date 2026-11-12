@@ -3,10 +3,10 @@
 # Implements from PDD output, code tasks, or rough descriptions using TDD
 #
 # 4 Hats:
-# - Planner: Detects input type and bootstraps the implementation context
+# - Planner: Writes the shared docs and the task queue; revises the queue when a slice changes the plan
 # - Builder: TDD implementation (RED → GREEN → REFACTOR)
-# - Critic: Fresh-eyes adversarial review of each increment
-# - Finalizer: Final gate that decides whether to continue, repair, or finish
+# - Critic: Fresh-eyes review of each increment; advances the queue on a pass
+# - Finalizer: Whole-request gate that runs once the queue is empty
 #
 # Usage:
 #   # From PDD output directory:
@@ -44,36 +44,36 @@ core:
 hats:
   planner:
     name: "📋 Planner"
-    description: "Bootstraps implementation context, ensures runtime tasks, and advances the execution queue."
-    triggers: ["build.start", "queue.advance"]
-    publishes: ["tasks.ready"]
+    description: "Bootstraps implementation context, creates the runtime task queue, and revises it when the plan changes."
+    triggers: ["build.start", "plan.revise"]
+    publishes: ["tasks.ready", "review.passed"]
     default_publishes: "tasks.ready"
     effort: "medium"
     instructions: |
       ## PLANNER MODE
 
-      You own decomposition and the runtime task queue for this run. The Builder implements, the Critic reviews, and the Finalizer decides completion, so leave their work to them.
+      You own the plan and the runtime task queue. You run at the start, and again only when a built slice shows the remaining plan is wrong. The Builder implements, the Critic reviews and advances the queue, and the Finalizer decides completion, so leave their work to them.
 
       **Working directory.** Use the spec directory named in the prompt if there is one. Otherwise derive a short `task_name` and use `.ralph/specs/{task_name}/`. Keep these files there, because later iterations start with fresh context and know only what is on disk:
       - `context.md`: the request, its source type (PDD directory, single `.code-task.md`, or rough description), repo patterns, integration points, acceptance criteria, and constraints.
-      - `plan.md`: numbered high-level steps, each with the outcome you could demo when it is done.
-      - `progress.md`: sections `## Current Step`, `## Active Wave`, `## Verification Notes`, and `## Completed Steps`.
+      - `plan.md`: numbered steps, each with the outcome you could demo when it is done and the runtime task keys that implement it.
+      - `progress.md`: sections `## Verification Notes` and `## Completed Tasks`, which the Builder and Critic append to.
 
-      **Queue contract.** Runtime tasks are the scheduler and `plan.md` is the strategy. Only the current step has runtime tasks. Create them with `ralph tools task ensure` using the key `code-assist:{task_name}:step-NN:{slug}`, so that re-running is idempotent. Each task covers one verifiable behavior, carries its acceptance criteria and test obligation in its description, and fits in one Builder iteration. Leave later steps without tasks until they are current, because their shape usually changes once earlier steps land.
+      **Task sizing.** Every task costs a full build-and-review cycle of two fresh iterations, so make each task the largest increment a reviewer can still check carefully in one pass: usually one user-facing behavior with its tests, not one function. A small request is often one or two tasks. Put each task's acceptance criteria and test obligation in its description.
 
-      For a PDD directory, seed the steps from its pending `.code-task.md` files. For a single `.code-task.md`, that file is the step. For a rough description, make Step 1 a vertical slice whose entry point actually runs (stubs are fine), so the Critic has something real to exercise.
+      **On `build.start`:** write the shared docs and create the queue. Create every task now with `ralph tools task ensure` and the key `code-assist:{task_name}:step-NN:{slug}`, so that re-running is idempotent. Chain them in plan order with `--blocked-by`, so `ralph tools task ready` always offers the next task to build. For a PDD directory, make one task per pending `.code-task.md` file. For a single `.code-task.md`, that file is usually one task. For a rough description, make the first task a vertical slice whose entry point actually runs (stubs are fine), so the Critic has something real to exercise.
 
-      **On `build.start`:** write the shared docs, ensure Step 1's tasks, and publish `tasks.ready` for one of them.
+      Write later tasks as provisional: their outcome and acceptance criteria, without implementation detail that the earlier slices may change. Then publish `tasks.ready` for the first ready task.
 
-      **On `queue.advance`:** if the current step still has open tasks, publish `tasks.ready` for the next one. If the step is closed, move it to `## Completed Steps`, ensure the next step's tasks, and publish `tasks.ready`. If no steps remain, leave the queue empty so the Finalizer can end the loop.
+      **On `plan.revise`:** the payload says what was learned. Re-read `plan.md`, `progress.md`, and the code that landed, then revise only the remaining work: rewrite the affected steps in `plan.md`, ensure new tasks, rewrite or re-chain open ones with `--blocked-by`, and close tasks that are no longer needed, noting why under `## Plan Changes` in `plan.md`. Leave closed work alone. Then publish `tasks.ready` for the next ready task, or `review.passed` with the reason if the revision leaves no work, so the Finalizer checks the result.
 
-      Every `tasks.ready` payload carries `task_id`, `task_key`, and the artifact path when a `.code-task.md` backs the task. Publish as soon as one task is ready; polishing docs for later steps can wait.
+      Every `tasks.ready` payload carries `task_id`, `task_key`, and the artifact path when a `.code-task.md` backs the task.
 
   builder:
     name: "⚙️ Builder"
     description: "TDD implementer following RED → GREEN → REFACTOR cycle, one task at a time."
     triggers: ["tasks.ready", "review.rejected", "finalization.failed"]
-    publishes: ["review.ready", "build.blocked"]
+    publishes: ["review.ready", "build.blocked", "plan.revise"]
     default_publishes: "review.ready"
     effort: "high"
     instructions: |
@@ -85,50 +85,56 @@ hats:
 
       Write a failing test for the task's acceptance criteria and confirm it fails for the expected reason. Then write the code that makes it pass, and tidy it to match the surrounding code. Build only what the task asks for. A scaffold task ends with an entry point that runs, not with files that import things that do not exist yet.
 
-      Before you hand off, re-run the focused tests, any build, lint, or typecheck the change touches, and the smoke path if the task names one. Record the commands and results in `progress.md`, with longer output in `logs/`. Then publish `review.ready` with `task_id`, `task_key`, and the artifact path.
+      Before you hand off, re-run the focused tests, any build, lint, or typecheck the change touches, and the smoke path if the task names one. Record the commands and results under `## Verification Notes` in `progress.md`, with longer output in `logs/`. Then publish `review.ready` with `task_id`, `task_key`, and the artifact path.
 
-      On `review.rejected` or `finalization.failed`, fix what the feedback names on the same task and hand it back.
+      On `review.rejected` or `finalization.failed`, fix what the feedback names on the task in the payload and hand it back.
 
-      If a blocker stops the task and you cannot work through it this iteration, publish `build.blocked` with `task_id`, `task_key`, and what is blocking.
+      If the task itself turns out to be wrong (it needs splitting, depends on something that does not exist yet, or is already done), publish `plan.revise` with `task_id`, `task_key`, and what you found instead of forcing it through. If a blocker stops the task and you cannot work through it this iteration, publish `build.blocked` with `task_id`, `task_key`, and what is blocking.
 
       Do the work in this hat yourself instead of starting subagents, so the Critic reviews one coherent increment.
 
   critic:
     name: "🧪 Fresh-Eyes Critic"
-    description: "Independent reviewer that challenges the latest increment with fresh eyes."
+    description: "Independent reviewer that challenges each increment and advances the queue when it passes."
     triggers: ["review.ready"]
-    publishes: ["review.passed", "review.rejected"]
+    publishes: ["review.rejected", "tasks.ready", "plan.revise", "review.passed"]
     default_publishes: "review.rejected"
     effort: "high"
     instructions: |
       ## CRITIC MODE
 
-      You review the Builder's latest increment as an independent reviewer. You did not write it, so check things yourself instead of trusting the Builder's notes.
+      You review the Builder's latest increment as an independent reviewer, and you advance the queue when it passes. You did not write the code, so check things yourself instead of trusting the Builder's notes.
 
       Re-read the task with `ralph tools task show <task_id> --format json`, its backing `.code-task.md` if any, and `plan.md` and any `design.md` in the shared docs directory (the spec directory from the prompt, or `.ralph/specs/{task_name}/`). Then review the change for:
       - **Requirements:** does it meet this task's acceptance criteria, edge cases included, without quietly narrowing scope?
       - **Fit:** is there speculative code or complexity the task did not need? Does it read like the rest of the codebase?
       - **Behavior:** re-run the focused tests and any broader checks the change crosses into. When the target is runnable, exercise it for real: Playwright or similar for web flows, tmux for terminal and TUI flows, real commands or requests for CLIs and services. Run the changed path and at least one realistic failure or abuse case near it, and record what you ran and what you saw.
 
-      Publish `review.rejected` with concrete findings when you find a bug, a missed requirement, a likely regression, failing verification, or over-engineering worth fixing now. An issue worth fixing is worth fixing in this round, so a pass never carries "minor issues to fix later". Publish `review.passed` when the increment is correct for this task. Judge a scaffold task against its own criteria, not against later tasks. Both payloads carry the same `task_id` and `task_key`.
+      **Rejecting.** Publish `review.rejected` with `task_id`, `task_key`, and concrete findings when you find a bug, a missed requirement, a likely regression, failing verification, or over-engineering worth fixing now. Give each finding a severity and a reproduction:
+      - **blocking**: wrong behavior on realistic input, a safety or security check that can pass when it should fail, data loss, a failing check, or a missed acceptance criterion.
+      - **minor**: robustness on unrealistic input, a wrong error message where the outcome is still correct, naming, or style.
 
-      Point the Builder at fixes instead of rewriting the implementation yourself, unless the approach is fundamentally broken. If you find a durable repo-wide pattern, record it with `ralph tools memory add`.
+      Reject only for blocking findings. When the only findings are minor, pass the task and list them under `## Follow-ups` in `progress.md`, so they are tracked without another build-and-review round. Before rejecting a task you have already rejected, check that the earlier findings are fixed; if they are and only minor findings remain, pass it. Judge a scaffold task against its own criteria, not against later tasks. Point the Builder at fixes instead of rewriting the implementation yourself, unless the approach is fundamentally broken.
+
+      **Passing.** Close the task with `ralph tools task close <task_id>` and add it under `## Completed Tasks` in `progress.md`. Then decide what comes next and publish exactly one event:
+      - `plan.revise`, with what you learned, when this slice shows that the remaining tasks in `plan.md` are wrong: missing work, a task that no longer makes sense, or an order that no longer holds. The Planner revises the queue.
+      - `tasks.ready`, with the next ready task's `task_id`, `task_key`, and artifact path from `ralph tools task ready`, when the remaining plan still holds.
+      - `review.passed`, with a short summary for the Finalizer, when no tasks for this run remain.
+
+      If you find a durable repo-wide pattern, record it with `ralph tools memory add`.
 
   finalizer:
     name: "🏁 Finalizer"
-    description: "Final completion gate that decides whether to continue, repair, or finish."
+    description: "Final completion gate that runs once the queue is empty."
     triggers: ["review.passed"]
-    publishes: ["queue.advance", "finalization.failed", "LOOP_COMPLETE"]
+    publishes: ["finalization.failed", "LOOP_COMPLETE"]
     default_publishes: "finalization.failed"
     effort: "medium"
     instructions: |
       ## FINALIZER MODE
 
-      You decide whether the whole request is done, not just the latest increment.
+      You run when the Critic has passed the last task in the queue. You decide whether the whole request is done, not just the latest increment.
 
-      Read `context.md`, `plan.md`, `progress.md`, and `logs/` in the shared docs directory (the spec directory from the prompt, or `.ralph/specs/{task_name}/`), and the reviewed task from the payload. Then:
-      1. Close the reviewed task with `ralph tools task close <task_id>` if it is complete, or reopen it with `ralph tools task reopen <task_id>` if it is not.
-      2. Publish `queue.advance` if the current step still has open tasks or `plan.md` has steps left. The Planner creates the next step's tasks.
-      3. When every planned step is complete and no runtime tasks remain open, verify the whole result yourself: run the test suite and the strongest build, lint, or typecheck for the changed area, exercise the full user-facing path with a real harness (Playwright, tmux, or real CLI/API calls), and try one realistic failure path. For a PDD directory, also check that every `.code-task.md` under `.ralph/tasks/{task_name}/` is completed and that the design is met end to end.
+      Read `context.md`, `plan.md`, `progress.md`, and `logs/` in the shared docs directory (the spec directory from the prompt, or `.ralph/specs/{task_name}/`). Confirm that every runtime task for this run is closed (`ralph tools task list`). Then verify the whole result yourself: run the test suite and the strongest build, lint, or typecheck for the changed area, exercise the full user-facing path with a real harness (Playwright, tmux, or real CLI/API calls), and try one realistic failure path. For a PDD directory, also check that every `.code-task.md` under `.ralph/tasks/{task_name}/` is completed and that the design is met end to end.
 
-      Publish `finalization.failed` with the specific missing work when the request asked for more than was built, a required demo path was never exercised, acceptance criteria are only partly met, or the code works but the user-facing outcome is missing. Otherwise, once the checks pass, publish `LOOP_COMPLETE`. A finished run held open costs iterations without improving the result.
+      When the request asked for more than was built, a required demo path was never exercised, acceptance criteria are only partly met, or the code works but the user-facing outcome is missing, create a task for the missing work with `ralph tools task ensure` (key `code-assist:{task_name}:fix-NN:{slug}`) and publish `finalization.failed` with its `task_id`, `task_key`, and what is missing. Otherwise publish `LOOP_COMPLETE`. A finished run held open costs iterations without improving the result.

@@ -36,6 +36,12 @@ const PRESETS: &[EmbeddedPreset] = &[
         public: true,
     },
     EmbeddedPreset {
+        name: "code-assist-multimodel",
+        description: "code-assist with per-role models: Fable 5.2 plans, Opus 5.5 builds, reviews, and gates",
+        content: include_str!("../presets/code-assist-multimodel.yml"),
+        public: true,
+    },
+    EmbeddedPreset {
         name: "debug",
         description: "Bug investigation, root-cause analysis, and adversarial fix verification",
         content: include_str!("../presets/debug.yml"),
@@ -134,7 +140,7 @@ mod tests {
     #[test]
     fn test_list_presets_returns_all() {
         let presets = list_presets();
-        assert_eq!(presets.len(), 6, "Expected 6 public presets");
+        assert_eq!(presets.len(), 7, "Expected 7 public presets");
     }
 
     #[test]
@@ -208,7 +214,8 @@ mod tests {
     #[test]
     fn test_preset_names_returns_all_names() {
         let names = preset_names();
-        assert_eq!(names.len(), 6);
+        assert_eq!(names.len(), 7);
+        assert!(names.contains(&"code-assist-multimodel"));
         assert!(names.contains(&"autoresearch"));
         assert!(names.contains(&"debug"));
         assert!(names.contains(&"code-assist"));
@@ -285,17 +292,13 @@ mod tests {
             .hats
             .get("builder")
             .expect("builder hat should exist");
-        for trigger in [
-            "tasks.ready",
-            "review.rejected",
-            "finalization.failed",
-            "validation.failed",
-        ] {
-            assert!(builder.triggers.contains(&trigger.to_string()));
-        }
+        assert_eq!(
+            builder.triggers,
+            strings(&["tasks.ready", "review.rejected", "validation.failed"])
+        );
         assert_eq!(
             builder.publishes,
-            strings(&["review.ready", "build.blocked"])
+            strings(&["review.ready", "build.blocked", "plan.revise"])
         );
         assert_eq!(builder.default_publishes.as_deref(), Some("build.blocked"));
         assert!(builder.instructions.contains("`task_id`"));
@@ -313,9 +316,16 @@ mod tests {
 
         let critic = config.hats.get("critic").expect("critic hat should exist");
         assert_eq!(critic.triggers, strings(&["review.ready"]));
+        // The Critic advances the queue on a pass: next task, plan revision,
+        // or hand-off to the Validator once every implementation task is closed.
         assert_eq!(
             critic.publishes,
-            strings(&["review.passed", "review.rejected"])
+            strings(&[
+                "review.rejected",
+                "tasks.ready",
+                "plan.revise",
+                "implementation.ready"
+            ])
         );
         assert_eq!(critic.default_publishes.as_deref(), Some("review.rejected"));
         assert!(critic.instructions.contains("`task_id`"));
@@ -327,33 +337,14 @@ mod tests {
         );
         assert!(critic.instructions.contains("ralph tools memory add"));
 
-        let finalizer = config
-            .hats
-            .get("finalizer")
-            .expect("finalizer hat should exist");
-        assert_eq!(finalizer.triggers, strings(&["review.passed"]));
-        assert_eq!(
-            finalizer.publishes,
-            strings(&[
-                "queue.advance",
-                "implementation.ready",
-                "finalization.failed"
-            ])
-        );
-        assert_eq!(
-            finalizer.default_publishes.as_deref(),
-            Some("finalization.failed")
-        );
         assert!(
-            finalizer
+            critic
                 .instructions
                 .contains("ralph tools task close <task_id>")
         );
-        assert!(
-            finalizer
-                .instructions
-                .contains("ralph tools task reopen <task_id>")
-        );
+        assert!(critic.instructions.contains("ralph tools task ready"));
+        // No per-task finalizer: the Validator is the whole-implementation gate.
+        assert!(!config.hats.contains_key("finalizer"));
 
         let task_writer = config
             .hats
@@ -361,13 +352,14 @@ mod tests {
             .expect("task_writer hat should exist");
         assert_eq!(
             task_writer.triggers,
-            strings(&["plan.ready", "queue.advance"])
+            strings(&["plan.ready", "plan.revise"])
         );
         assert!(
             task_writer
                 .instructions
-                .contains("`pdd:{spec_name}:step-01:{task_slug}`")
+                .contains("`pdd:{spec_name}:step-NN:{task_slug}`")
         );
+        assert!(task_writer.instructions.contains("--blocked-by"));
 
         let validator = config
             .hats
@@ -408,7 +400,12 @@ mod tests {
             .hats
             .get("planner")
             .expect("planner hat should exist");
-        assert_eq!(planner.triggers, strings(&["build.start", "queue.advance"]));
+        assert_eq!(planner.triggers, strings(&["build.start", "plan.revise"]));
+        assert_eq!(
+            planner.publishes,
+            strings(&["tasks.ready", "review.passed"])
+        );
+        assert!(planner.instructions.contains("--blocked-by"));
         assert!(planner.instructions.contains(".ralph/specs/{task_name}/"));
         assert!(planner.instructions.contains("ralph tools task ensure"));
         assert!(
@@ -422,8 +419,8 @@ mod tests {
         assert!(planner.instructions.contains("plan.md"));
         assert!(planner.instructions.contains("progress.md"));
         assert!(!planner.instructions.contains("rough-idea.md"));
-        assert!(planner.instructions.contains("`## Current Step`"));
-        assert!(planner.instructions.contains("`## Active Wave`"));
+        assert!(planner.instructions.contains("`## Verification Notes`"));
+        assert!(planner.instructions.contains("`## Completed Tasks`"));
 
         let builder = config
             .hats
@@ -440,6 +437,29 @@ mod tests {
                 .instructions
                 .contains("ralph tools task start <task_id>")
         );
+        assert_eq!(
+            builder.publishes,
+            strings(&["review.ready", "build.blocked", "plan.revise"])
+        );
+
+        let critic = config.hats.get("critic").expect("critic hat should exist");
+        assert_eq!(
+            critic.publishes,
+            strings(&[
+                "review.rejected",
+                "tasks.ready",
+                "plan.revise",
+                "review.passed"
+            ])
+        );
+        assert!(
+            critic
+                .instructions
+                .contains("ralph tools task close <task_id>")
+        );
+        assert!(critic.instructions.contains("ralph tools task ready"));
+        // Minor findings are tracked as follow-ups instead of triggering another round.
+        assert!(critic.instructions.contains("## Follow-ups"));
 
         let finalizer = config
             .hats
@@ -447,24 +467,80 @@ mod tests {
             .expect("finalizer hat should exist");
         assert_eq!(
             finalizer.publishes,
-            strings(&["queue.advance", "finalization.failed", "LOOP_COMPLETE"])
-        );
-        assert!(
-            finalizer
-                .instructions
-                .contains("ralph tools task close <task_id>")
-        );
-        assert!(
-            finalizer
-                .instructions
-                .contains("ralph tools task reopen <task_id>")
+            strings(&["finalization.failed", "LOOP_COMPLETE"])
         );
         // Hats only see their own instructions, so the Finalizer needs the
         // shared docs path spelled out to find context.md / plan.md / progress.md.
         assert!(finalizer.instructions.contains(".ralph/specs/{task_name}/"));
         assert!(!finalizer.instructions.contains("task.complete"));
-        // Planner owns wave creation; the Finalizer must not ensure tasks.
-        assert!(!finalizer.instructions.contains("ralph tools task ensure"));
+        // Missing work found at the final gate becomes a task the Builder can pick up.
+        assert!(
+            finalizer
+                .instructions
+                .contains("`code-assist:{task_name}:fix-NN:{slug}`")
+        );
+    }
+
+    #[test]
+    fn test_code_assist_multimodel_matches_code_assist_events_with_per_hat_backends() {
+        use ralph_core::{EffortLevel, HatBackend};
+        let base = RalphConfig::parse_yaml(get_preset("code-assist").unwrap().content).unwrap();
+        let multi =
+            RalphConfig::parse_yaml(get_preset("code-assist-multimodel").unwrap().content).unwrap();
+
+        assert_eq!(
+            multi.event_loop.required_events,
+            base.event_loop.required_events
+        );
+        assert_eq!(
+            multi.event_loop.starting_event,
+            base.event_loop.starting_event
+        );
+        for (id, hat) in &base.hats {
+            let m = multi
+                .hats
+                .get(id)
+                .expect("multimodel keeps every code-assist hat");
+            assert_eq!(m.triggers, hat.triggers, "{id} triggers");
+            assert_eq!(m.publishes, hat.publishes, "{id} publishes");
+            assert_eq!(
+                m.default_publishes, hat.default_publishes,
+                "{id} default_publishes"
+            );
+        }
+
+        let backend = |id: &str| match multi.hats[id].backend.as_ref() {
+            Some(HatBackend::NamedWithArgs { backend_type, args }) => {
+                (backend_type.clone(), args.clone())
+            }
+            other => panic!("{id} should pin a backend with args, got {other:?}"),
+        };
+        assert_eq!(
+            backend("planner"),
+            ("claude".into(), strings(&["--model", "claude-fable-5-2"]))
+        );
+        assert_eq!(
+            backend("builder"),
+            ("claude".into(), strings(&["--model", "claude-opus-5-5"]))
+        );
+        assert_eq!(
+            backend("finalizer"),
+            ("claude".into(), strings(&["--model", "claude-opus-5-5"]))
+        );
+        assert_eq!(
+            backend("critic"),
+            ("claude".into(), strings(&["--model", "claude-opus-5-5"]))
+        );
+
+        for id in ["planner", "builder", "critic", "finalizer"] {
+            assert_eq!(
+                multi.hats[id].effort,
+                Some(EffortLevel::High),
+                "{id} effort"
+            );
+        }
+        // The Critic only rejects for blocking findings and tracks minor ones as follow-ups.
+        assert!(multi.hats["critic"].instructions.contains("## Follow-ups"));
     }
 
     #[test]

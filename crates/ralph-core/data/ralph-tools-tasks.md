@@ -42,7 +42,7 @@ ralph tools task show <task-id>
 - On your first iteration, check `ralph tools task ready` — prior iterations may have created tasks
 - Use `task ensure --key ...` when a task has a stable identity and may be recreated across fresh-context iterations
 - Use `task start` when you begin active work on a task
-- ONLY close tasks after verification (tests pass, build succeeds)
+- Close tasks only after verification (tests pass, build succeeds)
 - Use `task reopen` when more work remains after a failed review/finalization pass
 - Use `task fail` when the task is blocked and cannot be completed in the current iteration
 
