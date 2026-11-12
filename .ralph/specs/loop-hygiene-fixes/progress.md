@@ -172,7 +172,12 @@ they go through `CliExecutor` with no API call.
 - (minor, step 03) Copilot headless runs (`CopilotStreamJson`) still report zero metrics through
   `CliExecutor`. The spec only covers Claude; `copilot_stream.rs` already builds a `SessionResult` for the PTY.
 
+- (minor, step 03) A Claude stream cut off before its `result` line (timeout kill, crash) reports $0 and
+  zero tokens, even though assistant turns with `usage` were seen. Spent cost is unknown without the result
+  line, so repeated timeouts never count toward `max_cost_usd`. Critic probe: `step03-critic-probe.log` (trunc).
+
 ## Completed Tasks
 
 - Step 01: test event isolation (task-1794517658-4cd5): passed Critic review 2026-11-12
 - Step 02: auto-commit artifacts (task-1794517669-7ea9): passed Critic review 2026-11-12
+- Step 03: headless Claude metrics (task-1794517680-b2c6): passed Critic review 2026-11-12
