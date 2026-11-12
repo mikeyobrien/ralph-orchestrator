@@ -451,6 +451,8 @@ mod tests {
                 .contains("ralph tools task close <task_id>")
         );
         assert!(critic.instructions.contains("ralph tools task ready"));
+        // Minor findings are tracked as follow-ups instead of triggering another round.
+        assert!(critic.instructions.contains("## Follow-ups"));
 
         let finalizer = config
             .hats
