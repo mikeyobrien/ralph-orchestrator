@@ -536,6 +536,33 @@ impl EventLoop {
         self.state.record_iteration_tokens(hat, tokens);
     }
 
+    /// Writes an iteration's duration and token counts to the diagnostics
+    /// session's `performance.jsonl`. No-op unless diagnostics are enabled.
+    pub fn log_iteration_performance(
+        &self,
+        iteration: u32,
+        hat: &HatId,
+        duration_ms: u64,
+        input_tokens: u64,
+        output_tokens: u64,
+    ) {
+        use crate::diagnostics::PerformanceMetric;
+
+        self.diagnostics.log_performance(
+            iteration,
+            hat.as_str(),
+            PerformanceMetric::IterationDuration { duration_ms },
+        );
+        self.diagnostics.log_performance(
+            iteration,
+            hat.as_str(),
+            PerformanceMetric::TokenCount {
+                input: usize::try_from(input_tokens).unwrap_or(usize::MAX),
+                output: usize::try_from(output_tokens).unwrap_or(usize::MAX),
+            },
+        );
+    }
+
     /// Returns the path used for durable `--continue` loop state.
     pub fn loop_state_path(&self) -> PathBuf {
         self.loop_context

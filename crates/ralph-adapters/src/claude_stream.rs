@@ -4,6 +4,7 @@
 //! JSON events. This module provides typed Rust structures for deserializing
 //! and processing these events.
 
+use crate::stream_handler::SessionResult;
 use serde::{Deserialize, Serialize};
 
 /// Events emitted by Claude's `--output-format stream-json`.
@@ -90,6 +91,70 @@ pub struct Usage {
     pub cache_creation_input_tokens: u64,
     #[serde(default)]
     pub cache_read_input_tokens: u64,
+}
+
+/// Session metrics accumulated from Claude `stream-json` events.
+///
+/// Claude's `usage` reports the **live** input footprint per turn (input +
+/// cache_read + cache_creation), so summing across turns double-counts shared
+/// context. Input and cache fields keep the per-turn peak; only
+/// `output_tokens` is summed (new tokens produced per turn never overlap).
+///
+/// Shared by the PTY and headless CLI executors so both report the same
+/// numbers for the same stream.
+#[derive(Debug, Default)]
+pub struct ClaudeSessionMetrics {
+    peak_input: u64,
+    total_output: u64,
+    peak_cache_read: u64,
+    peak_cache_write: u64,
+}
+
+impl ClaudeSessionMetrics {
+    /// Folds one event into the running totals.
+    ///
+    /// Returns the session result when `event` is the terminal `Result` line.
+    /// `context_window` is the caller's resolved ceiling, passed through to
+    /// [`SessionResult::context_window`].
+    pub fn observe(
+        &mut self,
+        event: &ClaudeStreamEvent,
+        context_window: u64,
+    ) -> Option<SessionResult> {
+        match event {
+            ClaudeStreamEvent::Assistant { message } => {
+                if let Some(usage) = &message.usage {
+                    let turn_input = usage
+                        .input_tokens
+                        .saturating_add(usage.cache_creation_input_tokens)
+                        .saturating_add(usage.cache_read_input_tokens);
+                    self.peak_input = self.peak_input.max(turn_input);
+                    self.total_output = self.total_output.saturating_add(usage.output_tokens);
+                    self.peak_cache_read = self.peak_cache_read.max(usage.cache_read_input_tokens);
+                    self.peak_cache_write =
+                        self.peak_cache_write.max(usage.cache_creation_input_tokens);
+                }
+                None
+            }
+            ClaudeStreamEvent::Result {
+                duration_ms,
+                total_cost_usd,
+                num_turns,
+                is_error,
+            } => Some(SessionResult {
+                duration_ms: *duration_ms,
+                total_cost_usd: *total_cost_usd,
+                num_turns: *num_turns,
+                is_error: *is_error,
+                input_tokens: self.peak_input,
+                output_tokens: self.total_output,
+                cache_read_tokens: self.peak_cache_read,
+                cache_write_tokens: self.peak_cache_write,
+                context_window,
+            }),
+            ClaudeStreamEvent::System { .. } | ClaudeStreamEvent::User { .. } => None,
+        }
+    }
 }
 
 /// Parses NDJSON lines from Claude's stream output.
@@ -331,5 +396,80 @@ mod tests {
 
         // Verify valid UTF-8
         for _ in result.chars() {}
+    }
+
+    fn turn(input: u64, output: u64, cache_write: u64, cache_read: u64) -> ClaudeStreamEvent {
+        ClaudeStreamEvent::Assistant {
+            message: AssistantMessage {
+                content: vec![],
+                usage: Some(Usage {
+                    input_tokens: input,
+                    output_tokens: output,
+                    cache_creation_input_tokens: cache_write,
+                    cache_read_input_tokens: cache_read,
+                }),
+            },
+        }
+    }
+
+    fn result_event() -> ClaudeStreamEvent {
+        ClaudeStreamEvent::Result {
+            duration_ms: 1234,
+            total_cost_usd: 0.5,
+            num_turns: 3,
+            is_error: false,
+        }
+    }
+
+    #[test]
+    fn session_metrics_keep_input_and_cache_peaks_and_sum_output() {
+        let mut metrics = ClaudeSessionMetrics::default();
+
+        // Live footprint per turn: 1150, 4310, 211. Peaks must be retained
+        // when a later turn is smaller; only output sums.
+        assert!(metrics.observe(&turn(100, 20, 50, 1000), 0).is_none());
+        assert_eq!(metrics.peak_input, 1150);
+        assert!(metrics.observe(&turn(300, 40, 10, 4000), 0).is_none());
+        assert_eq!(metrics.peak_input, 4310);
+        assert!(metrics.observe(&turn(10, 5, 1, 200), 0).is_none());
+
+        let session = metrics
+            .observe(&result_event(), 200_000)
+            .expect("Result event must yield SessionResult");
+        assert_eq!(session.input_tokens, 4310);
+        assert_eq!(session.output_tokens, 65);
+        assert_eq!(session.cache_read_tokens, 4000);
+        assert_eq!(session.cache_write_tokens, 50);
+        assert_eq!(session.context_window, 200_000);
+        assert_eq!(session.duration_ms, 1234);
+        assert_eq!(session.num_turns, 3);
+        assert!(!session.is_error);
+        assert!((session.total_cost_usd - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn session_metrics_ignore_turns_without_usage_and_non_assistant_events() {
+        let mut metrics = ClaudeSessionMetrics::default();
+        let no_usage = ClaudeStreamEvent::Assistant {
+            message: AssistantMessage {
+                content: vec![ContentBlock::Text {
+                    text: "hi".to_string(),
+                }],
+                usage: None,
+            },
+        };
+        let system = ClaudeStreamEvent::System {
+            session_id: "s".to_string(),
+            model: "m".to_string(),
+            tools: vec![],
+        };
+
+        assert!(metrics.observe(&no_usage, 0).is_none());
+        assert!(metrics.observe(&system, 0).is_none());
+
+        let session = metrics.observe(&result_event(), 0).expect("result");
+        assert_eq!(session.input_tokens, 0);
+        assert_eq!(session.output_tokens, 0);
+        assert!((session.total_cost_usd - 0.5).abs() < f64::EPSILON);
     }
 }

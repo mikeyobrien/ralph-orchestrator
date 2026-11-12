@@ -3,6 +3,7 @@
 //! Executes prompts via CLI tools with real-time streaming output.
 //! Supports optional execution timeout with graceful SIGTERM termination.
 
+use crate::claude_stream::{ClaudeSessionMetrics, ClaudeStreamParser};
 #[cfg(test)]
 use crate::cli_backend::PromptMode;
 use crate::cli_backend::{CliBackend, OutputFormat};
@@ -43,8 +44,12 @@ pub struct ExecutionResult {
     /// for backends that keep using raw/normalized output (Claude stream-json,
     /// Copilot, Text).
     pub extracted_text: Option<String>,
-    /// Structured session result (metrics + merged `is_error`) for Pi-family
-    /// NDJSON backends. `None` for backends that do not parse a session.
+    /// Structured session result. For Pi-family NDJSON backends it carries
+    /// metrics plus the merged `is_error` and decides `success`. For Claude
+    /// stream-json it carries the `result` line's cost/turns and the per-turn
+    /// usage, metrics only (`success` stays exit-code based, and
+    /// `context_window` is `0`: the caller resolves it). `None` for other
+    /// backends, and for a Claude stream that never reached its `result` line.
     pub session_result: Option<SessionResult>,
     /// Protocol-mismatch error surfaced when a successful Pi-family process
     /// produced no usable signal or no recoverable assistant text. `None`
@@ -182,6 +187,11 @@ impl CliExecutor {
             } else {
                 "Pi"
             };
+        // Claude stream-json lines are still written raw and normalized by the
+        // loop; they are parsed here only to account the session's metrics.
+        let is_claude_stream = self.backend.output_format == OutputFormat::StreamJson;
+        let mut claude_metrics = ClaudeSessionMetrics::default();
+        let mut claude_session_result: Option<SessionResult> = None;
         let start_time = Instant::now();
 
         if let Some(duration) = timeout {
@@ -249,6 +259,12 @@ impl CliExecutor {
                         let mut handler = WriterStreamHandler::new(&mut output_writer);
                         family_state.process_line(&line, &mut handler, verbose);
                     } else {
+                        if is_claude_stream
+                            && let Some(event) = ClaudeStreamParser::parse_line(&line)
+                            && let Some(result) = claude_metrics.observe(&event, 0)
+                        {
+                            claude_session_result = Some(result);
+                        }
                         writeln!(output_writer, "{line}")?;
                     }
                     output_writer.flush()?;
@@ -295,7 +311,8 @@ impl CliExecutor {
 
         // Finalize the Pi-family session — applies the mandatory final-text
         // fallback and the two-case protocol-mismatch check — and surface the
-        // structured result. Non-Pi backends leave these fields `None`.
+        // structured result. Claude stream-json contributes metrics only; other
+        // backends leave these fields `None`.
         let (success, extracted_text, session_result, protocol_error) = if is_pi_family_stream {
             let process_success = status.success() && !timed_out;
             // Snapshot the delta-only text before `finalize` applies the
@@ -322,7 +339,12 @@ impl CliExecutor {
                 summary.protocol_error,
             )
         } else {
-            (status.success() && !timed_out, None, None, None)
+            (
+                status.success() && !timed_out,
+                None,
+                claude_session_result,
+                None,
+            )
         };
 
         Ok(ExecutionResult {
@@ -823,6 +845,77 @@ mod tests {
         );
         assert!(result.success, "Claude stream should exit successfully");
         assert!(result.output.contains(r#"{"type":"result""#));
+    }
+
+    fn claude_replay_backend(stream: &str) -> CliBackend {
+        CliBackend {
+            command: "sh".to_string(),
+            args: vec![
+                "-c".to_string(),
+                "cat >/dev/null; cat \"$0\"".to_string(),
+                stream.to_string(),
+            ],
+            prompt_mode: PromptMode::Stdin,
+            prompt_flag: None,
+            output_format: OutputFormat::StreamJson,
+            env_vars: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_claude_stream_reports_session_metrics() {
+        // Headless (`--autonomous`) Claude runs go through this executor. The
+        // stream's result line and per-turn usage must come back as a
+        // SessionResult with the same numbers the PTY executor reports, or the
+        // loop records $0 and `max_cost_usd` can never fire.
+        let fixture = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/claude_stream_peak.jsonl"
+        );
+        let executor = CliExecutor::new(claude_replay_backend(fixture));
+        let mut written = Vec::new();
+
+        let result = executor
+            .execute("ignored", &mut written, None, false)
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        let session = result
+            .session_result
+            .expect("Claude stream with a result line must produce a SessionResult");
+        assert!((session.total_cost_usd - 0.5).abs() < f64::EPSILON);
+        assert_eq!(session.num_turns, 3);
+        assert_eq!(session.duration_ms, 1234);
+        assert!(!session.is_error);
+        assert_eq!(session.input_tokens, 4310, "peak per-turn live context");
+        assert_eq!(session.output_tokens, 65, "output summed across turns");
+        assert_eq!(session.cache_read_tokens, 4000);
+        assert_eq!(session.cache_write_tokens, 50);
+        // Claude text keeps going through the loop's own normalizer, and the
+        // writer still gets the raw stream lines, as before.
+        assert!(result.extracted_text.is_none());
+        assert_eq!(
+            String::from_utf8(written).unwrap(),
+            std::fs::read_to_string(fixture).unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_claude_stream_without_result_has_no_session_metrics() {
+        let dir = tempfile::tempdir().unwrap();
+        let stream = dir.path().join("cut-off.jsonl");
+        std::fs::write(
+            &stream,
+            "{\"type\":\"assistant\",\"message\":{\"content\":[],\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}}\n",
+        )
+        .unwrap();
+        let executor = CliExecutor::new(claude_replay_backend(stream.to_str().unwrap()));
+
+        let result = executor.execute_capture("ignored").await.unwrap();
+
+        assert!(result.success);
+        assert!(result.session_result.is_none());
     }
 
     #[tokio::test]

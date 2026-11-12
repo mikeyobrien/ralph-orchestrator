@@ -1911,37 +1911,37 @@ pub async fn run_loop_impl(
                 let result = executor
                     .execute(&prompt, stdout(), timeout, verbosity == Verbosity::Verbose)
                     .await?;
-                // Pi-family backends carry pre-parsed assistant text + metrics
-                // in the structured result (the processor owns extraction,
-                // including the mandatory final-text fallback). Prefer those over
-                // re-parsing the raw stream; other backends keep normalizing.
-                let (output, metrics) = match (&result.extracted_text, &result.session_result) {
-                    (Some(text), Some(session)) => (text.clone(), Some(session.clone())),
-                    _ => (
-                        normalize_cli_output_for_parsing(
-                            effective_backend.output_format,
-                            &result.output,
-                        ),
-                        None,
+                // Pi-family backends carry pre-parsed assistant text (the
+                // processor owns extraction, including the mandatory final-text
+                // fallback); other backends keep normalizing the raw stream.
+                // Metrics come from the structured result whenever the executor
+                // parsed one (Pi-family and Claude stream-json).
+                let output = match &result.extracted_text {
+                    Some(text) => text.clone(),
+                    None => normalize_cli_output_for_parsing(
+                        effective_backend.output_format,
+                        &result.output,
                     ),
                 };
+                let metrics = result.session_result.as_ref();
                 Ok((
                     ExecutionOutcome {
                         output,
                         success: result.success,
                         post_event_grace_expired: result.post_event_grace_expired,
                         termination: None,
-                        total_cost_usd: metrics.as_ref().map_or(0.0, |m| m.total_cost_usd),
-                        input_tokens: metrics.as_ref().map_or(0, |m| m.input_tokens),
-                        output_tokens: metrics.as_ref().map_or(0, |m| m.output_tokens),
-                        cache_read_tokens: metrics.as_ref().map_or(0, |m| m.cache_read_tokens),
-                        cache_write_tokens: metrics.as_ref().map_or(0, |m| m.cache_write_tokens),
+                        total_cost_usd: metrics.map_or(0.0, |m| m.total_cost_usd),
+                        input_tokens: metrics.map_or(0, |m| m.input_tokens),
+                        output_tokens: metrics.map_or(0, |m| m.output_tokens),
+                        cache_read_tokens: metrics.map_or(0, |m| m.cache_read_tokens),
+                        cache_write_tokens: metrics.map_or(0, |m| m.cache_write_tokens),
                         context_window: context_window_for_backend(
                             &config,
                             &backend_name_for_timeout,
                         ),
-                        context_tokens: 0,
-                        num_turns: metrics.as_ref().map_or(0, |m| m.num_turns),
+                        // Peak per-turn live context, as the PTY path records it.
+                        context_tokens: metrics.map_or(0, |m| m.input_tokens),
+                        num_turns: metrics.map_or(0, |m| m.num_turns),
                     },
                     None,
                 ))
@@ -2107,6 +2107,12 @@ pub async fn run_loop_impl(
             let _ = tx.try_send(end_event);
         }
 
+        // Cost must be added before termination checks (in `process_output`
+        // below) so max_cost applies across iterations and across --continue
+        // resumes, and before the footer so its running total includes this
+        // iteration.
+        event_loop.add_cost(outcome.total_cost_usd);
+
         // Per-iteration footer for --no-tui: one line with budget/cost/elapsed
         // so tailing agents can catch runaway loops without parsing events.
         if tui_state.is_none() && !enable_rpc {
@@ -2141,10 +2147,14 @@ pub async fn run_loop_impl(
 
         // Update LoopState peak context-token tracking (spec §11).
         event_loop.record_iteration_tokens(&hat_id, outcome.context_tokens);
+        event_loop.log_iteration_performance(
+            iteration,
+            &hat_id,
+            iteration_duration_ms,
+            outcome.input_tokens,
+            outcome.output_tokens,
+        );
 
-        // Process output; cost must be added before termination checks so
-        // max_cost applies across iterations and across --continue resumes.
-        event_loop.add_cost(outcome.total_cost_usd);
         let termination = event_loop.process_output(&hat_id, &output, success);
 
         // A script that failed after emitting is not trusted: drop what it
