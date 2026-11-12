@@ -2,6 +2,10 @@
 
 ## Patterns
 
+### mem-1794520647-8bf2
+> Claude stream context window: ClaudeSessionMetrics reads result-line modelUsage.<init model>.contextWindow (lenient deserializer, since that line also carries cost); loop_runner::reported_or_configured_context_window prefers a reported window over resolve_context_window_for_backend on both PTY and headless paths. When another backend starts reporting a window, set SessionResult.context_window > 0 and the loop picks it up.
+<!-- tags: metrics, cli | created: 2026-11-12 -->
+
 ### mem-1794519940-12fe
 > When a ralph-cli integration test needs a headless Claude iteration without an API call, use backend: claude with command: pointing at a script that cats a stream-json fixture, and run 'ralph run --autonomous' (not --no-tui, which conflicts with --autonomous); see tests/integration_headless_metrics.rs. Claude usage aggregation for both executors lives in claude_stream.rs ClaudeSessionMetrics.
 <!-- tags: testing, metrics, cli | created: 2026-11-12 -->

@@ -177,6 +177,24 @@ The PTY path carries it on the new `PtyExecutionResult.context_window`; the head
 - clippy `-D warnings`: pass after replacing one `Default::default()` (`logs/step04-clippy.log`);
   `cargo fmt --all --check`: pass. No preset or `crates/ralph-core/data/` change, so no embedded-files sync.
 
+#### Critic review — step 04 (passed)
+
+- `cargo test -p ralph-core` 1062 passed, `-p ralph-adapters` 370 passed, `-p ralph-cli -- --test-threads=1` 675
+  passed, 0 failed (`logs/step04-critic-test-ralph-{core,adapters,cli}.log`). clippy `-D warnings` pass
+  (`logs/step04-critic-clippy.log`), `cargo fmt --all --check` pass. Live events file 17 lines, no
+  `test.topic`/`t.x`/`t.y`.
+- Real shape check: a live `claude -p --output-format stream-json --verbose --model claude-haiku-5-5` run
+  (`logs/step04-critic-real-claude-stream.jsonl`) has init `model: claude-haiku-5-5` and result
+  `modelUsage.claude-haiku-5-5.contextWindow: 1000000`, matching what the parser reads.
+- Real binary (`logs/step04-critic-probe.{sh,log}`): that stream replayed through `ralph run --autonomous`
+  gives `context_window: 1000000` with and without `context_window_tokens: 128000`; with `modelUsage` removed
+  it gives 200000 (default) or 128000 (override); `{"m":null}` gives 200000 and keeps cost; an init model with
+  no matching key (`claude-haiku-5-5[1m]`) still gives 1000000 through the max fallback.
+- Independent mutation (`logs/step04-critic-mutation.log`): forcing `reported_context_window` to `None` fails
+  both claude_stream window tests, the PTY test, and the headless integration test (200000 vs 1000000).
+- PTY/ACP: the executor fallback is the same `context_window_for_backend` value the loop runner passes as
+  `configured`, so a PTY result that reports only the fallback can't outrank an override.
+
 ## Follow-ups
 
 - (minor) `ralph_command_does_not_pass_loop_env_to_the_child` proves nothing when the test process has
@@ -214,3 +232,4 @@ The PTY path carries it on the new `PtyExecutionResult.context_window`; the head
 - Step 01: test event isolation (task-1794517658-4cd5): passed Critic review 2026-11-12
 - Step 02: auto-commit artifacts (task-1794517669-7ea9): passed Critic review 2026-11-12
 - Step 03: headless Claude metrics (task-1794517680-b2c6): passed Critic review 2026-11-12
+- Step 04: stream context window (task-1794517688-dcbe): passed Critic review 2026-11-12
