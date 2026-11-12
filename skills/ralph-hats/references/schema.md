@@ -65,6 +65,7 @@ Each hat should use the fields Ralph supports today:
 - `extra_instructions`
 - `backend`
 - `backend_args`
+- `effort`
 - `max_activations`
 - `disallowed_tools`
 
@@ -73,6 +74,27 @@ Notes:
 - `description` is required in practice and should never be empty.
 - `default_publishes` is a single string, not a list.
 - `backend_args` also accepts the shorthand key `args`.
+- `effort` is one of `low`, `medium`, `high`, `xhigh`, `max`, and falls back to
+  `cli.effort` in the core config. It reaches Claude as `--effort`; other
+  backends ignore it.
+
+Per-hat model and effort:
+
+```yaml
+hats:
+  builder:
+    backend:
+      type: "claude"
+      args: ["--model", "claude-opus-5-5"]
+    effort: "high"
+  critic:
+    backend:
+      type: "codex"
+      args: ["-m", "<codex-model-id>", "-c", 'model_reasoning_effort="high"']
+```
+
+Codex takes effort through its own `-c model_reasoning_effort=...` flag, so
+`effort` is not set on Codex hats.
 
 ## Reserved Trigger Rule
 

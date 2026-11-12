@@ -1,6 +1,6 @@
 ---
 name: ralph-loop
-description: Run, monitor, resume, merge, and debug Ralph loops. Use this skill whenever the user asks to operate `ralph run` or `ralph loops`, inspect loop state, recover suspended loops, analyze diagnostics, or unblock merge queue issues.
+description: "Operate Ralph loops: run, monitor, measure, resume, merge, debug. Use for `ralph run` or `ralph loops`, headless runs, A/B comparing hat collections, suspended loops, or merge queue issues."
 ---
 
 # Ralph Loop
@@ -14,6 +14,7 @@ Use this skill to operate Ralph loops from the outside.
 - Resuming a hook-suspended loop
 - Merging or discarding completed worktree loops
 - Debugging unexpected loop behavior with current diagnostics files
+- Running a loop headlessly, measuring its cost and iterations, or A/B comparing two hat collections
 
 ## Workflow
 
@@ -29,6 +30,9 @@ Use this skill to operate Ralph loops from the outside.
    `merge`, `process`, `retry`, or `discard` as appropriate.
 6. Use diagnostics when you need detailed evidence about hats, events, tool
    calls, parse errors, or performance.
+7. For an unattended run, or to report what a run did and cost, follow
+   `references/headless-runs.md`: isolate the workspace, launch with
+   `--autonomous`, watch the events file, and measure from the run log.
 
 ## Guardrails
 
@@ -45,3 +49,4 @@ Use this skill to operate Ralph loops from the outside.
 
 - For command recipes and operator flows: `references/commands.md`
 - For diagnostics files and suspend-state details: `references/diagnostics.md`
+- For headless launch, monitoring, measuring, A/B comparison, and when to step in: `references/headless-runs.md`

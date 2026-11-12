@@ -1,6 +1,6 @@
 ---
 name: ralph-hats
-description: Create, inspect, validate, explain, and improve Ralph hat collections. Use this skill whenever the user asks to make or refine a `.ralph/hats/*.yml` workflow, debug hat routing, explain event topology, or tune a multi-hat Ralph run.
+description: Create, validate, explain, and improve Ralph hat collections. Use when writing or refining `.ralph/hats/*.yml`, debugging hat routing, explaining event topology, or tuning a multi-hat run.
 ---
 
 # Ralph Hats
@@ -30,11 +30,15 @@ collections.
 3. Keep the hats file focused on hats-only data. Leave runtime limits and other
    core config in the main config file.
 4. Validate with `ralph hats validate`.
-5. Visualize topology with `ralph hats graph` when the event flow is not
-   trivial.
-6. Use `ralph hats show <hat>` when you need to inspect one hat's effective
+5. Check the collection against every item in `references/design.md`
+   (dangling topics, per-hat paths, bookkeeping hats, reviewer severity,
+   model and effort per role) and fix or explain each miss.
+6. Visualize topology with `ralph hats graph` when the event flow is not
+   trivial. `--format mermaid` renders locally; the default and `--format
+   ascii` ask the configured backend to draw it, which takes a model call.
+7. Use `ralph hats show <hat>` when you need to inspect one hat's effective
    configuration.
-7. When the user wants stronger confidence, run a targeted `ralph run -c ... -H
+8. When the user wants stronger confidence, run a targeted `ralph run -c ... -H
    ... -p "..."` exercise or provide the exact test command.
 
 ## Guardrails
@@ -63,3 +67,4 @@ collections.
 - For current hats schema and supported fields: `references/schema.md`
 - For command recipes and validation workflow: `references/commands.md`
 - For pattern and file examples: `references/examples.md`
+- For design checks drawn from measured runs: `references/design.md`

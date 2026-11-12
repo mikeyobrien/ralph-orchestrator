@@ -86,7 +86,7 @@ impl HatInfo {
         let mut guide = String::from(
             "### Event Publishing Guide\n\n\
              When your work is complete, publish exactly one event with `ralph emit \"<topic>\" \"<brief summary>\"`.\n\
-             A plain-language summary does not publish anything.\n\
+             A plain-language summary does not publish anything. A successful `ralph emit` prints `Event emitted: <topic>`, so check for that line before you finish.\n\
              Publishing hands off to the next hat and starts a fresh iteration with clear context.\n\n\
              When you publish:\n",
         );
