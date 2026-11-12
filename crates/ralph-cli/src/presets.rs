@@ -285,17 +285,13 @@ mod tests {
             .hats
             .get("builder")
             .expect("builder hat should exist");
-        for trigger in [
-            "tasks.ready",
-            "review.rejected",
-            "finalization.failed",
-            "validation.failed",
-        ] {
-            assert!(builder.triggers.contains(&trigger.to_string()));
-        }
+        assert_eq!(
+            builder.triggers,
+            strings(&["tasks.ready", "review.rejected", "validation.failed"])
+        );
         assert_eq!(
             builder.publishes,
-            strings(&["review.ready", "build.blocked"])
+            strings(&["review.ready", "build.blocked", "plan.revise"])
         );
         assert_eq!(builder.default_publishes.as_deref(), Some("build.blocked"));
         assert!(builder.instructions.contains("`task_id`"));
@@ -313,9 +309,16 @@ mod tests {
 
         let critic = config.hats.get("critic").expect("critic hat should exist");
         assert_eq!(critic.triggers, strings(&["review.ready"]));
+        // The Critic advances the queue on a pass: next task, plan revision,
+        // or hand-off to the Validator once every implementation task is closed.
         assert_eq!(
             critic.publishes,
-            strings(&["review.passed", "review.rejected"])
+            strings(&[
+                "review.rejected",
+                "tasks.ready",
+                "plan.revise",
+                "implementation.ready"
+            ])
         );
         assert_eq!(critic.default_publishes.as_deref(), Some("review.rejected"));
         assert!(critic.instructions.contains("`task_id`"));
@@ -327,33 +330,14 @@ mod tests {
         );
         assert!(critic.instructions.contains("ralph tools memory add"));
 
-        let finalizer = config
-            .hats
-            .get("finalizer")
-            .expect("finalizer hat should exist");
-        assert_eq!(finalizer.triggers, strings(&["review.passed"]));
-        assert_eq!(
-            finalizer.publishes,
-            strings(&[
-                "queue.advance",
-                "implementation.ready",
-                "finalization.failed"
-            ])
-        );
-        assert_eq!(
-            finalizer.default_publishes.as_deref(),
-            Some("finalization.failed")
-        );
         assert!(
-            finalizer
+            critic
                 .instructions
                 .contains("ralph tools task close <task_id>")
         );
-        assert!(
-            finalizer
-                .instructions
-                .contains("ralph tools task reopen <task_id>")
-        );
+        assert!(critic.instructions.contains("ralph tools task ready"));
+        // No per-task finalizer: the Validator is the whole-implementation gate.
+        assert!(!config.hats.contains_key("finalizer"));
 
         let task_writer = config
             .hats
@@ -361,13 +345,14 @@ mod tests {
             .expect("task_writer hat should exist");
         assert_eq!(
             task_writer.triggers,
-            strings(&["plan.ready", "queue.advance"])
+            strings(&["plan.ready", "plan.revise"])
         );
         assert!(
             task_writer
                 .instructions
-                .contains("`pdd:{spec_name}:step-01:{task_slug}`")
+                .contains("`pdd:{spec_name}:step-NN:{task_slug}`")
         );
+        assert!(task_writer.instructions.contains("--blocked-by"));
 
         let validator = config
             .hats
@@ -408,7 +393,12 @@ mod tests {
             .hats
             .get("planner")
             .expect("planner hat should exist");
-        assert_eq!(planner.triggers, strings(&["build.start", "queue.advance"]));
+        assert_eq!(planner.triggers, strings(&["build.start", "plan.revise"]));
+        assert_eq!(
+            planner.publishes,
+            strings(&["tasks.ready", "review.passed"])
+        );
+        assert!(planner.instructions.contains("--blocked-by"));
         assert!(planner.instructions.contains(".ralph/specs/{task_name}/"));
         assert!(planner.instructions.contains("ralph tools task ensure"));
         assert!(
@@ -422,8 +412,8 @@ mod tests {
         assert!(planner.instructions.contains("plan.md"));
         assert!(planner.instructions.contains("progress.md"));
         assert!(!planner.instructions.contains("rough-idea.md"));
-        assert!(planner.instructions.contains("`## Current Step`"));
-        assert!(planner.instructions.contains("`## Active Wave`"));
+        assert!(planner.instructions.contains("`## Verification Notes`"));
+        assert!(planner.instructions.contains("`## Completed Tasks`"));
 
         let builder = config
             .hats
@@ -440,6 +430,27 @@ mod tests {
                 .instructions
                 .contains("ralph tools task start <task_id>")
         );
+        assert_eq!(
+            builder.publishes,
+            strings(&["review.ready", "build.blocked", "plan.revise"])
+        );
+
+        let critic = config.hats.get("critic").expect("critic hat should exist");
+        assert_eq!(
+            critic.publishes,
+            strings(&[
+                "review.rejected",
+                "tasks.ready",
+                "plan.revise",
+                "review.passed"
+            ])
+        );
+        assert!(
+            critic
+                .instructions
+                .contains("ralph tools task close <task_id>")
+        );
+        assert!(critic.instructions.contains("ralph tools task ready"));
 
         let finalizer = config
             .hats
@@ -447,24 +458,18 @@ mod tests {
             .expect("finalizer hat should exist");
         assert_eq!(
             finalizer.publishes,
-            strings(&["queue.advance", "finalization.failed", "LOOP_COMPLETE"])
-        );
-        assert!(
-            finalizer
-                .instructions
-                .contains("ralph tools task close <task_id>")
-        );
-        assert!(
-            finalizer
-                .instructions
-                .contains("ralph tools task reopen <task_id>")
+            strings(&["finalization.failed", "LOOP_COMPLETE"])
         );
         // Hats only see their own instructions, so the Finalizer needs the
         // shared docs path spelled out to find context.md / plan.md / progress.md.
         assert!(finalizer.instructions.contains(".ralph/specs/{task_name}/"));
         assert!(!finalizer.instructions.contains("task.complete"));
-        // Planner owns wave creation; the Finalizer must not ensure tasks.
-        assert!(!finalizer.instructions.contains("ralph tools task ensure"));
+        // Missing work found at the final gate becomes a task the Builder can pick up.
+        assert!(
+            finalizer
+                .instructions
+                .contains("`code-assist:{task_name}:fix-NN:{slug}`")
+        );
     }
 
     #[test]
