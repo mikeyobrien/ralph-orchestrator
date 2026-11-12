@@ -47,8 +47,9 @@ pub struct ExecutionResult {
     /// Structured session result. For Pi-family NDJSON backends it carries
     /// metrics plus the merged `is_error` and decides `success`. For Claude
     /// stream-json it carries the `result` line's cost/turns and the per-turn
-    /// usage, metrics only (`success` stays exit-code based, and
-    /// `context_window` is `0`: the caller resolves it). `None` for other
+    /// usage, metrics only (`success` stays exit-code based). Its
+    /// `context_window` is the one the result line's `modelUsage` reports, or
+    /// `0` when it reports none and the caller resolves it. `None` for other
     /// backends, and for a Claude stream that never reached its `result` line.
     pub session_result: Option<SessionResult>,
     /// Protocol-mismatch error surfaced when a successful Pi-family process

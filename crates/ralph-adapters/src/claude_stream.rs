@@ -6,6 +6,7 @@
 
 use crate::stream_handler::SessionResult;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// Events emitted by Claude's `--output-format stream-json`.
 ///
@@ -34,7 +35,51 @@ pub enum ClaudeStreamEvent {
         total_cost_usd: f64,
         num_turns: u32,
         is_error: bool,
+        /// Per-model usage keyed by model id; carries each model's context window.
+        #[serde(
+            default,
+            rename = "modelUsage",
+            deserialize_with = "lenient_model_usage",
+            skip_serializing_if = "BTreeMap::is_empty"
+        )]
+        model_usage: BTreeMap<String, ModelUsage>,
     },
+}
+
+/// One model's entry in a `result` line's `modelUsage` map.
+///
+/// Only the context window is read; token and cost totals come from the
+/// per-turn `usage` and `total_cost_usd`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct ModelUsage {
+    /// The model's context window in tokens (`0` when not reported).
+    #[serde(default, rename = "contextWindow")]
+    pub context_window: u64,
+}
+
+/// Reads `modelUsage` without ever failing the `result` line it sits on.
+///
+/// The line also carries the session's cost and turns, so an unexpected shape
+/// here (`null`, a non-object, a non-integer window) yields no window rather
+/// than a parse error that would drop those too.
+fn lenient_model_usage<'de, D>(deserializer: D) -> Result<BTreeMap<String, ModelUsage>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    let Some(models) = value.as_object() else {
+        return Ok(BTreeMap::new());
+    };
+    Ok(models
+        .iter()
+        .map(|(model, usage)| {
+            let context_window = usage
+                .get("contextWindow")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            (model.clone(), ModelUsage { context_window })
+        })
+        .collect())
 }
 
 /// Message content from Claude's assistant responses.
@@ -108,18 +153,21 @@ pub struct ClaudeSessionMetrics {
     total_output: u64,
     peak_cache_read: u64,
     peak_cache_write: u64,
+    /// The session's model, from the `system` init line.
+    model: Option<String>,
 }
 
 impl ClaudeSessionMetrics {
     /// Folds one event into the running totals.
     ///
     /// Returns the session result when `event` is the terminal `Result` line.
-    /// `context_window` is the caller's resolved ceiling, passed through to
-    /// [`SessionResult::context_window`].
+    /// [`SessionResult::context_window`] is the window the result line reports
+    /// for the session's model, or `fallback_context_window` (the caller's
+    /// configured ceiling) when the stream reports none.
     pub fn observe(
         &mut self,
         event: &ClaudeStreamEvent,
-        context_window: u64,
+        fallback_context_window: u64,
     ) -> Option<SessionResult> {
         match event {
             ClaudeStreamEvent::Assistant { message } => {
@@ -141,6 +189,7 @@ impl ClaudeSessionMetrics {
                 total_cost_usd,
                 num_turns,
                 is_error,
+                model_usage,
             } => Some(SessionResult {
                 duration_ms: *duration_ms,
                 total_cost_usd: *total_cost_usd,
@@ -150,10 +199,31 @@ impl ClaudeSessionMetrics {
                 output_tokens: self.total_output,
                 cache_read_tokens: self.peak_cache_read,
                 cache_write_tokens: self.peak_cache_write,
-                context_window,
+                context_window: self
+                    .reported_context_window(model_usage)
+                    .unwrap_or(fallback_context_window),
             }),
-            ClaudeStreamEvent::System { .. } | ClaudeStreamEvent::User { .. } => None,
+            ClaudeStreamEvent::System { model, .. } => {
+                self.model = Some(model.clone());
+                None
+            }
+            ClaudeStreamEvent::User { .. } => None,
         }
+    }
+
+    /// The context window `modelUsage` reports for the session's model.
+    ///
+    /// Helper models (subagents, title generation) can appear alongside the
+    /// session's own model, so the init line's model is preferred. Without a
+    /// match, the largest reported window is used. `None` when no entry
+    /// reports one.
+    fn reported_context_window(&self, model_usage: &BTreeMap<String, ModelUsage>) -> Option<u64> {
+        let window = |usage: &ModelUsage| Some(usage.context_window).filter(|&w| w > 0);
+        self.model
+            .as_ref()
+            .and_then(|model| model_usage.get(model))
+            .and_then(window)
+            .or_else(|| model_usage.values().filter_map(window).max())
     }
 }
 
@@ -330,6 +400,7 @@ mod tests {
                 total_cost_usd,
                 num_turns,
                 is_error,
+                ..
             } => {
                 assert_eq!(duration_ms, 5000);
                 assert!((total_cost_usd - 0.02).abs() < f64::EPSILON);
@@ -418,6 +489,7 @@ mod tests {
             total_cost_usd: 0.5,
             num_turns: 3,
             is_error: false,
+            model_usage: BTreeMap::new(),
         }
     }
 
@@ -471,5 +543,101 @@ mod tests {
         assert_eq!(session.input_tokens, 0);
         assert_eq!(session.output_tokens, 0);
         assert!((session.total_cost_usd - 0.5).abs() < f64::EPSILON);
+    }
+
+    fn parsed(line: &str) -> ClaudeStreamEvent {
+        ClaudeStreamParser::parse_line(line).unwrap_or_else(|| panic!("line must parse: {line}"))
+    }
+
+    /// The session's context window, from a stream whose init line names
+    /// `system_model` (if any) and whose result line carries `model_usage`.
+    fn window_from_stream(system_model: Option<&str>, model_usage: &str, fallback: u64) -> u64 {
+        let mut metrics = ClaudeSessionMetrics::default();
+        if let Some(model) = system_model {
+            let init = format!(
+                r#"{{"type":"system","subtype":"init","session_id":"s","model":"{model}","tools":[]}}"#
+            );
+            assert!(metrics.observe(&parsed(&init), fallback).is_none());
+        }
+        let result = format!(
+            r#"{{"type":"result","subtype":"success","is_error":false,"duration_ms":10,"num_turns":1,"total_cost_usd":0.1{model_usage}}}"#
+        );
+        metrics
+            .observe(&parsed(&result), fallback)
+            .expect("result line yields SessionResult")
+            .context_window
+    }
+
+    #[test]
+    fn session_metrics_take_context_window_from_result_model_usage() {
+        let usage = r#","modelUsage":{"claude-opus-5-5":{"inputTokens":20,"outputTokens":610,"costUSD":0.1,"contextWindow":1000000}}"#;
+
+        // The stream's figure wins over the caller's 200000 default, with or
+        // without an init line naming the model.
+        assert_eq!(
+            window_from_stream(Some("claude-opus-5-5"), usage, 200_000),
+            1_000_000
+        );
+        assert_eq!(window_from_stream(None, usage, 200_000), 1_000_000);
+    }
+
+    #[test]
+    fn session_metrics_prefer_the_session_models_context_window() {
+        // A helper model (here with the larger window) also shows up in
+        // modelUsage; the session's own model, named on the init line, decides.
+        let usage = r#","modelUsage":{"claude-haiku-5-5":{"costUSD":0.01,"contextWindow":1000000},"claude-sonnet-5-5":{"costUSD":0.09,"contextWindow":400000}}"#;
+        assert_eq!(
+            window_from_stream(Some("claude-sonnet-5-5"), usage, 123),
+            400_000
+        );
+
+        // Init model absent from modelUsage: take the largest reported window.
+        assert_eq!(
+            window_from_stream(Some("claude-other"), usage, 123),
+            1_000_000
+        );
+    }
+
+    #[test]
+    fn malformed_model_usage_does_not_cost_the_result_line() {
+        // An unexpected modelUsage shape must not fail the whole result line,
+        // which would drop its cost and turns along with the window.
+        for usage in [
+            r#","modelUsage":null"#,
+            r#","modelUsage":[]"#,
+            r#","modelUsage":{"m":null}"#,
+            r#","modelUsage":{"m":{"contextWindow":"1000000"}}"#,
+            r#","modelUsage":{"m":{"contextWindow":-1}}"#,
+        ] {
+            let line = format!(
+                r#"{{"type":"result","is_error":false,"duration_ms":10,"num_turns":1,"total_cost_usd":0.25{usage}}}"#
+            );
+            let session = ClaudeSessionMetrics::default()
+                .observe(&parsed(&line), 200_000)
+                .expect("result line yields SessionResult");
+            assert!(
+                (session.total_cost_usd - 0.25).abs() < f64::EPSILON,
+                "{usage}"
+            );
+            assert_eq!(session.context_window, 200_000, "{usage}");
+        }
+    }
+
+    #[test]
+    fn session_metrics_fall_back_when_the_stream_reports_no_context_window() {
+        // No modelUsage, an empty one, or entries without contextWindow.
+        assert_eq!(window_from_stream(Some("m"), "", 200_000), 200_000);
+        assert_eq!(
+            window_from_stream(Some("m"), r#","modelUsage":{}"#, 200_000),
+            200_000
+        );
+        assert_eq!(
+            window_from_stream(Some("m"), r#","modelUsage":{"m":{"costUSD":0.1}}"#, 0),
+            0
+        );
+        assert_eq!(
+            window_from_stream(Some("m"), r#","modelUsage":{"m":{"contextWindow":0}}"#, 7),
+            7
+        );
     }
 }

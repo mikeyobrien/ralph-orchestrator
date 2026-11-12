@@ -78,6 +78,10 @@ pub struct PtyExecutionResult {
     pub protocol_error: Option<String>,
     /// Number of turns reported by the session (0 when unknown).
     pub num_turns: u32,
+    /// Context window from the session result: the stream-reported window
+    /// when the backend reports one, otherwise the executor's configured
+    /// ceiling. `0` when the session produced no result.
+    pub context_window: u64,
 }
 
 /// How the PTY process was terminated.
@@ -1972,6 +1976,7 @@ fn build_result(
         cache_read_tokens,
         cache_write_tokens,
         num_turns,
+        context_window,
     ) = if let Some(result) = session_result {
         (
             result.total_cost_usd,
@@ -1980,9 +1985,10 @@ fn build_result(
             result.cache_read_tokens,
             result.cache_write_tokens,
             result.num_turns,
+            result.context_window,
         )
     } else {
-        (0.0, 0, 0, 0, 0, 0)
+        (0.0, 0, 0, 0, 0, 0, 0)
     };
 
     PtyExecutionResult {
@@ -1999,6 +2005,7 @@ fn build_result(
         cache_write_tokens,
         protocol_error: None,
         num_turns,
+        context_window,
     }
 }
 
@@ -2197,6 +2204,7 @@ mod tests {
             cache_write_tokens: 0,
             protocol_error: None,
             num_turns: 0,
+            context_window: 0,
         };
 
         assert!(
@@ -2353,6 +2361,7 @@ mod tests {
             total_cost_usd: 0.01,
             num_turns: 2,
             is_error: true,
+            model_usage: std::collections::BTreeMap::default(),
         };
 
         let result = dispatch_stream_event(
@@ -2447,6 +2456,55 @@ mod tests {
         assert_eq!(session.cache_read_tokens, 4000); // peak
         assert_eq!(session.cache_write_tokens, 50); // peak
         assert_eq!(session.context_window, 200_000);
+    }
+
+    /// The PTY path reports the window the stream's `result` line gives for
+    /// the session's model, not the 200000 ceiling the executor was set with.
+    #[test]
+    fn test_stream_reported_context_window_reaches_pty_result() {
+        let stream = [
+            r#"{"type":"system","subtype":"init","session_id":"s","model":"claude-opus-5-5","tools":[]}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":10,"output_tokens":5}}}"#,
+            r#"{"type":"result","subtype":"success","is_error":false,"duration_ms":10,"num_turns":1,"total_cost_usd":0.1,"modelUsage":{"claude-haiku-5-5":{"contextWindow":200000},"claude-opus-5-5":{"contextWindow":1000000}}}"#,
+        ];
+
+        let mut handler = CapturingHandler::default();
+        let mut extracted_text = String::new();
+        let mut claude_state = ClaudeSessionMetrics::default();
+        let mut completion = None;
+        for line in stream {
+            let event = ClaudeStreamParser::parse_line(line).expect("line parses");
+            if let Some(result) = dispatch_stream_event(
+                event,
+                &mut handler,
+                &mut extracted_text,
+                &mut claude_state,
+                200_000,
+            ) {
+                completion = Some(result);
+            }
+        }
+
+        let result = build_result(
+            b"",
+            true,
+            Some(0),
+            TerminationType::Natural,
+            extracted_text,
+            completion.as_ref(),
+        );
+        assert_eq!(result.context_window, 1_000_000);
+
+        // No result line: nothing reported, the caller falls back.
+        let truncated = build_result(
+            b"",
+            false,
+            None,
+            TerminationType::IdleTimeout,
+            String::new(),
+            None,
+        );
+        assert_eq!(truncated.context_window, 0);
     }
 
     /// Regression test: TUI mode should not spawn stdin reader thread

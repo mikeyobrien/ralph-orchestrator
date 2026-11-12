@@ -27,6 +27,8 @@ const PEAK_INPUT_TOKENS: u64 = 8 + 200 + 22_000;
 const OUTPUT_TOKENS: u64 = 350 + 260;
 const PEAK_CACHE_READ: u64 = 22_000;
 const PEAK_CACHE_WRITE: u64 = 4_100;
+/// `modelUsage.claude-opus-5-5.contextWindow` on the result line.
+const STREAM_CONTEXT_WINDOW: u64 = 1_000_000;
 
 struct Workspace {
     dir: TempDir,
@@ -146,6 +148,12 @@ fn headless_claude_iteration_summary_carries_stream_cost_and_tokens() {
         // The live context occupancy is the peak per-turn input, the same
         // figure the PTY path records for peak-context tracking.
         assert_eq!(summary["context_tokens"], PEAK_INPUT_TOKENS, "{summary}");
+        // The result line's modelUsage reports the model's real window; it
+        // wins over the claude backend's 200000 default.
+        assert_eq!(
+            summary["context_window"], STREAM_CONTEXT_WINDOW,
+            "{summary}"
+        );
     }
 
     // The loop's cumulative cost is the sum of both iterations, and the
