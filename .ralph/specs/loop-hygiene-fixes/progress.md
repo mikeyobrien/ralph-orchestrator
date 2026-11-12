@@ -82,6 +82,70 @@ gains `crates/**/.ralph/`, `/logs/`, `.ralph/specs/**/logs/`.
 - Note: this spec's `logs/` is now ignored, so verification logs no longer show in `git status`. They're
   on disk for review. The one already-tracked `.ralph/specs/tui-refactor/logs/test.log` stays tracked.
 
+#### Critic review — step 02 (passed)
+
+- Red confirmed from `logs/step02-red-auto-commit.log`: under `git add -A` the HEAD commit held every
+  artifact; the companion test's red diff shows only artifacts as the extra files.
+- `cargo test -p ralph-core`, `-p ralph-adapters`, `-p ralph-cli -- --test-threads=1`: all pass, 0 failed
+  (`logs/step02-critic-test-ralph-{core,adapters,cli}.log`). Live events file 9 lines before and after.
+- Adversarial probe (temporary integration test against `ralph_core::auto_commit_changes`, removed
+  afterwards; `logs/step02-critic-probe.log`): repo with no `.gitignore`, a copy of the real
+  `crates/ralph-core/.ralph/diagnostics/` the suites just created, 2000 `logs/**` files, 20000 new source
+  files, `docs/.ralph/agent/scratchpad.md`, a non-UTF-8 filename, a filename containing a newline, a
+  tracked edit and a tracked deletion. The commit held the edit, the deletion, the new sources and both odd
+  filenames; every artifact stayed untracked. No pipe stall at 20k pathspecs.
+- `git check-ignore -v`: nested crate `.ralph/`, `/logs/`, spec `logs/` ignored; `plan.md`,
+  `agent/memories.md`, `agent/decisions.md` not ignored.
+- clippy `-D warnings`: pass (`logs/step02-critic-clippy.log`); `cargo fmt --all --check`: pass.
+
+### Step 03 — headless Claude metrics (task-1794517680-b2c6)
+
+Mechanism (DEC-016): `ClaudeSessionMetrics` in `crates/ralph-adapters/src/claude_stream.rs` now does the
+per-turn usage aggregation (peak input/cache, summed output) for both executors. `CliExecutor` parses
+StreamJson lines with it and returns `session_result` for Claude, with metrics only: raw lines still go to the
+writer, text still goes through `normalize_cli_output_for_parsing`, and `success` stays exit-code based. The
+headless branch (`loop_runner.rs`) reads metrics from `session_result` on its own and sets
+`context_tokens` to the peak input, as the PTY path does. `context_window` is still
+`context_window_for_backend` (step 04).
+
+Two corrections to the plan's premises, both fixed here:
+- `performance.jsonl` was empty because nothing in production called `DiagnosticsCollector::log_performance`,
+  on any path. `context_tokens = 0` had nothing to do with it. Added `EventLoop::log_iteration_performance`
+  (iteration_duration + token_count per iteration), called next to `record_iteration_tokens`.
+- The `--no-tui` footer printed `cum` before `add_cost`, so it lagged one iteration (`cost=+$0.29 (cum $0.00)`
+  on iteration 1). `add_cost` now runs before the footer and still before `process_output`'s termination checks.
+
+Test fixture: `crates/ralph-cli/tests/fixtures/claude_headless_iteration.jsonl`, a recorded-shape stream
+(system, two assistant turns with usage, a tool_result, and a `result` line with `total_cost_usd: 0.2934`
+and `modelUsage.<model>.contextWindow: 1000000` for step 04 to reuse). The integration tests run the real
+`claude` backend definition with `command:` pointed at a script that replays it, under `--autonomous`, so
+they go through `CliExecutor` with no API call.
+
+- **Red** (before fix): `logs/step03-red-headless-metrics.log`: summary was `cost_usd: 0.0`, all tokens 0,
+  `context_tokens: 0`; the max_cost run kept launching the backend past iteration 1.
+  `logs/step03-red-cli-executor.log`: `test_execute_claude_stream_reports_session_metrics` fails, `session_result` is
+  `None`. `logs/step03-red-footer-performance.log`: footer `cum` assertion fails and `performance.jsonl` has
+  no `token_count` entry.
+- **Green**: `logs/step03-green-headless-metrics.log` (3/3):
+  `headless_claude_iteration_summary_carries_stream_cost_and_tokens` (both summaries carry 0.2934, 2 turns,
+  input 22208, output 610, cache 22000/4100, context_tokens 22208; footer `cum $0.29` then `cum $0.59`;
+  summary.md `Est. cost: $0.59`), `headless_claude_max_cost_terminates_after_first_iteration` (exit 2, one
+  launch, `max_cost` termination), `headless_claude_iteration_tokens_reach_performance_diagnostics`.
+  Adapter tests: `test_execute_claude_stream_reports_session_metrics`,
+  `test_execute_claude_stream_without_result_has_no_session_metrics`, and two
+  `claude_stream::tests::session_metrics_*` tests (the PTY aggregation test moved there with the struct; the
+  PTY fixture test `test_fixture_driven_peak_not_sum` still covers `dispatch_stream_event` end to end).
+- Real CLI probe (`logs/step03-cli-probe.log`, before the footer/performance fix): summaries carry the stream
+  values; this is what showed `performance.jsonl` empty and the footer lag.
+- Adversarial (`logs/step03-adversarial-error-session.log`): `is_error: true` result and exit 1, with
+  `max_cost_usd: 0.5`. Cost still counts (an errored session still spent it): the loop stops with `max_cost`
+  after iteration 2 (`cum $0.59`).
+- Full suites: `cargo test -p ralph-core` 1062 passed, `-p ralph-adapters` 365 passed,
+  `-p ralph-cli -- --test-threads=1` 674 passed, 0 failed (`logs/step03-test-ralph-{core,adapters,cli}.log`).
+  Live events file 11 lines before and after, no `test.topic`.
+- clippy `-D warnings`: pass (`logs/step03-clippy.log`); `cargo fmt --all --check`: pass. No preset or
+  `crates/ralph-core/data/` change, so no embedded-files sync.
+
 ## Follow-ups
 
 - (minor) `ralph_command_does_not_pass_loop_env_to_the_child` proves nothing when the test process has
@@ -94,7 +158,21 @@ gains `crates/**/.ralph/`, `/logs/`, `.ralph/specs/**/logs/`.
 - (minor, pre-existing) `acp_executor` kill-timing test flaked once under the full sequential run.
 - (minor, step 02) Test runs still *create* `crates/*/.ralph/diagnostics/` on disk when the caller has
   `RALPH_DIAGNOSTICS=1`; they are now ignored and excluded from the auto-commit, but not prevented.
+- (minor, step 02) `is_run_artifact` drops *any* untracked file under a nested `.ralph/`, so a monorepo
+  subproject that keeps its own Ralph specs (`svc/.ralph/specs/new.md`) won't get a new spec
+  auto-committed. Tracked edits still commit. Narrow the nested rule to runtime paths if that comes up.
+- (minor, pre-existing, not from step 02) In worktree loops, `.ralph/agent/memories.md` is a symlink over a
+  tracked file, so `git add --update` commits a typechange to a symlink, as `git add -A` did before.
+  Untracked symlinked `.ralph/specs` is now excluded, which is an improvement.
+
+- (minor, step 03, pre-existing) `ContentBlock` has no catch-all variant, so an assistant line with a
+  `thinking` block (or any new block type) fails to parse whole and its `usage` is skipped, on both the PTY
+  and the headless paths. Claude repeats a message's usage on each content-block line, so peaks usually
+  survive, but a `#[serde(other)]` variant would make it robust.
+- (minor, step 03) Copilot headless runs (`CopilotStreamJson`) still report zero metrics through
+  `CliExecutor`. The spec only covers Claude; `copilot_stream.rs` already builds a `SessionResult` for the PTY.
 
 ## Completed Tasks
 
 - Step 01: test event isolation (task-1794517658-4cd5): passed Critic review 2026-11-12
+- Step 02: auto-commit artifacts (task-1794517669-7ea9): passed Critic review 2026-11-12
