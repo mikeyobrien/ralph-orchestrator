@@ -119,3 +119,12 @@ Use this template for new entries:
 - Reasoning: (A) leaves the next new test free to reintroduce the leak, which is how this one happened. (B) misses wave/diagnostics/config vars (`RALPH_WAVE_ID`, `RALPH_DIAGNOSTICS`, `RALPH_CONFIG`) that also change a child's behavior; tests needing one set it explicitly after the helper. (C) is impossible: integration tests run the release-shaped binary, not a cfg(test) build. The source-scan guard is a lint, not a behavior test; the sentinel script and `ralph_command_does_not_pass_loop_env_to_the_child` carry the behavior.
 - Reversibility: High; test-only code.
 - Timestamp: 2026-11-12T21:20:00Z
+
+## DEC-015 (2026-11-12T22:00Z)
+- Decision: Mechanism for keeping run artifacts out of the end-of-run auto-commit (spec defect 3).
+- Chosen Option: Two layers. (1) `auto_commit_changes` stops running `git add -A`: it stages `git add --update` (every tracked change) plus untracked, non-ignored files that `is_run_artifact` does not reject. Rejected: anything under a nested `.ralph/`; anything under the workspace `.ralph/` except specs (minus `logs/`), `*.code-task.md`, `agent/memories.md`, `agent/decisions.md`; anything under the workspace-root `logs/`. (2) This repo's `.gitignore` adds `crates/**/.ralph/`, `/logs/`, `.ralph/specs/**/logs/`, which satisfies "nested .ralph/ is ignored" for the test-run half.
+- Confidence: 78
+- Alternatives Considered: (A) Ignore rules only. (B) Staging only tracked changes, never untracked files. (C) Make in-process tests stop creating `crates/*/.ralph/diagnostics` (inherited `RALPH_DIAGNOSTICS`).
+- Reasoning: (A) fixes this repo but not the auto-commit, which runs in user repos whose `.gitignore` knows nothing about Ralph's layout; the landing tests even have to add `.ralph/` to `.gitignore` by hand to keep it out. (B) drops new source files, which the spec forbids. A code-level exclusion keyed to Ralph's own layout is the narrowest rule that works everywhere; it only ever narrows what gitignore already allows, and tracked files (even under `logs/` or a nested `.ralph/`) still commit, so deliberate tracking wins. Root `logs/` is Ralph's because its prompts (`hatless_ralph.rs`, `instructions.rs`) point agents there for temporary artifacts; nested `logs/` dirs (e.g. `src/logs/`) are source and stay in. (C) is the spec's other allowed route; skipped because the ignore satisfies the criterion and the diagnostics writers are scattered.
+- Reversibility: High; one function and three ignore lines.
+- Timestamp: 2026-11-12T22:00:00Z
