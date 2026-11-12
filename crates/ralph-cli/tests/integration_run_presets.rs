@@ -1,8 +1,9 @@
-use std::process::Command;
+mod common;
+
 use tempfile::TempDir;
 
 fn run_ralph(temp_path: &std::path::Path, args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_ralph"))
+    common::ralph_command()
         .args(args)
         .current_dir(temp_path)
         .output()

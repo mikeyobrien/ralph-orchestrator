@@ -9,9 +9,10 @@
 //! 3. Continue mode (`ralph run --continue`) reuses the existing marker file
 //! 4. Fallback to `.ralph/events.jsonl` when no marker exists
 
+mod common;
+
 use anyhow::Result;
 use std::fs;
-use std::process::Command;
 use std::thread;
 use std::time::Duration;
 use tempfile::TempDir;
@@ -41,11 +42,6 @@ features:
     Ok(())
 }
 
-/// Helper to get ralph binary path.
-fn ralph_bin() -> &'static str {
-    env!("CARGO_BIN_EXE_ralph")
-}
-
 // =============================================================================
 // Marker File Tests
 // =============================================================================
@@ -58,7 +54,7 @@ fn test_fresh_run_creates_marker_file() -> Result<()> {
     create_test_config(temp_path)?;
 
     // Run ralph
-    let _output = Command::new(ralph_bin())
+    let _output = common::ralph_command()
         .arg("run")
         .arg("--config")
         .arg(temp_path.join("ralph.yml"))
@@ -100,7 +96,7 @@ fn test_marker_file_contains_timestamped_path() -> Result<()> {
     create_test_config(temp_path)?;
 
     // Run ralph
-    let _output = Command::new(ralph_bin())
+    let _output = common::ralph_command()
         .arg("run")
         .arg("--config")
         .arg(temp_path.join("ralph.yml"))
@@ -131,7 +127,7 @@ fn test_ralph_emit_creates_timestamped_events_file() -> Result<()> {
     create_test_config(temp_path)?;
 
     // Run ralph to create marker file
-    let _output = Command::new(ralph_bin())
+    let _output = common::ralph_command()
         .arg("run")
         .arg("--config")
         .arg(temp_path.join("ralph.yml"))
@@ -146,7 +142,7 @@ fn test_ralph_emit_creates_timestamped_events_file() -> Result<()> {
     let timestamped_file = temp_path.join(events_path);
 
     // Use ralph emit to write to the marker-specified file
-    let output = Command::new(ralph_bin())
+    let output = common::ralph_command()
         .arg("emit")
         .arg("test.topic")
         .arg("test payload")
@@ -194,7 +190,7 @@ fn test_consecutive_runs_get_isolated_marker_paths() -> Result<()> {
     create_test_config(temp_path)?;
 
     // First run
-    let _output1 = Command::new(ralph_bin())
+    let _output1 = common::ralph_command()
         .arg("run")
         .arg("--config")
         .arg(temp_path.join("ralph.yml"))
@@ -209,7 +205,7 @@ fn test_consecutive_runs_get_isolated_marker_paths() -> Result<()> {
     thread::sleep(Duration::from_secs(1));
 
     // Second run
-    let _output2 = Command::new(ralph_bin())
+    let _output2 = common::ralph_command()
         .arg("run")
         .arg("--config")
         .arg(temp_path.join("ralph.yml"))
@@ -255,7 +251,7 @@ fn test_ralph_emit_writes_to_marker_specified_file() -> Result<()> {
     create_test_config(temp_path)?;
 
     // Run ralph to create marker file
-    let _output = Command::new(ralph_bin())
+    let _output = common::ralph_command()
         .arg("run")
         .arg("--config")
         .arg(temp_path.join("ralph.yml"))
@@ -276,13 +272,11 @@ fn test_ralph_emit_writes_to_marker_specified_file() -> Result<()> {
     let lines_before = events_before.lines().count();
 
     // Use ralph emit to write an event
-    let output = Command::new(ralph_bin())
+    let output = common::ralph_command()
         .arg("emit")
         .arg("test.topic")
         .arg("test payload")
         .current_dir(temp_path)
-        .env_remove("RALPH_WORKSPACE_ROOT")
-        .env_remove("RALPH_EVENTS_FILE")
         .output()?;
 
     assert!(
@@ -343,13 +337,11 @@ fn test_ralph_emit_fallback_without_marker() -> Result<()> {
     );
 
     // Use ralph emit (should fall back to default)
-    let output = Command::new(ralph_bin())
+    let output = common::ralph_command()
         .arg("emit")
         .arg("fallback.topic")
         .arg("fallback payload")
         .current_dir(temp_path)
-        .env_remove("RALPH_WORKSPACE_ROOT")
-        .env_remove("RALPH_EVENTS_FILE")
         .output()?;
 
     assert!(
@@ -390,7 +382,7 @@ fn test_continue_uses_existing_marker_file() -> Result<()> {
     create_test_config(temp_path)?;
 
     // First: run ralph to create marker file
-    let _output = Command::new(ralph_bin())
+    let _output = common::ralph_command()
         .arg("run")
         .arg("--config")
         .arg(temp_path.join("ralph.yml"))
@@ -410,7 +402,7 @@ fn test_continue_uses_existing_marker_file() -> Result<()> {
     )?;
 
     // Continue - should NOT create a new marker/events file
-    let _output = Command::new(ralph_bin())
+    let _output = common::ralph_command()
         .arg("run")
         .arg("--continue")
         .arg("--config")
@@ -441,7 +433,7 @@ fn test_continue_preserves_marker_path() -> Result<()> {
     create_test_config(temp_path)?;
 
     // First: run ralph
-    let _output = Command::new(ralph_bin())
+    let _output = common::ralph_command()
         .arg("run")
         .arg("--config")
         .arg(temp_path.join("ralph.yml"))
@@ -461,7 +453,7 @@ fn test_continue_preserves_marker_path() -> Result<()> {
     )?;
 
     // Continue
-    let _output = Command::new(ralph_bin())
+    let _output = common::ralph_command()
         .arg("run")
         .arg("--continue")
         .arg("--config")
@@ -515,7 +507,7 @@ fn test_stale_events_dont_pollute_new_runs() -> Result<()> {
     )?;
 
     // Now run ralph fresh - it should create a NEW events file
-    let _output = Command::new(ralph_bin())
+    let _output = common::ralph_command()
         .arg("run")
         .arg("--config")
         .arg(temp_path.join("ralph.yml"))
@@ -578,7 +570,7 @@ fn test_new_run_ignores_stale_marker() -> Result<()> {
     fs::write(temp_path.join(".ralph/events-old.jsonl"), "{}")?;
 
     // Run ralph fresh
-    let _output = Command::new(ralph_bin())
+    let _output = common::ralph_command()
         .arg("run")
         .arg("--config")
         .arg(temp_path.join("ralph.yml"))
@@ -650,7 +642,7 @@ features:
     );
 
     // Run ralph fresh
-    let _output = Command::new(ralph_bin())
+    let _output = common::ralph_command()
         .arg("run")
         .arg("--config")
         .arg(temp_path.join("ralph.yml"))
@@ -720,7 +712,7 @@ features:
 
     // Run ralph fresh (exit code doesn't matter — max_iterations=1 exits non-zero,
     // but scratchpad cleanup happens before the loop starts)
-    let _output = Command::new(ralph_bin())
+    let _output = common::ralph_command()
         .arg("run")
         .arg("--config")
         .arg(temp_path.join("ralph.yml"))
@@ -760,7 +752,7 @@ fn test_ralph_directory_created() -> Result<()> {
     assert!(!ralph_dir.exists(), ".ralph should not exist before run");
 
     // Run ralph
-    let _output = Command::new(ralph_bin())
+    let _output = common::ralph_command()
         .arg("run")
         .arg("--config")
         .arg(temp_path.join("ralph.yml"))

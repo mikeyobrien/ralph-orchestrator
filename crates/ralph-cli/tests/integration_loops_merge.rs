@@ -8,6 +8,8 @@
 //! 3. --exclusive flag for merge-ralph spawns
 //! 4. Merge commit conventional format
 
+mod common;
+
 use anyhow::Result;
 use ralph_core::truncate_with_ellipsis;
 use std::fs;
@@ -20,7 +22,7 @@ use tempfile::TempDir;
 
 /// Run ralph loops command with given args in the temp directory.
 fn ralph_loops(temp_path: &std::path::Path, args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_ralph"))
+    common::ralph_command()
         .arg("loops")
         .args(args)
         .current_dir(temp_path)

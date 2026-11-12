@@ -1049,6 +1049,7 @@ impl AcpExecutor {
             cache_write_tokens: 0,
             protocol_error: None,
             num_turns: 1,
+            context_window: self.context_window,
         })
     }
 }

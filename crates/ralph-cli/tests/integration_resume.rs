@@ -1,6 +1,7 @@
+mod common;
+
 use anyhow::Result;
 use std::fs;
-use std::process::Command;
 use tempfile::TempDir;
 
 /// Integration tests for continue mode (--continue flag) acceptance criteria.
@@ -41,7 +42,7 @@ core:
     assert!(!scratchpad_path.exists());
 
     // Run ralph run --continue - should fail with error about missing scratchpad
-    let output = Command::new(env!("CARGO_BIN_EXE_ralph"))
+    let output = common::ralph_command()
         .arg("run")
         .arg("--continue")
         .arg("--config")
@@ -109,7 +110,7 @@ Previous work completed on feature B.
     fs::write(agent_dir.join("scratchpad.md"), scratchpad_content)?;
 
     // Run ralph run --continue --no-tui (needed for tracing output to stdout)
-    let output = Command::new(env!("CARGO_BIN_EXE_ralph"))
+    let output = common::ralph_command()
         .arg("run")
         .arg("--continue")
         .arg("--no-tui")
@@ -176,7 +177,7 @@ This is a continued session.
     fs::write(agent_dir.join("scratchpad.md"), scratchpad_content)?;
 
     // Run ralph run --continue
-    let _output = Command::new(env!("CARGO_BIN_EXE_ralph"))
+    let _output = common::ralph_command()
         .arg("run")
         .arg("--continue")
         .arg("--config")
@@ -238,7 +239,7 @@ core:
     let scratchpad_content = "# Initial scratchpad\n- [ ] Task 1\n";
     fs::write(agent_dir.join("scratchpad.md"), scratchpad_content)?;
 
-    let _output = Command::new(env!("CARGO_BIN_EXE_ralph"))
+    let _output = common::ralph_command()
         .arg("run")
         .arg("--config")
         .arg(temp_path.join("ralph.yml"))
@@ -258,7 +259,7 @@ core:
     };
 
     // Test 2: Run ralph run --continue (should publish task.resume)
-    let _output = Command::new(env!("CARGO_BIN_EXE_ralph"))
+    let _output = common::ralph_command()
         .arg("run")
         .arg("--continue")
         .arg("--config")
@@ -347,7 +348,7 @@ This scratchpad contains UNIQUE_CONTENT_MARKER for testing.
     fs::write(agent_dir.join("scratchpad.md"), scratchpad_content)?;
 
     // Run ralph run --continue --no-tui (needed for tracing output to stdout)
-    let output = Command::new(env!("CARGO_BIN_EXE_ralph"))
+    let output = common::ralph_command()
         .arg("run")
         .arg("--continue")
         .arg("--no-tui")

@@ -18,7 +18,9 @@
 // Exit codes and PIDs are always within i32 range in practice
 #![allow(clippy::cast_possible_wrap)]
 
-use crate::claude_stream::{ClaudeStreamEvent, ClaudeStreamParser, ContentBlock, UserContentBlock};
+use crate::claude_stream::{
+    ClaudeSessionMetrics, ClaudeStreamEvent, ClaudeStreamParser, ContentBlock, UserContentBlock,
+};
 use crate::cli_backend::{CliBackend, OutputFormat};
 use crate::copilot_stream::{
     CopilotStreamParser, CopilotStreamState, dispatch_copilot_stream_event,
@@ -76,6 +78,10 @@ pub struct PtyExecutionResult {
     pub protocol_error: Option<String>,
     /// Number of turns reported by the session (0 when unknown).
     pub num_turns: u32,
+    /// Context window from the session result: the stream-reported window
+    /// when the backend reports one, otherwise the executor's configured
+    /// ceiling. `0` when the session produced no result.
+    pub context_window: u64,
 }
 
 /// How the PTY process was terminated.
@@ -144,27 +150,6 @@ impl PtyConfig {
     pub fn with_workspace_root(mut self, root: impl Into<std::path::PathBuf>) -> Self {
         self.workspace_root = root.into();
         self
-    }
-}
-
-/// Aggregated token counters captured from Claude `stream-json` assistant
-/// events.
-///
-/// Claude's `usage` reports the **live** input footprint per turn (input +
-/// cache_read + cache_creation), so summing across turns double-counts shared
-/// context. We track peak for input/cache fields and sum only `output_tokens`
-/// (new tokens produced per turn never overlap).
-#[derive(Debug, Default)]
-struct ClaudeSessionState {
-    peak_input: u64,
-    total_output: u64,
-    peak_cache_read: u64,
-    peak_cache_write: u64,
-}
-
-impl ClaudeSessionState {
-    fn new() -> Self {
-        Self::default()
     }
 }
 
@@ -733,8 +718,8 @@ impl PtyExecutor {
         family_state.flavor_label = pi_family_label;
         let mut copilot_state = CopilotStreamState::new();
         // Claude session state: peak input/cache tokens across turns, plus a
-        // cumulative output_tokens sum (see `ClaudeSessionState` for rationale).
-        let mut claude_state = ClaudeSessionState::new();
+        // cumulative output_tokens sum (see `ClaudeSessionMetrics` for rationale).
+        let mut claude_state = ClaudeSessionMetrics::default();
         let mut completion: Option<SessionResult> = None;
         let context_window = self.context_window;
         let start_time = Instant::now();
@@ -1918,27 +1903,16 @@ fn dispatch_stream_event<H: StreamHandler>(
     event: ClaudeStreamEvent,
     handler: &mut H,
     extracted_text: &mut String,
-    state: &mut ClaudeSessionState,
+    state: &mut ClaudeSessionMetrics,
     context_window: u64,
 ) -> Option<SessionResult> {
+    let session_result = state.observe(&event, context_window);
     match event {
         ClaudeStreamEvent::System { .. } => {
             // Session initialization - could log in verbose mode but not user-facing
             None
         }
         ClaudeStreamEvent::Assistant { message, .. } => {
-            if let Some(usage) = &message.usage {
-                let turn_input = usage
-                    .input_tokens
-                    .saturating_add(usage.cache_creation_input_tokens)
-                    .saturating_add(usage.cache_read_input_tokens);
-                state.peak_input = state.peak_input.max(turn_input);
-                state.total_output = state.total_output.saturating_add(usage.output_tokens);
-                state.peak_cache_read = state.peak_cache_read.max(usage.cache_read_input_tokens);
-                state.peak_cache_write = state
-                    .peak_cache_write
-                    .max(usage.cache_creation_input_tokens);
-            }
             for block in message.content {
                 match block {
                     ContentBlock::Text { text } => {
@@ -1967,28 +1941,14 @@ fn dispatch_stream_event<H: StreamHandler>(
             }
             None
         }
-        ClaudeStreamEvent::Result {
-            duration_ms,
-            total_cost_usd,
-            num_turns,
-            is_error,
-        } => {
+        ClaudeStreamEvent::Result { is_error, .. } => {
             if is_error {
                 handler.on_error("Session ended with error");
             }
-            let session_result = SessionResult {
-                duration_ms,
-                total_cost_usd,
-                num_turns,
-                is_error,
-                input_tokens: state.peak_input,
-                output_tokens: state.total_output,
-                cache_read_tokens: state.peak_cache_read,
-                cache_write_tokens: state.peak_cache_write,
-                context_window,
-            };
-            handler.on_complete(&session_result);
-            Some(session_result)
+            if let Some(result) = &session_result {
+                handler.on_complete(result);
+            }
+            session_result
         }
     }
 }
@@ -2016,6 +1976,7 @@ fn build_result(
         cache_read_tokens,
         cache_write_tokens,
         num_turns,
+        context_window,
     ) = if let Some(result) = session_result {
         (
             result.total_cost_usd,
@@ -2024,9 +1985,10 @@ fn build_result(
             result.cache_read_tokens,
             result.cache_write_tokens,
             result.num_turns,
+            result.context_window,
         )
     } else {
-        (0.0, 0, 0, 0, 0, 0)
+        (0.0, 0, 0, 0, 0, 0, 0)
     };
 
     PtyExecutionResult {
@@ -2043,6 +2005,7 @@ fn build_result(
         cache_write_tokens,
         protocol_error: None,
         num_turns,
+        context_window,
     }
 }
 
@@ -2241,6 +2204,7 @@ mod tests {
             cache_write_tokens: 0,
             protocol_error: None,
             num_turns: 0,
+            context_window: 0,
         };
 
         assert!(
@@ -2332,7 +2296,7 @@ mod tests {
     fn test_dispatch_stream_event_routes_text_and_tool_calls() {
         let mut handler = CapturingHandler::default();
         let mut extracted_text = String::new();
-        let mut claude_state = ClaudeSessionState::new();
+        let mut claude_state = ClaudeSessionMetrics::default();
 
         let event = ClaudeStreamEvent::Assistant {
             message: AssistantMessage {
@@ -2363,15 +2327,13 @@ mod tests {
         assert_eq!(handler.tool_calls.len(), 1);
         assert!(extracted_text.contains("Hello"));
         assert!(extracted_text.ends_with('\n'));
-        // Usage=None means no aggregation.
-        assert_eq!(claude_state.peak_input, 0);
     }
 
     #[test]
     fn test_dispatch_stream_event_routes_tool_results_and_completion() {
         let mut handler = CapturingHandler::default();
         let mut extracted_text = String::new();
-        let mut claude_state = ClaudeSessionState::new();
+        let mut claude_state = ClaudeSessionMetrics::default();
 
         let event = ClaudeStreamEvent::User {
             message: UserMessage {
@@ -2399,6 +2361,7 @@ mod tests {
             total_cost_usd: 0.01,
             num_turns: 2,
             is_error: true,
+            model_usage: std::collections::BTreeMap::default(),
         };
 
         let result = dispatch_stream_event(
@@ -2418,7 +2381,7 @@ mod tests {
     fn test_dispatch_stream_event_system_noop() {
         let mut handler = CapturingHandler::default();
         let mut extracted_text = String::new();
-        let mut claude_state = ClaudeSessionState::new();
+        let mut claude_state = ClaudeSessionMetrics::default();
 
         let event = ClaudeStreamEvent::System {
             session_id: "session-1".to_string(),
@@ -2446,112 +2409,6 @@ mod tests {
         assert_eq!(extracted_text, "");
     }
 
-    #[test]
-    fn test_dispatch_stream_event_aggregates_assistant_usage() {
-        use crate::claude_stream::Usage;
-
-        let mut handler = CapturingHandler::default();
-        let mut extracted_text = String::new();
-        let mut claude_state = ClaudeSessionState::new();
-
-        // Turn 1: input=100, cache_read=1000, cache_creation=50, output=20.
-        // Live footprint = 100 + 1000 + 50 = 1150.
-        let turn1 = ClaudeStreamEvent::Assistant {
-            message: AssistantMessage {
-                content: vec![],
-                usage: Some(Usage {
-                    input_tokens: 100,
-                    output_tokens: 20,
-                    cache_creation_input_tokens: 50,
-                    cache_read_input_tokens: 1000,
-                }),
-            },
-        };
-        dispatch_stream_event(
-            turn1,
-            &mut handler,
-            &mut extracted_text,
-            &mut claude_state,
-            0,
-        );
-        assert_eq!(claude_state.peak_input, 1150);
-        assert_eq!(claude_state.total_output, 20);
-        assert_eq!(claude_state.peak_cache_read, 1000);
-        assert_eq!(claude_state.peak_cache_write, 50);
-
-        // Turn 2: larger footprint (300 + 4000 + 10 = 4310). Peaks grow.
-        let turn2 = ClaudeStreamEvent::Assistant {
-            message: AssistantMessage {
-                content: vec![],
-                usage: Some(Usage {
-                    input_tokens: 300,
-                    output_tokens: 40,
-                    cache_creation_input_tokens: 10,
-                    cache_read_input_tokens: 4000,
-                }),
-            },
-        };
-        dispatch_stream_event(
-            turn2,
-            &mut handler,
-            &mut extracted_text,
-            &mut claude_state,
-            0,
-        );
-        assert_eq!(claude_state.peak_input, 4310);
-        // Output sums; caches keep max.
-        assert_eq!(claude_state.total_output, 60);
-        assert_eq!(claude_state.peak_cache_read, 4000);
-        assert_eq!(claude_state.peak_cache_write, 50);
-
-        // Turn 3: smaller. Peaks must be retained (not replaced).
-        let turn3 = ClaudeStreamEvent::Assistant {
-            message: AssistantMessage {
-                content: vec![],
-                usage: Some(Usage {
-                    input_tokens: 10,
-                    output_tokens: 5,
-                    cache_creation_input_tokens: 1,
-                    cache_read_input_tokens: 200,
-                }),
-            },
-        };
-        dispatch_stream_event(
-            turn3,
-            &mut handler,
-            &mut extracted_text,
-            &mut claude_state,
-            0,
-        );
-        assert_eq!(claude_state.peak_input, 4310);
-        assert_eq!(claude_state.total_output, 65);
-        assert_eq!(claude_state.peak_cache_read, 4000);
-        assert_eq!(claude_state.peak_cache_write, 50);
-
-        // Result event emits a SessionResult populated from the aggregated state.
-        let result = ClaudeStreamEvent::Result {
-            duration_ms: 1234,
-            total_cost_usd: 0.5,
-            num_turns: 3,
-            is_error: false,
-        };
-        let session = dispatch_stream_event(
-            result,
-            &mut handler,
-            &mut extracted_text,
-            &mut claude_state,
-            200_000,
-        )
-        .expect("Result event must yield SessionResult");
-        assert_eq!(session.input_tokens, 4310);
-        assert_eq!(session.output_tokens, 65);
-        assert_eq!(session.cache_read_tokens, 4000);
-        assert_eq!(session.cache_write_tokens, 50);
-        assert_eq!(session.context_window, 200_000);
-        assert_eq!(session.duration_ms, 1234);
-        assert!((session.total_cost_usd - 0.5).abs() < f64::EPSILON);
-    }
-
     /// Fixture-driven proof: parsing real stream-json bytes into
     /// `ClaudeStreamEvent` and feeding them through `dispatch_stream_event`
     /// yields `SessionResult.input_tokens` equal to the PEAK per-turn live
@@ -2568,7 +2425,7 @@ mod tests {
 
         let mut handler = CapturingHandler::default();
         let mut extracted_text = String::new();
-        let mut claude_state = ClaudeSessionState::new();
+        let mut claude_state = ClaudeSessionMetrics::default();
         let mut last_session: Option<SessionResult> = None;
 
         for line in fixture.lines() {
@@ -2599,6 +2456,55 @@ mod tests {
         assert_eq!(session.cache_read_tokens, 4000); // peak
         assert_eq!(session.cache_write_tokens, 50); // peak
         assert_eq!(session.context_window, 200_000);
+    }
+
+    /// The PTY path reports the window the stream's `result` line gives for
+    /// the session's model, not the 200000 ceiling the executor was set with.
+    #[test]
+    fn test_stream_reported_context_window_reaches_pty_result() {
+        let stream = [
+            r#"{"type":"system","subtype":"init","session_id":"s","model":"claude-opus-5-5","tools":[]}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":10,"output_tokens":5}}}"#,
+            r#"{"type":"result","subtype":"success","is_error":false,"duration_ms":10,"num_turns":1,"total_cost_usd":0.1,"modelUsage":{"claude-haiku-5-5":{"contextWindow":200000},"claude-opus-5-5":{"contextWindow":1000000}}}"#,
+        ];
+
+        let mut handler = CapturingHandler::default();
+        let mut extracted_text = String::new();
+        let mut claude_state = ClaudeSessionMetrics::default();
+        let mut completion = None;
+        for line in stream {
+            let event = ClaudeStreamParser::parse_line(line).expect("line parses");
+            if let Some(result) = dispatch_stream_event(
+                event,
+                &mut handler,
+                &mut extracted_text,
+                &mut claude_state,
+                200_000,
+            ) {
+                completion = Some(result);
+            }
+        }
+
+        let result = build_result(
+            b"",
+            true,
+            Some(0),
+            TerminationType::Natural,
+            extracted_text,
+            completion.as_ref(),
+        );
+        assert_eq!(result.context_window, 1_000_000);
+
+        // No result line: nothing reported, the caller falls back.
+        let truncated = build_result(
+            b"",
+            false,
+            None,
+            TerminationType::IdleTimeout,
+            String::new(),
+            None,
+        );
+        assert_eq!(truncated.context_window, 0);
     }
 
     /// Regression test: TUI mode should not spawn stdin reader thread

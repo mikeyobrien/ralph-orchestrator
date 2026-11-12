@@ -70,6 +70,15 @@ fn context_window_for_backend(config: &RalphConfig, backend_name: &str) -> u64 {
     resolve_context_window_for_backend(config, backend_name)
 }
 
+/// The iteration's context window: the one the backend's stream reported
+/// (`reported > 0`), otherwise the configured ceiling for the backend.
+///
+/// The stream reports the running model's actual window, so it beats both the
+/// backend default and an `event_loop.context_window_tokens` override.
+fn reported_or_configured_context_window(reported: u64, configured: u64) -> u64 {
+    if reported > 0 { reported } else { configured }
+}
+
 /// Shared atomic state written by the main loop and read by the RPC `get_state` handler.
 struct RpcSharedState {
     iteration: Arc<std::sync::atomic::AtomicU32>,
@@ -1911,37 +1920,37 @@ pub async fn run_loop_impl(
                 let result = executor
                     .execute(&prompt, stdout(), timeout, verbosity == Verbosity::Verbose)
                     .await?;
-                // Pi-family backends carry pre-parsed assistant text + metrics
-                // in the structured result (the processor owns extraction,
-                // including the mandatory final-text fallback). Prefer those over
-                // re-parsing the raw stream; other backends keep normalizing.
-                let (output, metrics) = match (&result.extracted_text, &result.session_result) {
-                    (Some(text), Some(session)) => (text.clone(), Some(session.clone())),
-                    _ => (
-                        normalize_cli_output_for_parsing(
-                            effective_backend.output_format,
-                            &result.output,
-                        ),
-                        None,
+                // Pi-family backends carry pre-parsed assistant text (the
+                // processor owns extraction, including the mandatory final-text
+                // fallback); other backends keep normalizing the raw stream.
+                // Metrics come from the structured result whenever the executor
+                // parsed one (Pi-family and Claude stream-json).
+                let output = match &result.extracted_text {
+                    Some(text) => text.clone(),
+                    None => normalize_cli_output_for_parsing(
+                        effective_backend.output_format,
+                        &result.output,
                     ),
                 };
+                let metrics = result.session_result.as_ref();
                 Ok((
                     ExecutionOutcome {
                         output,
                         success: result.success,
                         post_event_grace_expired: result.post_event_grace_expired,
                         termination: None,
-                        total_cost_usd: metrics.as_ref().map_or(0.0, |m| m.total_cost_usd),
-                        input_tokens: metrics.as_ref().map_or(0, |m| m.input_tokens),
-                        output_tokens: metrics.as_ref().map_or(0, |m| m.output_tokens),
-                        cache_read_tokens: metrics.as_ref().map_or(0, |m| m.cache_read_tokens),
-                        cache_write_tokens: metrics.as_ref().map_or(0, |m| m.cache_write_tokens),
-                        context_window: context_window_for_backend(
-                            &config,
-                            &backend_name_for_timeout,
+                        total_cost_usd: metrics.map_or(0.0, |m| m.total_cost_usd),
+                        input_tokens: metrics.map_or(0, |m| m.input_tokens),
+                        output_tokens: metrics.map_or(0, |m| m.output_tokens),
+                        cache_read_tokens: metrics.map_or(0, |m| m.cache_read_tokens),
+                        cache_write_tokens: metrics.map_or(0, |m| m.cache_write_tokens),
+                        context_window: reported_or_configured_context_window(
+                            metrics.map_or(0, |m| m.context_window),
+                            context_window_for_backend(&config, &backend_name_for_timeout),
                         ),
-                        context_tokens: 0,
-                        num_turns: metrics.as_ref().map_or(0, |m| m.num_turns),
+                        // Peak per-turn live context, as the PTY path records it.
+                        context_tokens: metrics.map_or(0, |m| m.input_tokens),
+                        num_turns: metrics.map_or(0, |m| m.num_turns),
                     },
                     None,
                 ))
@@ -2107,6 +2116,12 @@ pub async fn run_loop_impl(
             let _ = tx.try_send(end_event);
         }
 
+        // Cost must be added before termination checks (in `process_output`
+        // below) so max_cost applies across iterations and across --continue
+        // resumes, and before the footer so its running total includes this
+        // iteration.
+        event_loop.add_cost(outcome.total_cost_usd);
+
         // Per-iteration footer for --no-tui: one line with budget/cost/elapsed
         // so tailing agents can catch runaway loops without parsing events.
         if tui_state.is_none() && !enable_rpc {
@@ -2141,10 +2156,14 @@ pub async fn run_loop_impl(
 
         // Update LoopState peak context-token tracking (spec §11).
         event_loop.record_iteration_tokens(&hat_id, outcome.context_tokens);
+        event_loop.log_iteration_performance(
+            iteration,
+            &hat_id,
+            iteration_duration_ms,
+            outcome.input_tokens,
+            outcome.output_tokens,
+        );
 
-        // Process output; cost must be added before termination checks so
-        // max_cost applies across iterations and across --continue resumes.
-        event_loop.add_cost(outcome.total_cost_usd);
         let termination = event_loop.process_output(&hat_id, &output, success);
 
         // A script that failed after emitting is not trusted: drop what it
@@ -4567,7 +4586,10 @@ async fn execute_acp(
         output_tokens: pty_result.output_tokens,
         cache_read_tokens: pty_result.cache_read_tokens,
         cache_write_tokens: pty_result.cache_write_tokens,
-        context_window,
+        context_window: reported_or_configured_context_window(
+            pty_result.context_window,
+            context_window,
+        ),
         context_tokens,
         num_turns: pty_result.num_turns,
     })
@@ -4724,7 +4746,10 @@ async fn execute_pty(
                 output_tokens: pty_result.output_tokens,
                 cache_read_tokens: pty_result.cache_read_tokens,
                 cache_write_tokens: pty_result.cache_write_tokens,
-                context_window,
+                context_window: reported_or_configured_context_window(
+                    pty_result.context_window,
+                    context_window,
+                ),
                 context_tokens,
                 num_turns: pty_result.num_turns,
             })
@@ -6716,9 +6741,38 @@ mod tests {
             cache_write_tokens: 10_000,
             num_turns: 3,
             protocol_error: None,
+            context_window: 200_000,
         };
 
         assert_eq!(context_tokens_from_pty_result(&pty_result), 90_000);
+    }
+
+    #[test]
+    fn test_stream_reported_context_window_beats_configured_one() {
+        let mut config = RalphConfig::default();
+        config.event_loop.context_window_tokens = None;
+        let default = context_window_for_backend(&config, "claude");
+        assert_eq!(default, 200_000);
+        assert_eq!(
+            reported_or_configured_context_window(1_000_000, default),
+            1_000_000
+        );
+
+        // The stream also beats an explicit override: it is the running
+        // model's actual window.
+        config.event_loop.context_window_tokens = Some(128_000);
+        let overridden = context_window_for_backend(&config, "claude");
+        assert_eq!(
+            reported_or_configured_context_window(1_000_000, overridden),
+            1_000_000
+        );
+
+        // Nothing reported: the configured window stands.
+        assert_eq!(
+            reported_or_configured_context_window(0, overridden),
+            128_000
+        );
+        assert_eq!(reported_or_configured_context_window(0, default), 200_000);
     }
 
     #[test]

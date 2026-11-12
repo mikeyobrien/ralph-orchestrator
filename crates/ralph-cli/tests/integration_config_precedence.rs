@@ -7,8 +7,9 @@
 //! - `core.specs_dir=...` CLI override takes final precedence alongside `-H`
 //! - `-H builtin:<name>` beats hats embedded in combined `-c`
 
+mod common;
+
 use std::fs;
-use std::process::Command;
 use tempfile::TempDir;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -85,7 +86,7 @@ fn test_combined_config_dry_run_succeeds() {
     )
     .expect("write combined config");
 
-    let out = Command::new(env!("CARGO_BIN_EXE_ralph"))
+    let out = common::ralph_command()
         .args([
             "--color",
             "never",
@@ -136,7 +137,7 @@ fn test_hats_file_overrides_combined_config_hats() {
     // Hats file defines "myreviewer"
     fs::write(&hats_path, hats_only_config("myreviewer", None)).expect("write hats file");
 
-    let out = Command::new(env!("CARGO_BIN_EXE_ralph"))
+    let out = common::ralph_command()
         .args([
             "--color",
             "never",
@@ -206,7 +207,7 @@ fn test_hats_file_event_loop_completion_promise_overrides_combined_config() {
     )
     .expect("write hats file");
 
-    let out = Command::new(env!("CARGO_BIN_EXE_ralph"))
+    let out = common::ralph_command()
         .args([
             "--color",
             "never",
@@ -297,7 +298,7 @@ hats:
     )
     .expect("write hats file");
 
-    let out = Command::new(env!("CARGO_BIN_EXE_ralph"))
+    let out = common::ralph_command()
         .args([
             "--color",
             "never",
@@ -356,7 +357,7 @@ fn test_core_specs_dir_cli_override_applies_last() {
 
     fs::write(&hats_path, hats_only_config("myreviewer", None)).expect("write hats file");
 
-    let out = Command::new(env!("CARGO_BIN_EXE_ralph"))
+    let out = common::ralph_command()
         .args([
             "--color",
             "never",
@@ -410,7 +411,7 @@ fn test_builtin_hats_source_overrides_combined_config_hats() {
     )
     .expect("write combined config");
 
-    let out = Command::new(env!("CARGO_BIN_EXE_ralph"))
+    let out = common::ralph_command()
         .args([
             "--color",
             "never",

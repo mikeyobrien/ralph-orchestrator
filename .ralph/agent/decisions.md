@@ -92,3 +92,57 @@ Use this template for new entries:
 - Reasoning: Full `cargo test` is required verification gate; adapting tests to current CLI behavior is lower risk than reviving deprecated flags.
 - Reversibility: High
 - Timestamp: 2026-02-21T00:23:00Z
+
+## DEC-012 (2026-11-12T21:10Z)
+- Decision: Implement the three loop-hygiene defects in order 2 → 3 → 1 rather than the order the spec numbers them.
+- Chosen Option: Test-event isolation first, auto-commit artifact exclusion second, then the two Claude cost/context slices.
+- Confidence: 80
+- Alternatives Considered: (A) Spec order 1 → 2 → 3, landing the headline cost-accounting fix first. (B) Do defect 2 first and leave the rest in spec order.
+- Reasoning: Defect 2 is the only one that corrupts the loop doing the work — every step runs `cargo test -p ralph-cli`, which until fixed injects stray topics into this loop's live events file and can trigger spurious hat handoffs mid-step. Defect 3 then keeps the repo clean for the commits the later steps make. Fixing hygiene first makes the remaining steps verifiable; spec order makes each successive run noisier.
+- Reversibility: High; the four tasks are independent in substance and can be re-chained by the Planner on `plan.revise`.
+- Timestamp: 2026-11-12T21:10:00Z
+
+## DEC-013 (2026-11-12T21:10Z)
+- Decision: Treat `.ralph/agent/memories.md` and `.ralph/agent/decisions.md` as intentionally tracked, and require the defect-3 fix to keep committing them.
+- Chosen Option: Tracked (the spec left this open for the implementer to decide from the repository).
+- Confidence: 92
+- Alternatives Considered: (A) Treat them as run artifacts and exclude them from the auto-commit alongside diagnostics and logs.
+- Reasoning: Root `.gitignore` carries explicit negations `!.ralph/agent/decisions.md` and `!.ralph/agent/memories.md` against the `.ralph/*` ignore, and `git ls-files` confirms `decisions.md` is tracked. `CLAUDE.md` also calls memories "persistent learning across sessions". The repository already answers the question.
+- Reversibility: Medium; reversing it would mean untracking files that carry cross-session state, so it should be a deliberate separate change.
+- Timestamp: 2026-11-12T21:10:00Z
+
+## DEC-014 (2026-11-12T21:20Z)
+- Decision: How ralph-cli integration tests stop inheriting the caller's loop env, and how that stays enforced.
+- Chosen Option: One helper, `crates/ralph-cli/tests/common/mod.rs::ralph_command()`, that removes every inherited `RALPH_*` variable; all ~65 spawn sites migrated to it; `integration_env_isolation_guard.rs` fails on any direct `Command::new(env!("CARGO_BIN_EXE_ralph"))` / `Command::new(ralph_bin())` in `tests/*.rs`; `scripts/check-test-event-isolation.sh` is the end-to-end sentinel check.
+- Confidence: 80
+- Alternatives Considered: (A) Patch only the known offender at `integration_events_isolation.rs:149`. (B) Strip only `RALPH_EVENTS_FILE` and `RALPH_WORKSPACE_ROOT`. (C) Make the `ralph` binary refuse inherited env under `cfg(test)`.
+- Reasoning: (A) leaves the next new test free to reintroduce the leak, which is how this one happened. (B) misses wave/diagnostics/config vars (`RALPH_WAVE_ID`, `RALPH_DIAGNOSTICS`, `RALPH_CONFIG`) that also change a child's behavior; tests needing one set it explicitly after the helper. (C) is impossible: integration tests run the release-shaped binary, not a cfg(test) build. The source-scan guard is a lint, not a behavior test; the sentinel script and `ralph_command_does_not_pass_loop_env_to_the_child` carry the behavior.
+- Reversibility: High; test-only code.
+- Timestamp: 2026-11-12T21:20:00Z
+
+## DEC-015 (2026-11-12T22:00Z)
+- Decision: Mechanism for keeping run artifacts out of the end-of-run auto-commit (spec defect 3).
+- Chosen Option: Two layers. (1) `auto_commit_changes` stops running `git add -A`: it stages `git add --update` (every tracked change) plus untracked, non-ignored files that `is_run_artifact` does not reject. Rejected: anything under a nested `.ralph/`; anything under the workspace `.ralph/` except specs (minus `logs/`), `*.code-task.md`, `agent/memories.md`, `agent/decisions.md`; anything under the workspace-root `logs/`. (2) This repo's `.gitignore` adds `crates/**/.ralph/`, `/logs/`, `.ralph/specs/**/logs/`, which satisfies "nested .ralph/ is ignored" for the test-run half.
+- Confidence: 78
+- Alternatives Considered: (A) Ignore rules only. (B) Staging only tracked changes, never untracked files. (C) Make in-process tests stop creating `crates/*/.ralph/diagnostics` (inherited `RALPH_DIAGNOSTICS`).
+- Reasoning: (A) fixes this repo but not the auto-commit, which runs in user repos whose `.gitignore` knows nothing about Ralph's layout; the landing tests even have to add `.ralph/` to `.gitignore` by hand to keep it out. (B) drops new source files, which the spec forbids. A code-level exclusion keyed to Ralph's own layout is the narrowest rule that works everywhere; it only ever narrows what gitignore already allows, and tracked files (even under `logs/` or a nested `.ralph/`) still commit, so deliberate tracking wins. Root `logs/` is Ralph's because its prompts (`hatless_ralph.rs`, `instructions.rs`) point agents there for temporary artifacts; nested `logs/` dirs (e.g. `src/logs/`) are source and stay in. (C) is the spec's other allowed route; skipped because the ignore satisfies the criterion and the diagnostics writers are scattered.
+- Reversibility: High; one function and three ignore lines.
+- Timestamp: 2026-11-12T22:00:00Z
+
+## DEC-016 (2026-11-12T21:45Z)
+- Decision: How headless (`CliExecutor`) Claude iterations get real cost/token metrics, and how far step 03 reaches past the summary.
+- Chosen Option: Move the PTY executor's private `ClaudeSessionState` aggregation into `claude_stream.rs` as `ClaudeSessionMetrics::observe(&event, context_window) -> Option<SessionResult>`, used by both `pty_executor::dispatch_stream_event` and `CliExecutor` (which now parses StreamJson lines for metrics only: display, text normalization and exit-code `success` are unchanged). The headless branch in `loop_runner.rs` takes metrics from `session_result` independently of `extracted_text`, and sets `context_tokens` to the peak input like the PTY path. No shared PTY/headless outcome helper: the PTY reads flattened `PtyExecutionResult` fields, the headless path reads `SessionResult`, so a helper would just be an adapter between two shapes. Also in scope: wiring `EventLoop::log_iteration_performance` (performance.jsonl had no production writer at all) and moving `add_cost` before the `--no-tui` footer so `cum` includes the current iteration.
+- Confidence: 80
+- Alternatives Considered: (A) Duplicate the peak/sum logic in `cli_executor.rs`. (B) Make `pty_executor`'s private state and `dispatch_stream_event` `pub(crate)` and call it from `CliExecutor` with a `QuietStreamHandler`. (C) Leave performance.jsonl and the footer for a later task.
+- Reasoning: (A) lets the two executors drift on the same stream. (B) couples the CLI executor to PTY internals and re-accumulates text it throws away. (C): the plan said `context_tokens = 0` caused the empty performance.jsonl; it didn't. `DiagnosticsCollector::log_performance` had no caller, so the spec's observed symptom would survive this fix. Both additions are a few lines and come with red/green tests.
+- Reversibility: High; the tracker is a move, the wiring is one method and one call.
+- Timestamp: 2026-11-12T21:45:00Z
+
+## DEC-017 (2026-11-12T22:30Z)
+- Decision: Where the per-iteration context window comes from, and its precedence over configuration (spec defect 1, third criterion).
+- Chosen Option: `ClaudeStreamEvent::Result` parses `modelUsage.<model>.contextWindow` (leniently: a malformed `modelUsage` yields no window instead of failing the line, which also carries cost). `ClaudeSessionMetrics` remembers the `system` init line's model and picks that model's window, else the largest reported one, else the caller's fallback. The PTY path gets it via a new `PtyExecutionResult.context_window`; the headless path via `SessionResult.context_window` (CliExecutor still passes fallback 0). `loop_runner::reported_or_configured_context_window` picks a reported window (> 0) over `resolve_context_window_for_backend`, in both paths. Precedence: stream > `event_loop.context_window_tokens` override > backend default.
+- Confidence: 75
+- Alternatives Considered: (A) Explicit override beats the stream. (B) Always take the max window in `modelUsage`. (C) Only the headless path (the spec's observed symptom).
+- Reasoning: (A): the override's documented purpose is correcting a wrong backend default (e.g. 1M-window users); the stream reports the running model's actual window, so it can't be the wrong one, while a stale override can be. The task text also names `resolve_context_window_for_backend` (which includes the override) as the fallback for when the stream reports nothing. The window only drives display and performance.jsonl percentages, so the stakes of the choice are low. (B) is wrong when a helper/subagent model has the larger window than the session's model. (C) would leave PTY Claude runs reporting 200000 for the same stream.
+- Reversibility: High; swapping (A) in is a one-line change in `reported_or_configured_context_window`'s callers.
+- Timestamp: 2026-11-12T22:30:00Z

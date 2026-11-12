@@ -1,5 +1,7 @@
 //! Integration tests for remote review and rebase loop workflows.
 
+mod common;
+
 use anyhow::{Context, Result, bail};
 use ralph_core::MergeQueue;
 use std::fs;
@@ -36,7 +38,7 @@ fn git_succeeds(path: &Path, args: &[&str]) -> Result<bool> {
 }
 
 fn ralph_loops(path: &Path, args: &[&str]) -> Result<String> {
-    let output = Command::new(env!("CARGO_BIN_EXE_ralph"))
+    let output = common::ralph_command()
         .arg("loops")
         .args(args)
         .current_dir(path)

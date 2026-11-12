@@ -5,8 +5,10 @@
 //! (exit 2). Covers both ways a backend can complete: emitting the completion
 //! event with `ralph emit`, and printing the promise as its final output line.
 
+mod common;
+
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Output;
 use tempfile::TempDir;
 
 fn write_backend(dir: &Path, body: &str) {
@@ -41,7 +43,7 @@ event_loop:
     )
     .expect("write config");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_ralph"))
+    let output = common::ralph_command()
         .args([
             "run",
             "--no-tui",
@@ -50,8 +52,6 @@ event_loop:
             "finish now",
         ])
         .current_dir(temp_path)
-        .env_remove("RALPH_EVENTS_FILE")
-        .env_remove("RALPH_WORKSPACE_ROOT")
         .output()
         .expect("execute ralph");
     // Keep the temp dir alive until the process has exited.
@@ -123,7 +123,7 @@ hats:
     )
     .expect("write config");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_ralph"))
+    let output = common::ralph_command()
         .args([
             "run",
             "--no-tui",
@@ -132,8 +132,6 @@ hats:
             "finish now",
         ])
         .current_dir(temp_path)
-        .env_remove("RALPH_EVENTS_FILE")
-        .env_remove("RALPH_WORKSPACE_ROOT")
         .output()
         .expect("execute ralph");
     assert_eq!(output.status.code(), Some(0), "{}", describe(&output));

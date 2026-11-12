@@ -35,7 +35,11 @@ hats:
 
 #[test]
 fn test_guidance_persists_across_iterations_solo_mode() {
-    let config = RalphConfig::default();
+    // Guidance is persisted to the scratchpad under `workspace_root`; pin it to a temp dir
+    // so the test never appends to the caller's (possibly live) scratchpad.
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = RalphConfig::default();
+    config.core.workspace_root = dir.path().to_path_buf();
     let mut event_loop = EventLoop::new(config);
     let ralph_id = HatId::new("ralph");
 
@@ -73,7 +77,9 @@ hats:
     triggers: ["task.start"]
     publishes: ["task.plan"]
 "#;
-    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let mut config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    config.core.workspace_root = dir.path().to_path_buf();
     let mut event_loop = EventLoop::new(config);
     let ralph_id = HatId::new("ralph");
 

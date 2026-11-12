@@ -4,6 +4,8 @@
 //! then spawns a child RPC process, which sees the parent's lock and incorrectly
 //! spawns a worktree.
 
+mod common;
+
 use std::process::Command;
 use tempfile::TempDir;
 
@@ -25,7 +27,7 @@ fn test_subprocess_tui_no_spurious_worktree() {
     // Run ralph with a short timeout in subprocess TUI mode
     // In a proper TTY, this would use subprocess TUI, but in test we force it
     // We use --legacy-tui to ensure we get the in-process behavior for comparison
-    let output = Command::new(env!("CARGO_BIN_EXE_ralph"))
+    let output = common::ralph_command()
         .args([
             "run",
             "--dry-run",
@@ -89,7 +91,7 @@ fn test_lock_contention_detection() {
     .expect("write lock file");
 
     // Try to run with --exclusive - should wait and succeed
-    let output = Command::new(env!("CARGO_BIN_EXE_ralph"))
+    let output = common::ralph_command()
         .args([
             "run",
             "--dry-run",
