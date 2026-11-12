@@ -233,3 +233,18 @@ The PTY path carries it on the new `PtyExecutionResult.context_window`; the head
 - Step 02: auto-commit artifacts (task-1794517669-7ea9): passed Critic review 2026-11-12
 - Step 03: headless Claude metrics (task-1794517680-b2c6): passed Critic review 2026-11-12
 - Step 04: stream context window (task-1794517688-dcbe): passed Critic review 2026-11-12
+
+## Final verification (Finalizer, 2026-11-12)
+
+- `scripts/check-test-event-isolation.sh` (core, adapters, cli single-threaded): 2107 passed, 0 failed; sentinel
+  unchanged; this loop's live events file unchanged (19 lines before and after, no `test.*` topics). Log:
+  `logs/final-sentinel-suites.log`.
+- clippy `-D warnings` and `fmt --check` pass (`logs/final-clippy.log`, `logs/final-fmt.log`). No preset or
+  `ralph-core/data/` changes, so the embedded-file sync isn't needed.
+- Real binary in a scratch repo with no .gitignore, fake headless Claude stream (`logs/final-e2e-*.log`):
+  - Completing run: summary shows cost 0.2934, output 610, num_turns 2, context_window 1000000. Landing
+    auto-commit has `src/added.rs` and the README edit but not `logs/hat.log`, `crates/foo/.ralph/diagnostics/**`
+    or `.ralph/*`.
+  - `max_cost_usd: 0.10`: stops after iteration 1 with `max_cost` (exit 2), and `performance.jsonl` gets written.
+- `input_tokens` is the peak per-turn context (22208), following the PTY path's existing convention (DEC-016);
+  it isn't the result line's uncached `input_tokens` (20).
