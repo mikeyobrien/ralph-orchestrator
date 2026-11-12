@@ -20,6 +20,7 @@ mod event_loop;
 mod event_parser;
 mod event_reader;
 pub mod file_lock;
+pub mod gates;
 mod git_ops;
 mod handoff;
 mod hat_registry;
@@ -64,16 +65,18 @@ pub use backend::BackendMetadata;
 #[cfg(feature = "recording")]
 pub use cli_capture::{CliCapture, CliCapturePair};
 pub use config::{
-    CliConfig, ConfigError, CoreConfig, EffortLevel, EventLoopConfig, EventMetadata,
-    FeaturesConfig, HatBackend, HatConfig, InjectMode, MemoriesConfig, MemoriesFilter, RalphConfig,
-    RobotMode, ScratchpadConfig, SkillOverride, SkillsConfig, resolve_context_window,
-    resolve_context_window_for_backend,
+    CliConfig, CommandRequirement, CommitVerify, ConfigError, CoreConfig, EffortLevel,
+    EventLoopConfig, EventMetadata, FeaturesConfig, FieldRequirement, FieldVerify, GateConfig,
+    GateRequirement, HatBackend, HatConfig, HatRun, InjectMode, MemoriesConfig, MemoriesFilter,
+    RalphConfig, RobotMode, ScratchpadConfig, SkillOverride, SkillsConfig, VerifyKeyword,
+    resolve_context_window, resolve_context_window_for_backend,
 };
 // Re-export loop_name types (also available via FeaturesConfig.loop_naming)
 pub use diagnostics::DiagnosticsCollector;
 pub use event_logger::{EventHistory, EventLogger, EventRecord};
 pub use event_loop::{
-    EventLoop, LoopState, ProcessedEvents, ProcessedEventsWithWaves, TerminationReason, UserPrompt,
+    EventLoop, LoopState, ProcessedEvents, ProcessedEventsWithWaves, SCRIPT_STDERR_TAIL_BYTES,
+    ScriptFailure, TerminationReason, UserPrompt,
 };
 pub use event_parser::EventParser;
 pub use event_reader::{Event, EventReader, MalformedLine, ParseResult};
@@ -86,6 +89,8 @@ pub use git_ops::{
 pub use handoff::{HandoffError, HandoffResult, HandoffWriter};
 pub use hat_registry::HatRegistry;
 pub use hatless_ralph::{HatInfo, HatTopology, HatlessRalph};
+#[cfg(unix)]
+pub use hooks::signal_active_hook_process_groups;
 pub use hooks::{
     HookDefaults, HookEngine, HookExecutor, HookExecutorContract, HookExecutorError,
     HookInvocationPayload, HookMutationConfig, HookOnError, HookPayloadBuilderInput,
@@ -134,7 +139,7 @@ pub use task_definition::{
     TaskDefinition, TaskDefinitionError, TaskSetup, TaskSuite, Verification,
 };
 pub use task_store::TaskStore;
-pub use text::{floor_char_boundary, truncate_with_ellipsis};
+pub use text::{floor_char_boundary, sanitize_for_process, truncate_with_ellipsis};
 pub use urgent_steer::{UrgentSteerRecord, UrgentSteerStore};
 pub use wave_detection::{DetectedWave, detect_wave_events, resolve_aggregate_wait};
 pub use wave_prompt::{WaveWorkerContext, build_wave_worker_prompt};

@@ -93,6 +93,9 @@ pub fn print_loop_banner(
 /// progress) without having to parse `events.jsonl`. Emitted after the
 /// backend finishes each iteration but before the next separator.
 ///
+/// `iteration` is the model iteration count against `max_iterations`, so
+/// script hat runs (which don't count toward it) leave it unchanged.
+///
 /// Format:
 /// ```text
 /// [iter 3/150 done] dur=1m12s total=4m30s cost=+$0.14 (cum $0.42) budget=2%
@@ -163,6 +166,9 @@ fn resume_hint_for(reason: &TerminationReason, loop_id: &str) -> Option<String> 
 /// Per spec: "Each iteration must be clearly demarcated in the output so users can
 /// visually distinguish where one iteration ends and another begins."
 ///
+/// `budget_iteration` is the model iteration count against `max_iterations`;
+/// it trails `iteration` once script hats have run.
+///
 /// Format:
 /// ```text
 /// ===============================================================================
@@ -173,6 +179,7 @@ pub fn print_iteration_separator(
     iteration: u32,
     hat_id: &str,
     elapsed: Duration,
+    budget_iteration: u32,
     max_iterations: u32,
     use_colors: bool,
 ) {
@@ -184,7 +191,7 @@ pub fn print_iteration_separator(
     // Build the content line (without box chars for measuring)
     let content = format!(
         " ITERATION {} | {} {} | {} elapsed | {}/{}",
-        iteration, emoji, hat_id, elapsed_str, iteration, max_iterations
+        iteration, emoji, hat_id, elapsed_str, budget_iteration, max_iterations
     );
 
     // Use fixed width of 79 characters for the box (standard terminal width)
@@ -241,6 +248,7 @@ pub fn print_termination(
     let (color, icon, label) = match reason {
         TerminationReason::CompletionPromise => (GREEN, "?", "Completion promise detected"),
         TerminationReason::MaxIterations => (YELLOW, "?", "Maximum iterations reached"),
+        TerminationReason::MaxScriptRuns => (YELLOW, "?", "Maximum script runs reached"),
         TerminationReason::MaxRuntime => (YELLOW, "?", "Maximum runtime exceeded"),
         TerminationReason::MaxCost => (YELLOW, "?", "Maximum cost exceeded"),
         TerminationReason::ConsecutiveFailures => (RED, "?", "Too many consecutive failures"),
@@ -596,7 +604,7 @@ mod tests {
         );
 
         println!();
-        print_iteration_separator(1, "planner", Duration::from_secs(0), 150, false);
+        print_iteration_separator(1, "planner", Duration::from_secs(0), 1, 150, false);
         println!("  (… backend streams tool calls and text here …)");
         print_iteration_footer(
             1,
@@ -608,7 +616,7 @@ mod tests {
             false,
         );
 
-        print_iteration_separator(2, "builder", Duration::from_secs(42), 150, false);
+        print_iteration_separator(2, "builder", Duration::from_secs(42), 2, 150, false);
         println!("  (… builder output …)");
         print_iteration_footer(
             2,
@@ -620,7 +628,7 @@ mod tests {
             false,
         );
 
-        print_iteration_separator(3, "reviewer", Duration::from_secs(110), 150, false);
+        print_iteration_separator(3, "reviewer", Duration::from_secs(110), 3, 150, false);
         println!("  (… reviewer output …)");
         print_iteration_footer(
             3,

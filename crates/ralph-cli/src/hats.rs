@@ -14,7 +14,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use indicatif::{ProgressBar, ProgressStyle};
 use ralph_adapters::{CliBackend, detect_backend_default};
-use ralph_core::{HatRegistry, RalphConfig, truncate_with_ellipsis};
+use ralph_core::{HatConfig, HatRegistry, RalphConfig, truncate_with_ellipsis};
 use std::collections::{BTreeMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -594,6 +594,13 @@ fn check_instructions<W: Write>(
         .collect();
 
     for hat in registry.all() {
+        // A script hat runs a command instead of a prompt: no prose to check.
+        if registry
+            .get_config(&hat.id)
+            .is_some_and(HatConfig::is_script)
+        {
+            continue;
+        }
         let mut text = hat.instructions.clone();
         let file = instructions_dir.join(format!("{}.md", hat.id));
         if let Ok(extra) = std::fs::read_to_string(&file) {
@@ -1436,6 +1443,41 @@ mod tests {
         let output = validate_with_instructions(&registry);
         assert!(
             output.contains("Hat 'Planner' has no instructions"),
+            "{output}"
+        );
+    }
+
+    #[test]
+    fn test_validate_instructions_skips_script_hats() {
+        let config: RalphConfig = serde_yaml::from_str(
+            r#"
+hats:
+  advance:
+    name: "Queue keeper"
+    description: "Script step"
+    triggers: ["queue.start"]
+    publishes: ["queue.advance"]
+    run: "sh scripts/advance.sh"
+  worker:
+    name: "Worker"
+    description: "Model step"
+    triggers: ["queue.advance"]
+    publishes: ["queue.done"]
+"#,
+        )
+        .unwrap();
+        let registry = HatRegistry::from_config(&config);
+        let mut buf = Vec::new();
+        let dir = tempfile::tempdir().unwrap();
+        let _ = validate_hats(&mut buf, &config, &registry, false, Some(dir.path()));
+        let output = String::from_utf8(buf).unwrap();
+
+        assert!(
+            !output.contains("Queue keeper' has no instructions"),
+            "{output}"
+        );
+        assert!(
+            output.contains("Hat 'Worker' has no instructions"),
             "{output}"
         );
     }

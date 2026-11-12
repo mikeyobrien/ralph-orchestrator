@@ -13,6 +13,8 @@ pub use engine::{
     HookPayloadContextInput, HookPayloadIteration, HookPayloadLoop, HookPayloadMetadata,
     ResolvedHookSpec,
 };
+#[cfg(unix)]
+pub use executor::signal_active_hook_process_groups;
 pub use executor::{
     HookExecutor, HookExecutorContract, HookExecutorError, HookRunRequest, HookRunResult,
     HookStreamOutput,

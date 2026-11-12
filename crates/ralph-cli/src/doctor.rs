@@ -635,6 +635,7 @@ mod tests {
             timeout: None,
             concurrency: 1,
             aggregate: None,
+            run: None,
         }
     }
 

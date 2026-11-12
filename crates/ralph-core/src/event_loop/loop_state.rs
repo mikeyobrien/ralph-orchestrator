@@ -82,6 +82,13 @@ pub struct LoopState {
 
     /// Human guidance messages that must be acknowledged before completion.
     pub unacknowledged_guidance: Vec<String>,
+
+    /// Script hat runs so far. Each one also has an iteration number.
+    pub script_runs: u32,
+
+    /// True while the current iteration is a script hat run (set by
+    /// `begin_script_iteration`, cleared when a prompt is built).
+    pub script_iteration: bool,
 }
 
 impl Default for LoopState {
@@ -111,6 +118,8 @@ impl Default for LoopState {
             last_input_tokens: None,
             hat_peak_input_tokens: HashMap::new(),
             unacknowledged_guidance: Vec::new(),
+            script_runs: 0,
+            script_iteration: false,
         }
     }
 }
@@ -128,6 +137,11 @@ impl LoopState {
 
     fn event_counts_toward_stale_loop(event: &Event) -> bool {
         !matches!(event.topic.as_str(), "task.complete")
+    }
+
+    /// Iterations that ran a model: the count `max_iterations` bounds.
+    pub fn model_iterations(&self) -> u32 {
+        self.iteration.saturating_sub(self.script_runs)
     }
 
     /// Record that an event has been seen during this loop run.

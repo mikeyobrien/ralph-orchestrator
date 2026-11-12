@@ -7,8 +7,57 @@ use std::io;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::{LazyLock, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
+
+/// Process groups of running commands started with `own_process_group`.
+///
+/// Such a command leads its own process group, so a timeout can kill the
+/// whole tree (a shell's children inherit the output pipes and would
+/// otherwise keep the run waiting). The flip side is that a terminal Ctrl+C
+/// no longer reaches them, so Ralph's signal handlers forward to these groups.
+static ACTIVE_PROCESS_GROUPS: LazyLock<Mutex<HashSet<u32>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// Unregisters a hook's process group when its run ends, however it ends.
+struct ActiveProcessGroup(u32);
+
+impl ActiveProcessGroup {
+    fn register(pid: u32) -> Self {
+        if let Ok(mut groups) = ACTIVE_PROCESS_GROUPS.lock() {
+            groups.insert(pid);
+        }
+        Self(pid)
+    }
+}
+
+impl Drop for ActiveProcessGroup {
+    fn drop(&mut self) {
+        if let Ok(mut groups) = ACTIVE_PROCESS_GROUPS.lock() {
+            groups.remove(&self.0);
+        }
+    }
+}
+
+/// Sends `signal` to the process group of every running command that was
+/// started with `own_process_group` (script hats, gate commands).
+///
+/// Call this when Ralph is interrupted: those commands are not in Ralph's
+/// process group, so neither a terminal Ctrl+C nor signalling Ralph's own
+/// group reaches them.
+#[cfg(unix)]
+pub fn signal_active_hook_process_groups(signal: nix::sys::signal::Signal) {
+    let groups: Vec<u32> = ACTIVE_PROCESS_GROUPS
+        .lock()
+        .map(|groups| groups.iter().copied().collect())
+        .unwrap_or_default();
+    for pid in groups {
+        if let Ok(pid) = i32::try_from(pid) {
+            let _ = nix::sys::signal::killpg(nix::unistd::Pid::from_raw(pid), signal);
+        }
+    }
+}
 
 /// Input contract for executing a single lifecycle hook command.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +88,15 @@ pub struct HookRunRequest {
 
     /// JSON lifecycle payload that will be written to stdin.
     pub stdin_payload: serde_json::Value,
+
+    /// Run the command in its own process group, so a timeout kills its
+    /// descendants too. Only for commands that start after Ralph's signal
+    /// handlers are installed (they forward interrupts to these groups via
+    /// `signal_active_hook_process_groups`). Lifecycle hooks leave it off so
+    /// a terminal Ctrl+C keeps reaching them directly, including the
+    /// `pre.loop.start` hooks that run before those handlers exist.
+    #[serde(default)]
+    pub own_process_group: bool,
 }
 
 /// Captured hook stream output with truncation metadata.
@@ -233,6 +291,11 @@ impl HookExecutorContract for HookExecutor {
         command.args(request.command.iter().skip(1));
         command.current_dir(&resolved_cwd);
         command.envs(&request.env);
+        #[cfg(unix)]
+        if request.own_process_group {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
 
         // Step 3.3 wires JSON stdin payload delivery.
         command.stdin(Stdio::piped());
@@ -266,6 +329,9 @@ impl HookExecutorContract for HookExecutor {
             }
         }
         let mut child = child.expect("spawn loop must break or return");
+        let _active_group = request
+            .own_process_group
+            .then(|| ActiveProcessGroup::register(child.id()));
 
         write_stdin_payload(
             &mut child,
@@ -282,6 +348,7 @@ impl HookExecutorContract for HookExecutor {
 
         let (status, timed_out) = wait_for_completion(
             &mut child,
+            request.own_process_group,
             request.timeout_seconds,
             &request.phase_event,
             &request.hook_name,
@@ -368,6 +435,7 @@ fn write_stdin_payload(
 
 fn wait_for_completion(
     child: &mut Child,
+    own_process_group: bool,
     timeout_seconds: u64,
     phase_event: &str,
     hook_name: &str,
@@ -383,6 +451,7 @@ fn wait_for_completion(
                 if wait_started_at.elapsed() >= timeout {
                     let status = terminate_for_timeout(
                         child,
+                        own_process_group,
                         timeout_seconds,
                         phase_event,
                         hook_name,
@@ -409,11 +478,23 @@ fn wait_for_completion(
 
 fn terminate_for_timeout(
     child: &mut Child,
+    own_process_group: bool,
     timeout_seconds: u64,
     phase_event: &str,
     hook_name: &str,
     command: &str,
 ) -> Result<ExitStatus, HookExecutorError> {
+    // A child leading its own process group: kill the group so descendants
+    // holding the output pipes die too. `child.kill()` below still covers
+    // the leader if the group signal fails.
+    #[cfg(unix)]
+    if own_process_group && let Ok(pid) = i32::try_from(child.id()) {
+        let _ = nix::sys::signal::killpg(
+            nix::unistd::Pid::from_raw(pid),
+            nix::sys::signal::Signal::SIGKILL,
+        );
+    }
+
     if let Err(source) = child.kill() {
         if let Ok(Some(status)) = child.try_wait() {
             return Ok(status);
@@ -684,6 +765,7 @@ mod tests {
             timeout_seconds: 2,
             max_output_bytes: 1024,
             stdin_payload: json!({"schema_version": 1, "phase_event": "pre.loop.start"}),
+            own_process_group: false,
         }
     }
 
@@ -753,6 +835,77 @@ mod tests {
 
         assert!(result.timed_out);
         assert_ne!(result.exit_code, Some(0));
+    }
+
+    #[test]
+    fn hooks_stay_in_ralphs_process_group_unless_asked() {
+        let temp_dir = tempdir().expect("tempdir");
+        let ralph_group = nix::unistd::getpgrp().to_string();
+        for (own_group, same_group) in [(false, true), (true, false)] {
+            let mut request = request_with_command(
+                temp_dir.path(),
+                vec![
+                    "sh".to_string(),
+                    "-c".to_string(),
+                    // Builtins only on Linux (field 5 of /proc/<pid>/stat is
+                    // the pgid): spawning `ps` under a loaded parallel suite
+                    // could outlast the timeout and print nothing.
+                    "if [ -r /proc/$$/stat ]; then read -r stat < /proc/$$/stat; \
+                     set -- $stat; echo \"$5\"; else ps -o pgid= -p $$; fi"
+                        .to_string(),
+                ],
+            );
+            // Not a timeout test: leave a loaded machine plenty of room.
+            request.timeout_seconds = 30;
+            request.own_process_group = own_group;
+            let result = HookExecutor::new().run(request).expect("hook runs");
+            assert!(
+                result.exit_code == Some(0) && !result.timed_out,
+                "own_process_group={own_group}: exit {:?}, timed_out {}, stderr {:?}",
+                result.exit_code,
+                result.timed_out,
+                result.stderr.content
+            );
+            assert_eq!(
+                result.stdout.content.trim() == ralph_group,
+                same_group,
+                "own_process_group={own_group}: child pgid {} vs ralph {ralph_group}",
+                result.stdout.content.trim()
+            );
+        }
+    }
+
+    #[test]
+    fn timeout_kills_the_whole_process_group() {
+        // `sleep` is a grandchild that inherits the output pipes. Killing only
+        // the shell leaves it holding them, so the run would block until it
+        // exits on its own.
+        let temp_dir = tempdir().expect("tempdir");
+        let mut request = request_with_command(
+            temp_dir.path(),
+            vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "echo started; sleep 30; echo done".to_string(),
+            ],
+        );
+        // 3s lets a loaded machine start the shell and print before the
+        // kill; 20s is still well short of the grandchild's 30s sleep.
+        request.timeout_seconds = 3;
+        request.own_process_group = true;
+
+        let started = Instant::now();
+        let result = HookExecutor::new()
+            .run(request)
+            .expect("hook run completes");
+
+        assert!(result.timed_out);
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "timed-out run took {:?}",
+            started.elapsed()
+        );
+        assert_eq!(result.stdout.content, "started\n");
     }
 
     #[test]

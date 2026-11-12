@@ -212,6 +212,7 @@ impl SummaryWriter {
         match reason {
             TerminationReason::CompletionPromise => "Completed successfully",
             TerminationReason::MaxIterations => "Stopped: max iterations reached",
+            TerminationReason::MaxScriptRuns => "Stopped: max script runs reached",
             TerminationReason::MaxRuntime => "Stopped: max runtime exceeded",
             TerminationReason::MaxCost => "Stopped: max cost exceeded",
             TerminationReason::ConsecutiveFailures => "Failed: too many consecutive failures",
@@ -331,6 +332,8 @@ mod tests {
             last_input_tokens: None,
             hat_peak_input_tokens: std::collections::HashMap::new(),
             unacknowledged_guidance: Vec::new(),
+            script_runs: 0,
+            script_iteration: false,
         }
     }
 

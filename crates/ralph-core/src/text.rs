@@ -35,6 +35,29 @@ pub fn floor_char_boundary(s: &str, index: usize) -> usize {
     boundary
 }
 
+/// Makes agent-controlled text safe to hand to a child process as an env value
+/// or argument: removes NUL bytes (which `execve` cannot carry, so spawn fails)
+/// and caps the result at `max_bytes` on a char boundary (Linux rejects a
+/// single string over 128 KiB with `E2BIG`).
+///
+/// # Examples
+///
+/// ```
+/// use ralph_core::sanitize_for_process;
+///
+/// assert_eq!(sanitize_for_process("a\0b", 64), "ab");
+/// assert_eq!(sanitize_for_process("a→b", 2), "a");
+/// ```
+#[must_use]
+pub fn sanitize_for_process(s: &str, max_bytes: usize) -> String {
+    let cleaned = if s.contains('\0') {
+        std::borrow::Cow::Owned(s.replace('\0', ""))
+    } else {
+        std::borrow::Cow::Borrowed(s)
+    };
+    cleaned[..floor_char_boundary(&cleaned, max_bytes)].to_string()
+}
+
 /// Truncates a string to a maximum number of characters, including "..." if truncated.
 ///
 /// This function is UTF-8 safe: it uses character boundaries, not byte boundaries,
@@ -124,6 +147,17 @@ mod tests {
     fn test_floor_char_boundary_empty() {
         assert_eq!(floor_char_boundary("", 0), 0);
         assert_eq!(floor_char_boundary("", 5), 0);
+    }
+
+    #[test]
+    fn test_sanitize_for_process() {
+        assert_eq!(sanitize_for_process("plain", 64), "plain");
+        assert_eq!(sanitize_for_process("\0a\0b\0", 64), "ab");
+        // NULs are removed before the cap, so they do not use up the budget.
+        assert_eq!(sanitize_for_process("\0\0\0abcd", 4), "abcd");
+        // Cap falls inside the 3-byte checkmark.
+        assert_eq!(sanitize_for_process("a✅b", 3), "a");
+        assert_eq!(sanitize_for_process("", 0), "");
     }
 
     #[test]

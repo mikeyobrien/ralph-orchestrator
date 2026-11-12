@@ -2,11 +2,18 @@
 //!
 //! The event loop coordinates the execution of hats via pub/sub messaging.
 
+#[cfg(test)]
+mod gate_tests;
+mod gating;
 mod loop_state;
+#[cfg(test)]
+mod script_hat_tests;
+mod script_hats;
 #[cfg(test)]
 mod tests;
 
 pub use loop_state::LoopState;
+pub use script_hats::{SCRIPT_STDERR_TAIL_BYTES, ScriptFailure};
 
 use crate::config::{HatBackend, InjectMode, RalphConfig, ScratchpadConfig};
 use crate::event_parser::{EventParser, MutationEvidence, MutationStatus};
@@ -18,6 +25,7 @@ use crate::loop_context::LoopContext;
 use crate::memory_store::{MarkdownMemoryStore, format_memories_as_markdown, truncate_to_budget};
 use crate::skill_registry::SkillRegistry;
 use crate::text::floor_char_boundary;
+use gating::CompletionGate;
 use ralph_proto::{CheckinContext, Event, EventBus, Hat, HatId, RobotService};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -46,6 +54,9 @@ pub struct ProcessedEvents {
     pub human_interact_context: Option<Value>,
     /// Whether any events lacked specific hat subscribers (orphans handled by Ralph).
     pub has_orphans: bool,
+    /// Whether the completion or cancellation promise was read. Ralph acts on
+    /// these instead of publishing them, so `had_events` does not count them.
+    pub had_promise_events: bool,
 }
 
 /// Result of processing events from JSONL with wave events partitioned out.
@@ -69,6 +80,10 @@ pub struct PersistedLoopState {
     pub last_input_tokens: Option<u64>,
     #[serde(default)]
     pub hat_peak_input_tokens: HashMap<String, u64>,
+    /// Script hat runs so far; `iteration - script_runs` is the model
+    /// iteration count that `max_iterations` bounds.
+    #[serde(default)]
+    pub script_runs: u32,
 }
 
 /// Reason the event loop terminated.
@@ -78,6 +93,8 @@ pub enum TerminationReason {
     CompletionPromise,
     /// Maximum iterations reached.
     MaxIterations,
+    /// Maximum script hat runs reached.
+    MaxScriptRuns,
     /// Maximum runtime exceeded.
     MaxRuntime,
     /// Maximum cost exceeded.
@@ -120,6 +137,7 @@ impl TerminationReason {
             | TerminationReason::Stopped
             | TerminationReason::WorkspaceGone => 1,
             TerminationReason::MaxIterations
+            | TerminationReason::MaxScriptRuns
             | TerminationReason::MaxRuntime
             | TerminationReason::MaxCost => 2,
             TerminationReason::Interrupted => 130,
@@ -138,6 +156,7 @@ impl TerminationReason {
         match self {
             TerminationReason::CompletionPromise => "completed",
             TerminationReason::MaxIterations => "max_iterations",
+            TerminationReason::MaxScriptRuns => "max_script_runs",
             TerminationReason::MaxRuntime => "max_runtime",
             TerminationReason::MaxCost => "max_cost",
             TerminationReason::ConsecutiveFailures => "consecutive_failures",
@@ -179,6 +198,13 @@ pub struct EventLoop {
     /// Robot service for human-in-the-loop communication.
     /// Injected externally when `human.enabled` is true and this is the primary loop.
     robot_service: Option<Box<dyn RobotService>>,
+    /// Runs gate `command` requirements.
+    gate_runner: Box<dyn crate::gates::GateCommandRunner + Send + Sync>,
+    /// HEAD recorded at iteration start; `None` until an iteration records
+    /// it, or when no gate checks `new` commits.
+    iteration_start_head: Option<crate::gates::StartHead>,
+    /// Gate outcome of completion promises emitted this iteration.
+    completion_gate: CompletionGate,
 }
 
 impl EventLoop {
@@ -324,6 +350,9 @@ impl EventLoop {
             loop_context: Some(context),
             skill_registry,
             robot_service: None,
+            gate_runner: Box::new(crate::gates::HookGateCommandRunner::new()),
+            iteration_start_head: None,
+            completion_gate: CompletionGate::NotGated,
         }
     }
 
@@ -431,6 +460,9 @@ impl EventLoop {
             loop_context: None,
             skill_registry,
             robot_service: None,
+            gate_runner: Box::new(crate::gates::HookGateCommandRunner::new()),
+            iteration_start_head: None,
+            completion_gate: CompletionGate::NotGated,
         }
     }
 
@@ -530,6 +562,7 @@ impl EventLoop {
                 .iter()
                 .map(|(hat, tokens)| (hat.as_str().to_string(), *tokens))
                 .collect(),
+            script_runs: self.state.script_runs,
         }
     }
 
@@ -553,6 +586,7 @@ impl EventLoop {
             .into_iter()
             .map(|(hat, tokens)| (HatId::new(hat), tokens))
             .collect();
+        self.state.script_runs = persisted.script_runs;
         Ok(())
     }
 
@@ -641,8 +675,13 @@ impl EventLoop {
     pub fn check_termination(&self) -> Option<TerminationReason> {
         let cfg = &self.config.event_loop;
 
-        if self.state.iteration >= cfg.max_iterations {
+        // Script runs get iteration numbers but don't spend the model budget.
+        if self.state.model_iterations() >= cfg.max_iterations {
             return Some(TerminationReason::MaxIterations);
+        }
+
+        if self.state.script_runs >= cfg.max_script_runs {
+            return Some(TerminationReason::MaxScriptRuns);
         }
 
         if self.state.elapsed().as_secs() >= cfg.max_runtime_seconds {
@@ -736,7 +775,14 @@ impl EventLoop {
     /// using `ralph emit`), this sets `completion_requested = true` so that
     /// `check_completion_event()` can apply all safety checks (persistent mode,
     /// required events, runtime tasks) before terminating.
+    ///
+    /// A gated completion promise is checked first; when the gate fails,
+    /// completion is not requested.
     pub fn request_completion_from_text_fallback(&mut self) {
+        if !self.completion_text_passes_gate() {
+            warn!("Completion promise in output text rejected by its gate");
+            return;
+        }
         self.state.completion_requested = true;
         info!("Completion requested via text fallback (output contained completion promise)");
     }
@@ -955,10 +1001,14 @@ impl EventLoop {
             None => Vec::new(),
         };
 
-        let processed = self.process_parse_result(crate::event_reader::ParseResult {
-            events: replay_events,
-            malformed: replay_malformed,
-        })?;
+        // Replayed events were never routed, so they are gated like new ones.
+        let (processed, _) = self.process_parse_result(
+            crate::event_reader::ParseResult {
+                events: replay_events,
+                malformed: replay_malformed,
+            },
+            Vec::new(),
+        )?;
 
         if let Ok(metadata) = std::fs::metadata(&path) {
             self.event_reader.set_position(metadata.len());
@@ -1135,6 +1185,10 @@ impl EventLoop {
     /// primed memories to the prompt context. If a scratchpad file exists and is
     /// non-empty, its content is also prepended (before memories).
     pub fn build_prompt(&mut self, hat_id: &HatId) -> Option<String> {
+        // Building the prompt is the last step before the hat runs.
+        self.begin_gated_iteration();
+        self.state.script_iteration = false;
+
         // Handle "ralph" hat - the constant coordinator
         // Per spec: "Hatless Ralph is constant — Cannot be replaced, overwritten, or configured away"
         if hat_id.as_str() == "ralph" {
@@ -1181,8 +1235,13 @@ impl EventLoop {
 
                 let mut all_events = Vec::new();
                 let mut system_events = Vec::new();
+                let script_hat_ids = self.active_script_hat_ids();
 
                 for id in &all_hat_ids {
+                    if script_hat_ids.contains(id) {
+                        // Left for a script iteration.
+                        continue;
+                    }
                     let pending = self.bus.take_pending(id);
                     if pending.is_empty() {
                         continue;
@@ -2027,6 +2086,9 @@ impl EventLoop {
         success: bool,
     ) -> Option<TerminationReason> {
         self.state.iteration += 1;
+        if self.state.script_iteration {
+            self.state.script_runs += 1;
+        }
         self.state.last_hat = Some(hat_id.clone());
 
         // Periodic robot check-in
@@ -2062,13 +2124,18 @@ impl EventLoop {
             crate::diagnostics::OrchestrationEvent::IterationStarted,
         );
 
-        // Log hat selected
+        // Log hat selected. A script iteration names its script hat (the
+        // runner passes "ralph" in multi-hat mode).
+        let (selected_hat, reason) = match self.state.last_active_hat_ids.first() {
+            Some(script_hat) if self.state.script_iteration => (script_hat.to_string(), "script"),
+            _ => (hat_id.to_string(), "process_output"),
+        };
         self.diagnostics.log_orchestration(
             self.state.iteration,
             "loop",
             crate::diagnostics::OrchestrationEvent::HatSelected {
-                hat: hat_id.to_string(),
-                reason: "process_output".to_string(),
+                hat: selected_hat,
+                reason: reason.to_string(),
             },
         );
 
@@ -2429,18 +2496,35 @@ impl EventLoop {
     /// handle.
     pub fn process_events_from_jsonl(&mut self) -> std::io::Result<ProcessedEvents> {
         let result = self.event_reader.read_new_events()?;
-        self.process_parse_result(result)
+        self.process_parse_result(result, Vec::new())
+            .map(|(processed, _)| processed)
     }
 
     /// Inner event processing that operates on an already-parsed `ParseResult`.
     ///
     /// This is the single source of truth for event validation, backpressure,
-    /// scope enforcement, and bus publishing. Both `process_events_from_jsonl`
-    /// and `process_events_from_jsonl_with_waves` delegate to this method.
+    /// scope enforcement, gates, and bus publishing. Both
+    /// `process_events_from_jsonl` and `process_events_from_jsonl_with_waves`
+    /// delegate to this method.
+    ///
+    /// `wave_events` are wave dispatch events, already partitioned out. They
+    /// are only gated here: the ones that pass are returned for dispatch, and
+    /// the ones that fail are replaced by blocked events routed like the rest.
     fn process_parse_result(
         &mut self,
         result: crate::event_reader::ParseResult,
-    ) -> std::io::Result<ProcessedEvents> {
+        wave_events: Vec<crate::event_reader::Event>,
+    ) -> std::io::Result<(ProcessedEvents, Vec<crate::event_reader::Event>)> {
+        let mut passing_wave_events = Vec::with_capacity(wave_events.len());
+        let mut blocked_wave_events = Vec::new();
+        for event in wave_events {
+            let payload = event.payload.as_deref().unwrap_or_default();
+            match self.gate_event(&event.topic, payload) {
+                Some(blocked) => blocked_wave_events.push(blocked),
+                None => passing_wave_events.push(event),
+            }
+        }
+
         // Handle malformed lines with backpressure
         for malformed in &result.malformed {
             let payload = format!(
@@ -2462,13 +2546,18 @@ impl EventLoop {
             self.state.consecutive_malformed_events = 0;
         }
 
-        if result.events.is_empty() && result.malformed.is_empty() {
-            return Ok(ProcessedEvents {
-                had_events: false,
-                had_plan_events: false,
-                human_interact_context: None,
-                has_orphans: false,
-            });
+        if result.events.is_empty() && result.malformed.is_empty() && blocked_wave_events.is_empty()
+        {
+            return Ok((
+                ProcessedEvents {
+                    had_events: false,
+                    had_plan_events: false,
+                    human_interact_context: None,
+                    has_orphans: false,
+                    had_promise_events: false,
+                },
+                passing_wave_events,
+            ));
         }
 
         // Drop orchestrator-synthetic observer rows (spec §10) before scope
@@ -2481,8 +2570,9 @@ impl EventLoop {
             .collect();
 
         // --- Scope enforcement: filter events against active hat's publishes ---
-        // Only active when enforce_hat_scope is true in config (opt-in).
-        let events = if self.config.event_loop.enforce_hat_scope {
+        // Opt-in through enforce_hat_scope, except for script iterations: a
+        // script has no prose to fall back on, so a wrong topic is a bug.
+        let events = if self.config.event_loop.enforce_hat_scope || self.state.script_iteration {
             let active_hats = self.state.last_active_hat_ids.clone();
             let (in_scope, out_of_scope): (Vec<_>, Vec<_>) =
                 events.into_iter().partition(|event| {
@@ -2518,6 +2608,7 @@ impl EventLoop {
         // --- End scope enforcement ---
 
         let mut has_orphans = false;
+        let mut had_promise_events = false;
 
         // Validate and transform events (apply backpressure for build.done)
         let mut validated_events = Vec::new();
@@ -2527,6 +2618,13 @@ impl EventLoop {
         for (index, event) in events.into_iter().enumerate() {
             let payload = event.payload.clone().unwrap_or_default();
 
+            // Gates run before any topic-specific handling, so a gated
+            // completion promise or cancel that fails is never acted on.
+            if let Some(blocked) = self.gate_event(&event.topic, &payload) {
+                validated_events.push(blocked);
+                continue;
+            }
+
             // Detect loop.cancel — unconditional graceful termination
             if !cancellation_topic.is_empty() && event.topic.as_str() == cancellation_topic {
                 info!(
@@ -2534,6 +2632,7 @@ impl EventLoop {
                     "loop.cancel event detected — scheduling graceful termination"
                 );
                 self.state.cancellation_requested = true;
+                had_promise_events = true;
                 // Continue processing remaining events (they may contain cleanup info)
                 continue;
             }
@@ -2556,6 +2655,7 @@ impl EventLoop {
             }
 
             if event.topic.as_str() == completion_topic {
+                had_promise_events = true;
                 if index + 1 == total_events {
                     self.state.completion_requested = true;
                     self.diagnostics.log_orchestration(
@@ -2762,6 +2862,7 @@ impl EventLoop {
                 validated_events.push(Event::new(event.topic.as_str(), &payload));
             }
         }
+        validated_events.extend(blocked_wave_events);
 
         // Track build.blocked events for thrashing detection
         let blocked_events: Vec<_> = validated_events
@@ -3012,12 +3113,18 @@ impl EventLoop {
         for (index, event) in events_arrived_during_robot_wait.into_iter().enumerate() {
             let payload = event.payload.clone();
 
+            if let Some(blocked) = self.gate_event(event.topic.as_str(), &payload) {
+                validated_events.push(blocked);
+                continue;
+            }
+
             if !cancellation_topic.is_empty() && event.topic.as_str() == cancellation_topic {
                 info!(
                     payload = %payload,
                     "loop.cancel event detected during robot wait — scheduling graceful termination"
                 );
                 self.state.cancellation_requested = true;
+                had_promise_events = true;
                 continue;
             }
 
@@ -3039,6 +3146,7 @@ impl EventLoop {
             }
 
             if event.topic.as_str() == completion_topic {
+                had_promise_events = true;
                 if index + 1 == intervening_count {
                     self.state.completion_requested = true;
                     self.diagnostics.log_orchestration(
@@ -3117,12 +3225,16 @@ impl EventLoop {
             self.bus.publish(response);
         }
 
-        Ok(ProcessedEvents {
-            had_events,
-            had_plan_events,
-            human_interact_context,
-            has_orphans,
-        })
+        Ok((
+            ProcessedEvents {
+                had_events,
+                had_plan_events,
+                human_interact_context,
+                has_orphans,
+                had_promise_events,
+            },
+            passing_wave_events,
+        ))
     }
 
     fn append_robot_response_event(
@@ -3291,7 +3403,7 @@ impl EventLoop {
             events: regular_events,
             malformed: result.malformed,
         };
-        let processed = self.process_parse_result(regular_result)?;
+        let (processed, wave_events) = self.process_parse_result(regular_result, wave_events)?;
 
         Ok(ProcessedEventsWithWaves {
             processed,
@@ -3443,6 +3555,7 @@ fn termination_status_text(reason: &TerminationReason) -> &'static str {
     match reason {
         TerminationReason::CompletionPromise => "All tasks completed successfully.",
         TerminationReason::MaxIterations => "Stopped at iteration limit.",
+        TerminationReason::MaxScriptRuns => "Stopped at script run limit.",
         TerminationReason::MaxRuntime => "Stopped at runtime limit.",
         TerminationReason::MaxCost => "Stopped at cost limit.",
         TerminationReason::ConsecutiveFailures => "Too many consecutive failures.",

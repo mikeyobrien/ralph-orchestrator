@@ -522,6 +522,7 @@ fn format_termination_reason(reason: &TerminationReason) -> String {
     match reason {
         TerminationReason::CompletionPromise => "CompletionPromise".to_string(),
         TerminationReason::MaxIterations => "MaxIterations".to_string(),
+        TerminationReason::MaxScriptRuns => "MaxScriptRuns".to_string(),
         TerminationReason::MaxRuntime => "MaxRuntime".to_string(),
         TerminationReason::MaxCost => "MaxCost".to_string(),
         TerminationReason::ConsecutiveFailures => "ConsecutiveFailures".to_string(),
