@@ -2164,7 +2164,20 @@ pub async fn run_loop_impl(
         // durable JSONL event has been validated below.
         let defer_consecutive_failures =
             post_event_grace_expired && termination == Some(TerminationReason::ConsecutiveFailures);
-        let termination = if defer_consecutive_failures {
+        // A budget limit reached by the iteration that just ran must not mask that
+        // iteration's own completion (#369). Defer it until this iteration's JSONL
+        // events and text fallback have had a chance to complete the loop; if they
+        // don't, the termination check at the top of the loop stops it with the
+        // same reason before any further backend work starts.
+        let defer_budget_limit = matches!(
+            termination,
+            Some(
+                TerminationReason::MaxIterations
+                    | TerminationReason::MaxRuntime
+                    | TerminationReason::MaxCost
+            )
+        );
+        let termination = if defer_consecutive_failures || defer_budget_limit {
             None
         } else {
             termination
@@ -2651,8 +2664,9 @@ pub async fn run_loop_impl(
             }
         }
 
-        // Execute wave if wave events detected
-        if !wave_events.is_empty() {
+        // Execute wave if wave events detected. Skip it when a budget limit is
+        // deferred: the loop is about to stop, so no new workers may start.
+        if !wave_events.is_empty() && !defer_budget_limit {
             handle_wave_events(
                 &wave_events,
                 &mut event_loop,
@@ -2871,7 +2885,7 @@ pub async fn run_loop_impl(
 
         // Cooldown delay between iterations (skip for human events)
         let cooldown = config.event_loop.cooldown_delay_seconds;
-        if cooldown > 0 && !event_loop.has_pending_human_events() {
+        if cooldown > 0 && !defer_budget_limit && !event_loop.has_pending_human_events() {
             debug!(
                 delay_seconds = cooldown,
                 "Cooldown delay before next iteration"
