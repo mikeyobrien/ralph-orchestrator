@@ -41,6 +41,8 @@ pub mod merge_queue;
 pub mod planning_session;
 pub mod preflight;
 pub mod preset_source;
+mod prompt_fragments;
+pub use prompt_fragments::COORDINATOR_FRAGMENT_TARGET;
 #[cfg(feature = "recording")]
 mod session_player;
 #[cfg(feature = "recording")]
@@ -66,10 +68,10 @@ pub use backend::BackendMetadata;
 pub use cli_capture::{CliCapture, CliCapturePair};
 pub use config::{
     CliConfig, CommandRequirement, CommitVerify, ConfigError, CoreConfig, EffortLevel,
-    EventLoopConfig, EventMetadata, FeaturesConfig, FieldRequirement, FieldVerify, GateConfig,
-    GateRequirement, HatBackend, HatConfig, HatRun, InjectMode, MemoriesConfig, MemoriesFilter,
-    RalphConfig, RobotMode, ScratchpadConfig, SkillOverride, SkillsConfig, VerifyKeyword,
-    resolve_context_window, resolve_context_window_for_backend,
+    EventLoopConfig, EventMetadata, FeaturesConfig, FieldRequirement, FieldVerify, FragmentConfig,
+    GateConfig, GateRequirement, HatBackend, HatConfig, HatRun, InjectMode, MemoriesConfig,
+    MemoriesFilter, RalphConfig, RobotMode, ScratchpadConfig, SkillOverride, SkillsConfig,
+    VerifyKeyword, resolve_context_window, resolve_context_window_for_backend,
 };
 // Re-export loop_name types (also available via FeaturesConfig.loop_naming)
 pub use diagnostics::DiagnosticsCollector;

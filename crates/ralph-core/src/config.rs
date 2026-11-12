@@ -3,6 +3,8 @@
 //! This module supports both v1.x flat configuration format and v2.0 nested format.
 //! Users can switch from Python v1.x to Rust v2.0 with zero config changes.
 
+pub use crate::prompt_fragments::FragmentConfig;
+use crate::prompt_fragments::{ArgsModel, COORDINATOR_FRAGMENT_TARGET, model_in_args};
 use ralph_proto::Topic;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
@@ -181,6 +183,21 @@ pub struct RalphConfig {
     #[serde(default)]
     pub gates: Vec<GateConfig>,
 
+    /// Model-specific instruction fragments, appended to the instructions of
+    /// each targeted hat whose effective model matches (see [`FragmentConfig`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fragments: Vec<FragmentConfig>,
+
+    /// Set by `normalize()` once fragment text is in the hats' instructions.
+    /// Serialized so a resolved config written out and loaded again (the bot
+    /// daemon does this) does not append the fragments a second time.
+    #[serde(
+        default,
+        rename = "_fragments_applied",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub fragments_applied: bool,
+
     // ─────────────────────────────────────────────────────────────────────────
     // V1 COMPATIBILITY FIELDS (flat format)
     // These map to nested v2 fields for backwards compatibility.
@@ -295,6 +312,8 @@ impl Default for RalphConfig {
             hats: HashMap::new(),
             events: HashMap::new(),
             gates: Vec::new(),
+            fragments: Vec::new(),
+            fragments_applied: false,
             // V1 compatibility fields
             agent: None,
             agent_priority: vec![],
@@ -494,12 +513,149 @@ impl RalphConfig {
             }
         }
 
+        self.apply_fragments();
+
         if normalized_count > 0 {
             debug!(
                 fields_normalized = normalized_count,
                 "V1 to V2 config normalization complete"
             );
         }
+    }
+
+    /// Appends each matching fragment's text to its hat's instructions, after
+    /// `extra_instructions`, in config order. Runs once per config: a config
+    /// that was resolved, serialized, and loaded again is left alone.
+    fn apply_fragments(&mut self) {
+        if self.fragments.is_empty() || self.fragments_applied {
+            return;
+        }
+        let mut hat_ids: Vec<String> = self.hats.keys().cloned().collect();
+        hat_ids.sort();
+        for hat_id in hat_ids {
+            let indices = self.fragment_indices_for_hat(&hat_id);
+            if indices.is_empty() {
+                continue;
+            }
+            let texts: Vec<String> = indices
+                .iter()
+                .map(|&i| self.fragments[i].text.clone())
+                .collect();
+            let Some(hat) = self.hats.get_mut(&hat_id) else {
+                continue;
+            };
+            for text in texts {
+                if !hat.instructions.is_empty() && !hat.instructions.ends_with('\n') {
+                    hat.instructions.push('\n');
+                }
+                hat.instructions.push_str(&text);
+            }
+            debug!(hat = %hat_id, fragments = ?indices, "Applied model-specific fragments");
+        }
+        self.fragments_applied = true;
+    }
+
+    /// The model a hat runs on, as far as config can tell; `None` for a
+    /// script hat, an unknown hat, or a hat with no model anywhere.
+    ///
+    /// Mirrors how the loop runner builds the command line: a model flag
+    /// (`--model <id>`, `--model=<id>`, `-m <id>`) already in the hat's
+    /// backend args wins, because the runner then leaves `model:` off; else
+    /// `hat.model`, else `cli.model`. The args are the hat backend's own
+    /// `args` (or `cli.args` when the hat uses the global backend), then
+    /// `backend_args`. A model flag with no value leaves the model unknown.
+    pub fn hat_model(&self, hat_id: &str) -> Option<&str> {
+        let hat = self.hats.get(hat_id)?;
+        if hat.is_script() {
+            return None;
+        }
+        let base_args = hat
+            .backend
+            .as_ref()
+            .map_or(self.cli.args.as_slice(), HatBackend::args);
+        let hat_args = hat.backend_args.as_deref().unwrap_or_default();
+        let pinned = match model_in_args(base_args) {
+            ArgsModel::Absent => model_in_args(hat_args),
+            found => found,
+        };
+        match pinned {
+            ArgsModel::Pinned(model) => Some(model),
+            ArgsModel::Dangling => None,
+            ArgsModel::Absent => hat.model.as_deref().or(self.cli.model.as_deref()),
+        }
+    }
+
+    /// The model the coordinator (hatless) prompt runs on: a model flag in
+    /// `cli.args`, else `cli.model`.
+    pub fn coordinator_model(&self) -> Option<&str> {
+        match model_in_args(&self.cli.args) {
+            ArgsModel::Pinned(model) => Some(model),
+            ArgsModel::Dangling => None,
+            ArgsModel::Absent => self.cli.model.as_deref(),
+        }
+    }
+
+    /// Indices into `fragments` that apply to a hat, in config order.
+    /// Empty for script hats and hats with no known model.
+    pub fn fragment_indices_for_hat(&self, hat_id: &str) -> Vec<usize> {
+        self.matching_fragments(hat_id, self.hat_model(hat_id))
+    }
+
+    /// Indices into `fragments` that apply to the coordinator prompt.
+    pub fn coordinator_fragment_indices(&self) -> Vec<usize> {
+        self.matching_fragments(COORDINATOR_FRAGMENT_TARGET, self.coordinator_model())
+    }
+
+    /// Text of the fragments that apply to the coordinator prompt, in config order.
+    pub fn coordinator_fragments(&self) -> Vec<&str> {
+        self.coordinator_fragment_indices()
+            .into_iter()
+            .map(|i| self.fragments[i].text.as_str())
+            .collect()
+    }
+
+    fn matching_fragments(&self, target: &str, model: Option<&str>) -> Vec<usize> {
+        let Some(model) = model else {
+            return Vec::new();
+        };
+        self.fragments
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.targets(target) && f.matches_model(model))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// Fragment checks: every fragment can apply as written, `ralph` is not
+    /// ambiguous with a hat of that name, and no fragment names a script hat.
+    fn validate_fragments(&self) -> Result<(), ConfigError> {
+        for (index, fragment) in self.fragments.iter().enumerate() {
+            if let Some(reason) = fragment.defect() {
+                return Err(ConfigError::InvalidFragment { index, reason });
+            }
+            let Some(targets) = &fragment.hats else {
+                continue;
+            };
+            for hat_id in targets {
+                if hat_id == COORDINATOR_FRAGMENT_TARGET
+                    && self.hats.contains_key(COORDINATOR_FRAGMENT_TARGET)
+                {
+                    return Err(ConfigError::InvalidFragment {
+                        index,
+                        reason: format!(
+                            "'hats' names '{COORDINATOR_FRAGMENT_TARGET}', which targets the coordinator prompt, but a hat is also named '{COORDINATOR_FRAGMENT_TARGET}'; rename that hat"
+                        ),
+                    });
+                }
+                if self.hats.get(hat_id).is_some_and(HatConfig::is_script) {
+                    return Err(ConfigError::ScriptHatInFragment {
+                        hat: hat_id.clone(),
+                        index,
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Validates the configuration and returns warnings.
@@ -682,6 +838,7 @@ impl RalphConfig {
             }
         }
 
+        self.validate_fragments()?;
         self.validate_script_hats(&mut warnings)?;
 
         // Validate each hat's backend selector. Named and named-with-args backends
@@ -2242,6 +2399,16 @@ impl HatBackend {
             }
         }
     }
+
+    /// Args the backend form carries itself (`args:` under `backend:`).
+    pub fn args(&self) -> &[String] {
+        match self {
+            HatBackend::Named(_) => &[],
+            HatBackend::NamedWithArgs { args, .. }
+            | HatBackend::KiroAgent { args, .. }
+            | HatBackend::Custom { args, .. } => args,
+        }
+    }
 }
 
 /// Configuration for a single hat.
@@ -2868,6 +3035,16 @@ pub enum ConfigError {
         "Hat '{hat}' sets both 'run' and '{field}'. A script hat runs its command instead of a model, so it has no prompt.\nFix: remove '{field}', or remove 'run' to make it a model hat.\nSee: docs/guide/configuration.md"
     )]
     ScriptHatWithInstructions { hat: String, field: String },
+
+    #[error(
+        "fragments[{index}].hats names script hat '{hat}'. A script hat runs its command instead of a model, so it has no prompt for fragments to extend.\nFix: remove '{hat}' from fragments[{index}].hats, or remove 'run' from the hat to make it a model hat.\nSee: docs/guide/configuration.md"
+    )]
+    ScriptHatInFragment { hat: String, index: usize },
+
+    #[error(
+        "fragments[{index}] is invalid: {reason}.\nFix: correct fragments[{index}] in your config.\nSee: docs/guide/configuration.md"
+    )]
+    InvalidFragment { index: usize, reason: String },
 
     #[error(
         "Hat '{hat}' sets 'run' with concurrency {value}. Script hats run one command at a time.\nFix: remove 'concurrency' (or set it to 1).\nSee: docs/guide/configuration.md"

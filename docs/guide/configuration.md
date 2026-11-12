@@ -210,6 +210,13 @@ gates:
       - field: commit
         verify: commit                  # Ralph checks the commit exists and is new
     blocked: "check.blocked"            # Default: "<prefix>.blocked"
+
+# Fragments — instruction text for hats on matching models
+fragments:
+  - models: ["claude-fable-*"]          # Glob patterns (* and ?) on the full model ID
+    hats: [my_hat]                      # Optional; default: every model hat + the coordinator
+    text: |
+      Model-specific guidance...
 ```
 
 ## Section Details
@@ -536,6 +543,80 @@ detection.
 - The hat's `timeout` stops the command. If the hat sets none, the global backend's adapter timeout (`adapters.<backend>.timeout`, default 300) applies. The command runs in its own process group, so a timeout or Ctrl+C stops its children too.
 - Each output stream is captured up to `hooks.defaults.max_output_bytes` (8192 by default). Anything past that is dropped without blocking the command.
 - A child left running in the background (`sleep 60 &`) keeps the output pipes open, so the run lasts until that child exits or the timeout fires. Redirect a background child's output (`cmd >/dev/null 2>&1 &`), or don't leave one running.
+
+## Fragments
+
+`fragments:` adds instruction text to a hat only while the hat runs on a
+matching model. Swap the hat's model and its fragments follow with no other
+edit, so model-specific prompting advice does not linger in `instructions`
+after a model change.
+
+```yaml
+hats:
+  planner:
+    model: "claude-fable-5-2"
+    # ...
+  builder:
+    model: "claude-opus-5-5"
+    # ...
+
+fragments:
+  - models: ["claude-fable-*"]
+    hats: [planner, ralph]
+    text: |
+      You are the owner and long-term maintainer of this codebase, and its design is up to you.
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `models` | list | Yes | Glob patterns matched against the hat's model ID. `*` matches any run of characters, `?` one character. Matching is case-sensitive and covers the whole ID, so `claude-fable` does not match `claude-fable-5-2` but `claude-fable*` does |
+| `hats` | list | No | Hat IDs to target. `ralph` targets the coordinator prompt (the prompt that runs when no hat subscribes to a topic). Omit to target every model hat plus the coordinator |
+| `text` | string | Yes | Text appended to the hat's instructions |
+
+**Which model a hat runs on.** Ralph reads it the way it builds the backend
+command line. A model flag already in the hat's backend args (`--model <id>`,
+`--model=<id>`, or `-m <id>`) wins, because the backend runs that model. The
+args checked are the hat backend's own `args` (or `cli.args` when the hat uses
+the global backend), then `backend_args`. Otherwise the hat's `model`, else
+`cli.model`. The coordinator uses a model flag in `cli.args`, else `cli.model`.
+A hat with no model anywhere matches no fragment. So does a hat whose model
+flag has no value.
+
+Fragments match the literal configured string. A Claude Code alias such as
+`opus` does not match `claude-opus-*`; use full model IDs.
+
+**Order.** Matching fragments are appended to the hat's instructions after
+`extra_instructions`, in the order they appear in `fragments:`. This happens
+once, when the config loads.
+
+**Script hats.** Fragments never apply to script hats (`run:`). A fragment
+whose `hats` names a script hat fails config load.
+
+**Sharing text.** YAML anchors let one block serve several fragments:
+
+```yaml
+_fable_reports: &fable_reports |
+  # Communicating clearly
+  Write for an intelligent but low-context reader. ...
+
+fragments:
+  - models: ["claude-fable-*"]
+    hats: [finalizer, critic]
+    text: *fable_reports
+```
+
+**Hats files and presets.** A hats file (`-H`) or a builtin preset can carry
+`fragments:`. They are appended after any `fragments:` in the core config, so
+both apply.
+
+**Validation.** Config load fails, naming the fragment as `fragments[<index>]`, when:
+
+- `models` is empty or has an empty pattern
+- `text` is empty
+- `hats` is an empty list or has an empty ID
+- `hats` names `ralph` while a hat is also named `ralph`
+- `hats` names a script hat
+- a key is missing or misspelled (`hat:` for `hats:` would otherwise widen the fragment to every hat)
 
 ## Gates
 

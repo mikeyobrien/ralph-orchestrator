@@ -164,3 +164,21 @@ Use this template for new entries:
 - Reasoning: Matches `effort`/`backend_args` handling (warn, not error); a script hat launches no backend.
 - Reversibility: High
 - Timestamp: 2026-11-12T22:34Z
+
+## DEC-014 (2026-11-12T22:52Z)
+- Decision: For fragment matching, a model flag already in the hat's resolved backend args wins over `hat.model`/`cli.model`.
+- Chosen Option: args flag (`--model`, `--model=`, `-m`) → `hat.model` → `cli.model`; a dangling flag means "unknown model" (no match).
+- Confidence: 80
+- Alternatives Considered: The plan's order (`hat.model` → `cli.model` → args → cli args), read literally from spec §1 "ralph uses `model:` when set, else a `--model` value in args".
+- Reasoning: Step 1 made an explicit flag in args win on the command line (AC2). With the plan's order, a hat pinning `--model claude-fable-5-2` in `backend_args` under a `cli.model: claude-opus-5-5` default would run Fable but get Opus fragments. Matching the model that actually runs keeps goal 3 ("swapping a hat's model swaps its fragments") true. All spec ACs hold under either order. Covered by `explicit_model_flag_in_args_decides_the_match_over_model_field`.
+- Reversibility: High; one match statement in `RalphConfig::hat_model`.
+- Timestamp: 2026-11-12T22:52Z
+
+## DEC-015 (2026-11-12T22:52Z)
+- Decision: Keep fragments idempotent across a serialize→reload with a serialized `_fragments_applied` marker; let hats files and builtin presets carry `fragments:`, appended after core fragments.
+- Chosen Option: Marker field skipped when false; `fragments` added to the hats-file allowlist, the preset overlay extraction, and `merge_hats_overlay` (append).
+- Confidence: 75
+- Alternatives Considered: (A) Drain `fragments` after resolution like `extra_instructions` — loses the data `validate()` (script-hat check), the coordinator prompt, and `hats validate` need. (B) No marker — the bot daemon's `write_temp_config_for_daemon` round-trip would append every fragment twice. (C) Hats-file fragments replace core fragments like `hats:` does — silently drops a user's core-config fragments (e.g. coordinator guidance).
+- Reasoning: Without the overlay change, a builtin preset used as `-H builtin:<name>` silently dropped its `fragments:` (spec goal 2 says an embedded preset must be able to carry them) and a user hats file with `fragments:` was rejected.
+- Reversibility: High.
+- Timestamp: 2026-11-12T22:52Z

@@ -33,6 +33,12 @@ hats:
     default_publishes: "plan.ready"
     instructions: |
       Plan the task.
+
+fragments:                       # optional; see "Model-Specific Fragments"
+  - models: ["claude-fable-*"]
+    hats: [planner]
+    text: |
+      Model-specific guidance for the planner.
 ```
 
 ## Keep These In Core Config, Not Hats Files
@@ -100,6 +106,31 @@ hats:
 
 Codex takes effort through its own `-c model_reasoning_effort=...` flag, so
 `effort` is not set on Codex hats.
+
+## Model-Specific Fragments
+
+Top-level `fragments:` adds text to a hat's instructions only while the hat
+runs on a matching model, so swapping a hat's `model` swaps its guidance too.
+
+```yaml
+_reports: &reports |
+  Write for an intelligent but low-context reader.
+
+fragments:
+  - models: ["claude-fable-*"]   # required; `*`/`?` globs, case-sensitive, full ID
+    hats: [planner, ralph]       # optional; `ralph` = coordinator; omit = every model hat + coordinator
+    text: *reports               # required; YAML anchors share one block across fragments
+```
+
+- The hat's model is a model flag already in its backend args (`--model <id>`,
+  `--model=<id>`, `-m <id>`) if there is one, else `model`, else `cli.model`.
+  No model anywhere means no fragment applies.
+- Matching fragments append after `extra_instructions`, in config order.
+- Fragments never apply to script hats; naming one in `hats` fails config load.
+- Empty `models`, an empty pattern, empty `text`, `hats: []`, or a misspelled
+  key fail config load and name `fragments[<index>]`.
+- Fragments in a hats file are appended after any in the core config.
+- Match full model IDs: an alias like `opus` does not match `claude-opus-*`.
 
 ## Reserved Trigger Rule
 

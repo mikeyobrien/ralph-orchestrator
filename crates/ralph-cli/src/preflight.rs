@@ -803,7 +803,14 @@ fn validate_core_config_shape(value: &Value, label: &str) -> Result<()> {
     Ok(())
 }
 
-const ALLOWED_HATS_TOP_LEVEL: &[&str] = &["hats", "events", "event_loop", "name", "description"];
+const ALLOWED_HATS_TOP_LEVEL: &[&str] = &[
+    "hats",
+    "events",
+    "event_loop",
+    "fragments",
+    "name",
+    "description",
+];
 const ALLOWED_HATS_EVENT_LOOP_OVERLAY_KEYS: &[&str] = &[
     "completion_promise",
     "starting_event",
@@ -846,7 +853,14 @@ fn extract_hat_overlay_from_preset(preset_value: Value) -> Result<Value> {
         .ok_or_else(|| anyhow::anyhow!("Builtin hat collection must be a YAML mapping"))?;
 
     let mut overlay = Mapping::new();
-    for key in ["name", "description", "event_loop", "events", "hats"] {
+    for key in [
+        "name",
+        "description",
+        "event_loop",
+        "events",
+        "hats",
+        "fragments",
+    ] {
         if let Some(value) = mapping_get(mapping, key) {
             mapping_insert(&mut overlay, key, value.clone());
         }
@@ -869,6 +883,21 @@ fn merge_hats_overlay(mut core: Value, hats: Value) -> Result<Value> {
 
     if let Some(events_value) = mapping_get(hats_mapping, "events") {
         mapping_insert(core_mapping, "events", events_value.clone());
+    }
+
+    // Fragments append rather than replace: the hats source's fragments target
+    // its hats, while core fragments (say, coordinator guidance) still apply.
+    if let Some(hats_fragments) = mapping_get(hats_mapping, "fragments") {
+        let hats_list = hats_fragments
+            .as_sequence()
+            .ok_or_else(|| anyhow::anyhow!("hats 'fragments' must be a list when provided"))?;
+        let mut merged = match mapping_get(core_mapping, "fragments") {
+            None | Some(Value::Null) => Vec::new(),
+            Some(Value::Sequence(core_list)) => core_list.clone(),
+            Some(_) => anyhow::bail!("core 'fragments' must be a list when provided"),
+        };
+        merged.extend(hats_list.iter().cloned());
+        mapping_insert(core_mapping, "fragments", Value::Sequence(merged));
     }
 
     if let Some(event_loop_overlay) = mapping_get(hats_mapping, "event_loop") {
@@ -1499,6 +1528,87 @@ hats:
             composed.validate().is_ok(),
             "composed ralph.omp.yml + builtin:code-assist must validate"
         );
+    }
+
+    #[tokio::test]
+    async fn load_config_for_preflight_appends_hats_source_fragments_after_core_fragments() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let core_path = temp_dir.path().join("ralph.yml");
+        let hats_path = temp_dir.path().join("hats.yml");
+
+        std::fs::write(
+            &core_path,
+            r#"
+cli:
+  backend: claude
+  model: claude-fable-5-2
+fragments:
+  - models: ["claude-fable-*"]
+    text: "CORE-FRAGMENT"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            &hats_path,
+            r#"
+hats:
+  reviewer:
+    name: Reviewer
+    description: Hats reviewer
+    triggers: ["review.start"]
+    instructions: "REVIEW"
+fragments:
+  - models: ["claude-fable-*"]
+    hats: [reviewer]
+    text: "HATS-FRAGMENT"
+"#,
+        )
+        .unwrap();
+
+        let config = load_config_for_preflight(
+            &[ConfigSource::File(core_path)],
+            Some(&HatsSource::File(hats_path)),
+        )
+        .await
+        .unwrap();
+
+        let reviewer = &config.hats["reviewer"].instructions;
+        let core_at = reviewer.find("CORE-FRAGMENT").expect("core fragment");
+        let hats_at = reviewer.find("HATS-FRAGMENT").expect("hats fragment");
+        assert!(core_at < hats_at, "{reviewer:?}");
+        assert_eq!(config.coordinator_fragments(), vec!["CORE-FRAGMENT"]);
+    }
+
+    #[test]
+    fn hats_overlay_keeps_preset_fragments_and_rejects_non_list_fragments() {
+        let preset: Value = serde_yaml::from_str(
+            r#"
+cli:
+  backend: claude
+hats:
+  planner:
+    name: Planner
+fragments:
+  - models: ["claude-fable-*"]
+    text: "PRESET-FRAGMENT"
+"#,
+        )
+        .unwrap();
+        let overlay = extract_hat_overlay_from_preset(preset).unwrap();
+        assert!(validate_hats_config_shape(&overlay, "builtin:x").is_ok());
+        let merged = merge_hats_overlay(Value::Mapping(Mapping::new()), overlay).unwrap();
+        let config: RalphConfig = serde_yaml::from_value(merged).unwrap();
+        assert_eq!(config.fragments.len(), 1);
+        assert_eq!(config.fragments[0].text, "PRESET-FRAGMENT");
+
+        let bad: Value = serde_yaml::from_str("fragments: {models: [x], text: y}").unwrap();
+        let err = merge_hats_overlay(Value::Mapping(Mapping::new()), bad).unwrap_err();
+        assert!(err.to_string().contains("fragments"), "{err}");
+
+        let core: Value = serde_yaml::from_str("fragments: oops").unwrap();
+        let hats: Value = serde_yaml::from_str("fragments: []").unwrap();
+        let err = merge_hats_overlay(core, hats).unwrap_err();
+        assert!(err.to_string().contains("core 'fragments'"), "{err}");
     }
 
     #[tokio::test]

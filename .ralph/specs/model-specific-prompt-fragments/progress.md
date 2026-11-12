@@ -55,6 +55,41 @@ Logs: `logs/critic-step1-*.log`. Re-ran independently against `ba6e22b`:
   codex hat `model: gpt-x` → `exec --yolo -m gpt-x`; hatless with `cli.model` →
   `--model claude-opus-5-5`; unknown hat backend still rejected at config validation.
 
+### Step 2 — fragment resolution (Builder)
+
+Logs: `logs/step02-*.log`.
+
+- `cargo fmt --all --check` → clean. `cargo clippy --workspace --all-targets --all-features -- -D warnings` → clean.
+- `./scripts/sync-embedded-files.sh check` → in sync (no preset touched).
+- `cargo test -p ralph-core` → all pass (incl. new `tests/prompt_fragments.rs`, 18 tests, and
+  `prompt_fragments::tests` glob/arg-scan/defect unit tests). `cargo test -p ralph-adapters` → all pass.
+- `cargo test -p ralph-cli --no-fail-fast -- --test-threads=1` → 25 binaries ok; only
+  `integration_gitignore` fails (pre-existing, task `fix:gitignore-memories-test`).
+- Mutation check: disabling `apply_fragments` fails 12/18 integration tests; dropping the
+  `_fragments_applied` guard fails the round-trip test.
+- Real binary (`logs/step02-smoke.log`, harness `/var/tmp/frag-smoke-run.sh`, fake `claude` capturing
+  argv + stdin): Planner on `claude-fable-5-2` → prompt has the fragment once plus `PLANNER BASE`;
+  Planner on `claude-opus-5-5` → no fragment. Adversarial: fragment naming a script hat, `hat:` typo,
+  and `models: []` each fail `ralph run` with exit 1 and a message naming the hat / field / `fragments[0]`.
+
+What landed:
+- `crates/ralph-core/src/prompt_fragments.rs`: `FragmentConfig` (`deny_unknown_fields`), `*`/`?`
+  matcher, `model_in_args` (`--model`, `--model=`, `-m`; dangling flag = unknown model).
+- `RalphConfig`: `fragments`, `_fragments_applied` marker; `normalize()` appends after
+  `extra_instructions` in config order, skipping script hats; `hat_model`, `coordinator_model`,
+  `fragment_indices_for_hat`, `coordinator_fragment_indices`, `coordinator_fragments` (for step 3).
+- `validate()`: `ConfigError::ScriptHatInFragment { hat, index }` (AC8) and
+  `ConfigError::InvalidFragment { index, reason }` (empty models/pattern/text/hats, `ralph` hat clash).
+- `preflight.rs`: hats files and builtin presets carry `fragments:` (appended after core fragments)
+  instead of rejecting / silently dropping them.
+- Docs: `docs/guide/configuration.md` (## Fragments), `skills/ralph-hats/references/schema.md`.
+- Decisions DEC-014 (args flag wins for matching, mirroring the command line) and DEC-015
+  (round-trip marker; overlay append).
+
+For step 3: coordinator text is `config.coordinator_fragments()`; per-hat report is
+`config.fragment_indices_for_hat(id)`; unknown IDs in `hats:` are not errors yet — they should show
+up as the "matches no hat" warning (AC9). `COORDINATOR_FRAGMENT_TARGET` is exported from ralph-core.
+
 ## Completed Tasks
 
 _Builder and Critic append one entry per closed task: task key, what landed, and the
