@@ -122,7 +122,6 @@ PROMPT.md
 !.ralph/agent/
 .ralph/agent/*
 !.ralph/agent/decisions.md
-!.ralph/agent/memories.md
 # Verification logs inside spec dirs are run output, not spec content
 .ralph/specs/**/logs/
 
