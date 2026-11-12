@@ -29,6 +29,11 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
+/// Appended after injected memories so agents weigh them as notes, not rules.
+const MEMORIES_FRAMING: &str = "\n\nThese memories are notes from earlier iterations, not standing rules. \
+Where one no longer fits the current task or code, trust what you observe now, \
+and fix or delete the memory with `ralph tools memory delete <mem-id>`.\n";
+
 /// Result of processing events from JSONL.
 #[derive(Debug, Clone)]
 pub struct ProcessedEvents {
@@ -1494,6 +1499,7 @@ impl EventLoop {
                 );
 
                 prefix.push_str(&memories_content);
+                prefix.push_str(MEMORIES_FRAMING);
             }
         }
 

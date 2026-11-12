@@ -23,11 +23,10 @@ cli:
 core:
   specs_dir: ".ralph/specs/"
   guardrails:
-    - "Document ALL findings - both successes and failures"
+    - "Document every finding, successes and failures alike"
     - "Be specific about error messages and stack traces"
     - "Note timing and performance observations"
     - "Capture UX friction points as you experience them"
-    - "Confidence protocol: score decisions 0-100. >80 proceed autonomously; 50-80 proceed + document in .ralph/agent/decisions.md; <50 choose safe default + document."
 
 # Single-hat mode for the meta-evaluator
 # Ralph handles task.start for coordination, then delegates via evaluation.start
@@ -37,11 +36,6 @@ hats:
     description: "Tests and documents Ralph's hat collection presets."
     triggers: ["evaluation.start"]
     publishes: ["evaluation.complete"]
+    effort: "high"
     instructions: |
-      You are evaluating Ralph's hat collection presets.
-
-      Your job:
-      1. Manually test each preset with a representative task
-      2. Document what works and what doesn't
-      3. Identify UX improvements and bugs
-      4. Save all findings to tools/preset-evaluation-findings.md
+      You evaluate Ralph's hat collection presets. Run each preset by hand against a representative task, and record what works, what does not, the bugs you hit, and the UX improvements worth making. Save all findings to tools/preset-evaluation-findings.md.

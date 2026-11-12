@@ -18,10 +18,9 @@ cli:
 core:
   specs_dir: ".ralph/specs/"
   guardrails:
-    - "Fresh context each iteration - save learnings to memories for next time"
-    - "Don't assume 'not implemented' - search first"
-    - "Verification is mandatory - tests/typecheck/lint/audit must pass"
-    - "Confidence protocol: score decisions 0-100. >80 proceed autonomously; 50-80 proceed + document in .ralph/agent/decisions.md; <50 choose safe default + document."
+    - "Fresh context each iteration: save learnings to memories for the next one"
+    - "Search the codebase before assuming something is not implemented"
+    - "Tests, typecheck, lint, and audit must pass before work counts as done"
 
 hats:
   builder:

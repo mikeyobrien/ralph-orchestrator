@@ -626,6 +626,7 @@ mod tests {
             instructions: String::new(),
             extra_instructions: vec![],
             backend_args: None,
+            effort: None,
             backend,
             default_publishes: None,
             max_activations: None,

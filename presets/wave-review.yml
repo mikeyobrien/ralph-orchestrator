@@ -8,6 +8,9 @@
 #
 # Usage:
 #   ralph run --hats presets/wave-review.yml --prompt "Review the authentication module"
+#
+# Per-hat `effort` maps to the backend's reasoning-effort setting (Claude: --effort).
+# Tune it per hat against your own runs; backends without an effort control ignore it.
 
 event_loop:
   prompt_file: "PROMPT.md"
@@ -21,9 +24,9 @@ cli:
 
 core:
   guardrails:
-    - "Each reviewer stays in their specialty — do not review outside your domain"
-    - "Be specific: cite line numbers and concrete improvements"
-    - "Distinguish critical issues from suggestions"
+    - "Each reviewer reviews only its assigned specialty; other specialties have their own reviewer"
+    - "Findings cite file paths and line numbers and name a concrete improvement"
+    - "Keep critical issues separate from suggestions"
 
 hats:
   coordinator:
@@ -31,17 +34,13 @@ hats:
     description: "Reads the review scope and dispatches specialized reviewers as a wave."
     triggers: ["review.start"]
     publishes: ["review.perspective"]
+    effort: "medium"
     instructions: |
-      ## COORDINATOR MODE — Dispatch Specialized Reviewers
+      ## COORDINATOR MODE
 
-      Analyze the prompt to determine what to review, then dispatch specialized
-      review perspectives as a wave. Each payload should describe the reviewer's
-      specialty and what to focus on.
+      You decide which expert perspectives this review needs and dispatch them as one wave. The Reviewers do the reviewing and the Synthesizer writes the report.
 
-      ### Process
-      1. Read the prompt to understand review scope
-      2. Identify what files and areas are involved
-      3. Dispatch specialized reviewers as a wave:
+      Read the prompt for the review scope and look at which files and areas it covers. Pick at least two specialties that fit that code, and dispatch them with `ralph wave emit`. Each payload states the reviewer's ROLE and FOCUS and what in scope to review. The wave system runs the reviewers in parallel, so use `ralph wave emit` rather than the Agent tool or another parallelism mechanism. For example:
 
       ```bash
       ralph wave emit review.perspective --payloads \
@@ -50,12 +49,7 @@ hats:
         "ROLE: Documentation Reviewer. Focus on README accuracy, doc comment coverage, API documentation completeness, example correctness, changelog entries, and user-facing messaging. Review all docs and comments in scope."
       ```
 
-      ### Constraints
-      - Always dispatch at least 2 specialized reviewers
-      - Each payload must clearly state the reviewer's ROLE and FOCUS area
-      - Tailor the specialties to the code being reviewed
-      - You may substitute or add specialties (e.g., Security, Database, API Design) based on what's relevant
-      - IMPORTANT: You MUST use `ralph wave emit` to dispatch reviewers. Do NOT use the Agent tool or any other parallelism mechanism. The wave system handles parallel execution.
+      Substitute or add specialties such as Security, Database, or API Design when the code calls for them.
 
   reviewer:
     name: "🔍 Reviewer"
@@ -64,29 +58,18 @@ hats:
     publishes: ["review.done"]
     concurrency: 3
     timeout: 600
+    effort: "high"
     instructions: |
-      ## REVIEWER MODE — Specialized Review
+      ## REVIEWER MODE
 
-      You are a specialized code reviewer. Your payload describes your ROLE and
-      FOCUS area. Review the codebase strictly from that perspective.
+      You review the code in scope from the one perspective your payload assigns (ROLE and FOCUS). Other perspectives have their own reviewers running alongside you, so keep to yours. Review only; leave the code unchanged.
 
-      ### Process
-      1. Read your assigned role and focus area from the event payload
-      2. Identify files relevant to your specialty
-      3. Review thoroughly from your expert perspective
-      4. Publish structured findings
+      Find the files in scope that bear on your specialty and review them. Each finding cites a file path and line number, says what is wrong or risky, and names a concrete improvement. Keep critical issues apart from warnings and suggestions. If nothing in scope touches your specialty, say so briefly.
 
-      ### Output Format
       Publish your findings:
       ```bash
       ralph emit review.done "## [Your Role]\n\n### Critical\n- ...\n\n### Warnings\n- ...\n\n### Suggestions\n- ..."
       ```
-
-      ### Constraints
-      - Stay in your lane: only review from your assigned perspective
-      - Be specific: cite file paths and line numbers
-      - Distinguish critical issues from nice-to-haves
-      - If your specialty has no relevant code in scope, say so briefly
 
   synthesizer:
     name: "📊 Synthesizer"
@@ -98,23 +81,15 @@ hats:
     aggregate:
       mode: wait_for_all
       timeout: 300
+    effort: "medium"
     instructions: |
-      ## SYNTHESIZER MODE — Aggregate Review Findings
+      ## SYNTHESIZER MODE
 
-      You are a pure aggregator. Your ONLY input is the review.done events in
-      PENDING EVENTS above. Do NOT read files, run commands, or investigate the
-      codebase — the reviewers already did that work. Your job is to organize
-      and present their findings.
+      You turn the reviewers' findings into one report. Your input is the `review.done` payloads in PENDING EVENTS above. The reviewers already read the code, so you work from their payloads rather than reading files, running commands, or investigating the codebase.
 
-      ### Process
-      1. Read all review.done event payloads from PENDING EVENTS above
-      2. Categorize findings by severity (Critical / Warning / Suggestion)
-      3. Note where multiple reviewers flagged the same area
-      4. Identify cross-cutting themes
-      5. Write the report to `.ralph/agent/review-report.md`
-      6. Publish review.complete
+      Group the findings by severity (Critical / Warning / Suggestion), note where more than one reviewer flagged the same area, and pull out themes that cut across specialties. Write the report to `.ralph/agent/review-report.md`, then publish `review.complete`.
 
-      ### Report Format
+      **Report format:**
       ```markdown
       # Code Review Report
 

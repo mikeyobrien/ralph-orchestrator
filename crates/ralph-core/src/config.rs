@@ -1205,7 +1205,7 @@ fn default_guardrails() -> Vec<String> {
         "Don't assume 'not implemented' - search first".to_string(),
         "Backpressure is law - tests/typecheck/lint/audit must pass".to_string(),
         "When behavior is runnable or user-facing, exercise the real app with the strongest available harness (Playwright, tmux, real CLI/API) and try at least one adversarial path before reporting done".to_string(),
-        "Confidence protocol: score decisions 0-100. >80 proceed autonomously; 50-80 proceed + document in .ralph/agent/decisions.md; <50 choose safe default + document".to_string(),
+        "Make reversible decisions yourself and record consequential ones in .ralph/agent/decisions.md".to_string(),
         "Commit atomically - one logical change per commit, capture the why".to_string(),
     ]
 }
@@ -1284,6 +1284,38 @@ pub struct CliConfig {
     /// If None, defaults to "-p" for arg mode.
     #[serde(default)]
     pub prompt_flag: Option<String>,
+
+    /// Default reasoning effort for every hat that doesn't set its own.
+    /// Backends without an effort control ignore it.
+    #[serde(default)]
+    pub effort: Option<EffortLevel>,
+}
+
+/// Reasoning effort requested from the backend for an iteration.
+///
+/// Mapped to each backend's own control (Claude: `--effort <level>`).
+/// Backends without an effort control ignore it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EffortLevel {
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    Max,
+}
+
+impl EffortLevel {
+    /// The level name as backends spell it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            EffortLevel::Low => "low",
+            EffortLevel::Medium => "medium",
+            EffortLevel::High => "high",
+            EffortLevel::Xhigh => "xhigh",
+            EffortLevel::Max => "max",
+        }
+    }
 }
 
 fn default_backend() -> String {
@@ -1312,6 +1344,7 @@ impl Default for CliConfig {
             idle_timeout_secs: default_idle_timeout(),
             args: Vec::new(),
             prompt_flag: None,
+            effort: None,
         }
     }
 }
@@ -2033,8 +2066,8 @@ pub struct HatConfig {
     ///
     /// Use with YAML anchors to share common instruction blocks across hats:
     /// ```yaml
-    /// _confidence_protocol: &confidence_protocol |
-    ///   ### Confidence-Based Decision Protocol
+    /// _verification: &verification |
+    ///   ### Verification
     ///   ...
     ///
     /// hats:
@@ -2043,7 +2076,7 @@ pub struct HatConfig {
     ///       ## ARCHITECT MODE
     ///       ...
     ///     extra_instructions:
-    ///       - *confidence_protocol
+    ///       - *verification
     /// ```
     #[serde(default)]
     pub extra_instructions: Vec<String>,
@@ -2057,6 +2090,10 @@ pub struct HatConfig {
     /// Accepts both `backend_args:` and shorthand `args:`.
     #[serde(default, alias = "args")]
     pub backend_args: Option<Vec<String>>,
+
+    /// Reasoning effort for this hat (inherits `cli.effort` if not set).
+    #[serde(default)]
+    pub effort: Option<EffortLevel>,
 
     /// Default event to publish if hat forgets to write an event.
     #[serde(default)]
@@ -3338,7 +3375,7 @@ hats:
         assert!(config.core.guardrails[1].contains("search first"));
         assert!(config.core.guardrails[2].contains("Backpressure"));
         assert!(config.core.guardrails[3].contains("strongest available harness"));
-        assert!(config.core.guardrails[4].contains("Confidence protocol"));
+        assert!(config.core.guardrails[4].contains("reversible decisions"));
         assert!(config.core.guardrails[5].contains("Commit atomically"));
     }
 

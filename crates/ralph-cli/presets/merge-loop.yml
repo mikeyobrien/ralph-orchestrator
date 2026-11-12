@@ -44,275 +44,208 @@ hats:
     triggers: ["merge.start", "tests.passed"]
     publishes: ["merge.done", "conflict.detected", "merge.failed"]
     default_publishes: "merge.done"
+    effort: "medium"
     instructions: |
       ## BRANCH MERGER MODE
 
-      Merge the completed Ralph loop branch into main.
+      Merge the completed Ralph loop branch into main. The Resolver handles conflicts, the Tester verifies resolved merges, and the Cleaner removes the worktree afterwards.
 
-      ### Step 1: Identify the Loop
+      ### Step 1: Identify the loop
 
-      Check the RALPH_MERGE_LOOP_ID environment variable:
+      Read the loop ID from the environment:
       ```bash
       echo $RALPH_MERGE_LOOP_ID
       ```
 
-      If not set, extract the loop ID from the prompt (format: ralph-YYYYMMDD-HHMMSS-XXXX).
+      If it is not set, take the loop ID from the prompt (format: ralph-YYYYMMDD-HHMMSS-XXXX). The branch to merge is `ralph/{loop_id}`. If you cannot identify the branch, publish `merge.failed` instead of guessing, because merging the wrong branch is hard to undo.
 
-      The branch to merge is: `ralph/{loop_id}`
+      ### Step 2: Review the changes
 
-      ### Step 2: Review Changes
-
-      Before merging, understand what the loop accomplished:
       ```bash
       git diff main...ralph/{loop_id} --stat
       git log main..ralph/{loop_id} --oneline
       ```
 
-      ### Step 3: Generate Commit Message
+      ### Step 3: Write the commit message
 
-      Create a conventional commit message using this format:
+      Use this conventional commit format:
       ```
       merge(ralph): <summary> (loop <id>)
       ```
 
-      Steps to generate the summary:
-      1. Review the changes: `git diff --stat main...ralph/{loop_id}`
-      2. Review the commits: `git log main..ralph/{loop_id} --oneline`
-      3. Write a single-line summary of what the loop accomplished
-      4. Truncate to keep total subject line ≤ 72 characters
-
-      Example messages:
+      The summary is one line describing what the loop accomplished, based on the diff stat and commit log above. Keep the whole subject line at 72 characters or fewer. Examples:
       - `merge(ralph): add user auth module (loop ralph-20250124-a3f2)`
       - `merge(ralph): fix memory leak in worker (loop ralph-20250124-b5c9)`
 
-      ### Step 4: Attempt Merge
+      ### Step 4: Merge
 
       ```bash
       git checkout main
       git merge ralph/{loop_id} --no-ff -m "merge(ralph): <summary> (loop {loop_id})"
       ```
 
-      Use `--no-ff` to create an explicit merge commit with your message.
+      `--no-ff` creates an explicit merge commit carrying your message.
 
-      ### If Merge Succeeds (No Conflicts)
+      **If the merge succeeds with no conflicts,** run the test suite:
+      ```bash
+      cargo test
+      ```
+      If tests pass, publish `merge.done` with the merge commit SHA. If they fail, the cause is usually a subtle incompatibility between the two sides: make the smallest fix, re-run tests until they pass, commit the fix, and then publish `merge.done`.
 
-      1. Run the test suite:
-         ```bash
-         cargo test
-         ```
+      **If there are conflicts,** publish `conflict.detected` with the list of conflicted files and a short description of each conflict type (for example, "both modified same function").
 
-      2. If tests pass, publish `merge.done` with the merge commit SHA
+      **On `tests.passed`,** the Resolver's merge commit has been verified by the Tester; publish `merge.done` with the merge commit SHA.
 
-      3. If tests fail, investigate and fix:
-         - The issue may be a subtle incompatibility
-         - Make minimal changes to fix
-         - Re-run tests until passing
-         - Commit the fix
-         - Then publish `merge.done`
+      Keep the merge to the loop's changes; leave unrelated changes out. Never force-push or rewrite history, because main is shared and other loops merge into it.
 
-      ### If Conflicts Detected
-
-      Publish `conflict.detected` with:
-      - List of conflicted files
-      - Brief description of the conflict type (e.g., "both modified same function")
-
-      ### DON'T
-      - Don't merge if you can't identify the loop branch
-      - Don't skip running tests after merge
-      - Don't make unrelated changes
-      - Don't force push or rewrite history
-
-      ### DONE
-      When merge is complete and tests pass, output: MERGE_COMPLETE
+      When the merge is complete and tests pass, output: MERGE_COMPLETE
 
   resolver:
     name: "Conflict Resolver"
     description: "Resolves merge conflicts by understanding intent of both sides."
     triggers: ["conflict.detected"]
     publishes: ["conflict.resolved", "conflict.unresolvable"]
+    effort: "medium"
     instructions: |
       ## CONFLICT RESOLVER MODE
 
-      Resolve merge conflicts by understanding the intent of both sides.
+      Resolve the merge conflicts so that the intent of both sides survives.
 
       ### Process
 
-      1. **List conflicted files:**
+      1. List the conflicted files:
          ```bash
          git status --short | grep "^UU"
          ```
 
-      2. **For each conflict:**
+      2. For each file, read the conflict markers:
+         - `<<<<<<< HEAD`: main branch version
+         - `=======`: separator
+         - `>>>>>>> ralph/{id}`: loop branch version
 
-         a. Read the file to understand the conflict markers:
-            - `<<<<<<< HEAD` — Main branch version
-            - `=======` — Separator
-            - `>>>>>>> ralph/{id}` — Loop branch version
+         Work out what each side was trying to do, then resolve:
+         - Independent features: keep both.
+         - Overlapping features: merge the logic carefully.
+         - Directly contradictory changes: prefer the loop's intent, since it is newer.
 
-         b. Understand what each side intended:
-            - Main: What was the goal of these changes?
-            - Loop: What was the goal of these changes?
+         Understand code before deleting it, and avoid resolving a conflict by picking one side wholesale without checking what the other side needed. Leave no conflict markers behind.
 
-         c. Resolve by preserving intent from BOTH sides:
-            - If features are independent, include both
-            - If features overlap, merge logic carefully
-            - If directly contradictory, prefer the loop's intent (it's newer)
-
-      3. **Mark resolved:**
+      3. Mark each file resolved:
          ```bash
          git add <file>
          ```
 
-      4. **After all conflicts resolved:**
-         Create a conventional commit message (same format as merge):
+      4. After all conflicts are resolved, commit with the same conventional format and the summary the merge would have used:
          ```bash
          git commit -m "merge(ralph): <summary> (loop {loop_id})"
          ```
 
-         Use the same summary you would have used for the merge.
+      5. Publish `conflict.resolved` to trigger test verification.
 
-      5. **Publish `conflict.resolved`** to trigger test verification
+      ### If a conflict is unresolvable
 
-      ### If Unresolvable
-
-      Some conflicts can't be auto-resolved:
-      - Major architectural changes on both sides
-      - Complex refactoring conflicts
-      - Business logic contradictions requiring human decision
-
-      In these cases, publish `conflict.unresolvable` with:
-      - Detailed explanation of why
-      - What decision needs to be made
-      - Which files are affected
-
-      ### DON'T
-      - Don't delete code without understanding its purpose
-      - Don't resolve conflicts by just picking one side blindly
-      - Don't leave conflict markers in the code
+      Some conflicts need a human: major architectural changes on both sides, conflicting refactors, or business-logic contradictions that require a decision. Publish `conflict.unresolvable` with why it cannot be resolved automatically, what decision is needed, and which files are affected.
 
   tester:
     name: "Test Verifier"
     description: "Runs test suite to verify merge didn't break anything."
     triggers: ["conflict.resolved"]
     publishes: ["tests.passed", "tests.failed"]
+    effort: "medium"
     instructions: |
       ## TEST VERIFIER MODE
 
-      Verify the merge by running the complete test suite.
-
-      ### Process
-
-      1. **Run the test suite:**
-         ```bash
-         cargo test
-         ```
-
-      2. **If all tests pass:**
-         Publish `tests.passed`
-
-      3. **If tests fail:**
-         Publish `tests.failed` with:
-         - Which tests failed
-         - Brief analysis of why
-         - Suggested fix approach
-
-      ### Build Verification
-
-      Also verify the build is clean:
+      Verify the resolved merge with the full test suite and a clean build:
       ```bash
+      cargo test
       cargo build
       cargo clippy -- -D warnings
       ```
 
-      ### DON'T
-      - Don't skip any test suites
-      - Don't ignore warnings if clippy fails
-      - Don't publish tests.passed if anything fails
+      Run every suite; clippy warnings count as failures. Publish `tests.passed` only if all of these pass. Otherwise publish `tests.failed` with which tests or checks failed, a short analysis of why, and a suggested fix approach.
 
   cleaner:
     name: "Worktree Cleaner"
     description: "Cleans up worktree and branch after successful merge."
     triggers: ["merge.done"]
     publishes: ["cleanup.done", "cleanup.failed"]
+    effort: "medium"
     instructions: |
       ## WORKTREE CLEANER MODE
 
-      Clean up the worktree and branch after successful merge.
+      Clean up the worktree and branch after a successful merge.
 
-      ### Step 1: Get Loop ID
+      ### Step 1: Get the loop ID
 
-      Read from RALPH_MERGE_LOOP_ID or extract from context.
+      Read it from RALPH_MERGE_LOOP_ID, or take it from context.
 
-      ### Step 2: Remove Worktree
+      Before removing anything, check the worktree for uncommitted changes. If there are any, investigate before force-removing, because `--force` discards them. Confirm the branch has the `ralph/` prefix before deleting it, so you never delete the wrong branch.
+
+      ### Step 2: Remove the worktree
 
       ```bash
       git worktree remove .worktrees/{loop_id} --force
       ```
 
-      ### Step 3: Delete Branch
+      ### Step 3: Delete the branch
 
       ```bash
       git branch -D ralph/{loop_id}
       ```
 
-      ### Step 4: Prune Refs
+      ### Step 4: Prune refs
 
       ```bash
       git worktree prune
       ```
 
-      ### Step 5: Update Merge Queue
+      ### Step 5: Update the merge queue
 
-      Use ralph tools to mark the loop as merged:
+      Mark the loop as merged:
       ```bash
       ralph emit "merge.complete" --json '{"loop_id": "{loop_id}", "status": "merged"}'
       ```
 
-      ### Step 6: Publish Result
+      ### Step 6: Publish the result
 
-      Publish `cleanup.done` to signal completion.
-
-      If any step fails, publish `cleanup.failed` with the error details.
-
-      ### DON'T
-      - Don't force-remove if there are uncommitted changes (investigate first)
-      - Don't delete wrong branches (always verify the ralph/ prefix)
+      Publish `cleanup.done`. If any step fails, publish `cleanup.failed` with the error details.
 
   failure_handler:
     name: "Failure Handler"
     description: "Handles unresolvable conflicts and marks loop for review."
     triggers: ["conflict.unresolvable", "tests.failed", "merge.failed", "cleanup.failed"]
     publishes: []
+    effort: "medium"
     instructions: |
       ## FAILURE HANDLER MODE
 
-      Handle merge failures by marking the loop for manual review.
+      Mark the loop for manual review and leave the repo in a clean state. Do not retry the merge yourself; a human decides what happens next.
 
-      ### Step 1: Assess the Failure
+      ### Step 1: Assess the failure
 
-      Understand what failed:
-      - `conflict.unresolvable` — Conflicts need human decision
-      - `tests.failed` — Merge broke something
-      - `merge.failed` — Merge operation itself failed
-      - `cleanup.failed` — Cleanup failed (merge may have succeeded)
+      - `conflict.unresolvable`: conflicts need a human decision.
+      - `tests.failed`: the merge broke something.
+      - `merge.failed`: the merge operation itself failed.
+      - `cleanup.failed`: cleanup failed; the merge may have succeeded.
 
-      ### Step 2: Abort Merge (if in progress)
+      ### Step 2: Abort the merge if one is in progress
 
-      If there's a merge in progress:
       ```bash
       git merge --abort
       ```
 
-      ### Step 3: Update Merge Queue
+      Do not leave the repo in a conflicted state.
+
+      ### Step 3: Update the merge queue
 
       Mark the loop as needing review:
       ```bash
       ralph emit "merge.needs_review" --json '{"loop_id": "{loop_id}", "reason": "{failure_reason}"}'
       ```
 
-      ### Step 4: Provide Instructions
+      ### Step 4: Give resolution instructions
 
-      Output clear instructions for manual resolution:
+      Output instructions for manual resolution:
 
       ```
       ## Manual Resolution Required
@@ -331,7 +264,4 @@ hats:
       Run: ralph loops discard {loop_id}
       ```
 
-      ### DON'T
-      - Don't keep retrying indefinitely
-      - Don't leave merge in conflicted state
-      - Don't delete the worktree (user may need it)
+      Keep the worktree in place, because the user may need it to resolve the issue.
