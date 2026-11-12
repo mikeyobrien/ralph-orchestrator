@@ -1356,6 +1356,7 @@ fn test_default_publishes_injects_when_no_events() {
             timeout: None,
             concurrency: 1,
             aggregate: None,
+            run: None,
         },
     );
     config.hats = hats;
@@ -1414,6 +1415,7 @@ fn test_default_publishes_completion_promise_requires_explicit_agent_event() {
             timeout: None,
             concurrency: 1,
             aggregate: None,
+            run: None,
         },
     );
     config.hats = hats;
@@ -1555,6 +1557,7 @@ fn test_default_publishes_not_injected_when_events_written() {
             timeout: None,
             concurrency: 1,
             aggregate: None,
+            run: None,
         },
     );
     config.hats = hats;
@@ -1756,6 +1759,7 @@ fn test_default_publishes_skipped_when_non_orphan_event_written() {
             timeout: None,
             concurrency: 1,
             aggregate: None,
+            run: None,
         },
     );
     config.hats = hats;
@@ -1828,6 +1832,7 @@ fn test_default_publishes_not_injected_when_not_configured() {
             timeout: None,
             concurrency: 1,
             aggregate: None,
+            run: None,
         },
     );
     config.hats = hats;
@@ -4568,6 +4573,7 @@ fn test_default_publishes_satisfies_required_events_for_completion() {
             timeout: None,
             concurrency: 1,
             aggregate: None,
+            run: None,
         },
     );
     config.hats = hats;
@@ -4627,6 +4633,7 @@ fn test_default_publishes_completion_promise_injects_recovery() {
             timeout: None,
             concurrency: 1,
             aggregate: None,
+            run: None,
         },
     );
     config.hats = hats;

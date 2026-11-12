@@ -18,8 +18,8 @@ use ralph_core::{
     HookExecutorContract, HookMutationConfig, HookOnError, HookPayloadBuilderInput,
     HookPayloadContextInput, HookPhaseEvent, HookRunRequest, HookRunResult, HookSuspendMode,
     LoopCompletionHandler, LoopContext, LoopHistory, LoopRegistry, MergeQueue, RalphConfig, Record,
-    SessionRecorder, SummaryWriter, SuspendStateRecord, SuspendStateStore, TerminationReason,
-    UrgentSteerStore, resolve_context_window_for_backend,
+    ScriptFailure, SessionRecorder, SummaryWriter, SuspendStateRecord, SuspendStateStore,
+    TerminationReason, UrgentSteerStore, resolve_context_window_for_backend,
 };
 use ralph_proto::{Event, GuidanceTarget, HatId, RpcEvent, RpcState, RpcTaskCounts};
 use ralph_tui::Tui;
@@ -41,6 +41,7 @@ use crate::display::{
 };
 use crate::process_management;
 use crate::rpc_stdin::{GuidanceMessage, RpcDispatcher, run_stdin_reader, run_stdout_emitter};
+use crate::script_hat::{SCRIPT_BACKEND, ScriptHatReport, ScriptHatRequest, execute_script_hat};
 use crate::web_robot_service::WebRobotService;
 use crate::{ColorMode, Verbosity};
 
@@ -613,6 +614,10 @@ pub async fn run_loop_impl(
     tokio::spawn(async move {
         if tokio::signal::ctrl_c().await.is_ok() {
             debug!("Interrupt received (SIGINT), terminating immediately...");
+            // Hook commands and script hats run in their own process groups,
+            // so a terminal Ctrl+C doesn't reach them; forward it.
+            #[cfg(unix)]
+            ralph_core::signal_active_hook_process_groups(nix::sys::signal::Signal::SIGINT);
             if let Some(ref flag) = robot_shutdown_sigint {
                 flag.store(true, std::sync::atomic::Ordering::Relaxed);
             }
@@ -631,6 +636,7 @@ pub async fn run_loop_impl(
                     .expect("Failed to register SIGTERM handler");
             sigterm.recv().await;
             debug!("SIGTERM received, terminating immediately...");
+            ralph_core::signal_active_hook_process_groups(nix::sys::signal::Signal::SIGTERM);
             if let Some(ref flag) = robot_shutdown_sigterm {
                 flag.store(true, std::sync::atomic::Ordering::Relaxed);
             }
@@ -648,6 +654,7 @@ pub async fn run_loop_impl(
                 .expect("Failed to register SIGHUP handler");
             sighup.recv().await;
             warn!("SIGHUP received (terminal closed), terminating immediately...");
+            ralph_core::signal_active_hook_process_groups(nix::sys::signal::Signal::SIGHUP);
             if let Some(ref flag) = robot_shutdown_sighup {
                 flag.store(true, std::sync::atomic::Ordering::Relaxed);
             }
@@ -743,6 +750,7 @@ pub async fn run_loop_impl(
             let reason_str = match reason {
                 TerminationReason::CompletionPromise => "completion_promise",
                 TerminationReason::MaxIterations => "max_iterations",
+                TerminationReason::MaxScriptRuns => "max_script_runs",
                 TerminationReason::MaxRuntime => "max_runtime",
                 TerminationReason::MaxCost => "max_cost",
                 TerminationReason::ConsecutiveFailures => "consecutive_failures",
@@ -813,6 +821,7 @@ pub async fn run_loop_impl(
                 // Any non-CompletionPromise termination → needs-review
                 let reason_str = match reason {
                     TerminationReason::MaxIterations => "max iterations reached",
+                    TerminationReason::MaxScriptRuns => "max script runs reached",
                     TerminationReason::MaxRuntime => "max runtime exceeded",
                     TerminationReason::MaxCost => "max cost exceeded",
                     TerminationReason::ConsecutiveFailures => "consecutive failures",
@@ -1616,12 +1625,28 @@ pub async fn run_loop_impl(
             iteration, config.event_loop.max_iterations, hat_id
         );
 
+        // A script hat runs its command instead of a model: consume its
+        // triggers without building a prompt. `None` means it started nothing
+        // (e.g. max_activations reached), so go round again.
+        let script_triggers = if event_loop.is_script_hat(&preview_display_hat) {
+            match event_loop.begin_script_iteration(&preview_display_hat) {
+                Some(triggers) => Some(triggers),
+                None => continue,
+            }
+        } else {
+            None
+        };
+
         // Build prompt for this hat
-        let prompt = match event_loop.build_prompt(&hat_id) {
-            Some(p) => p,
-            None => {
-                error!("Failed to build prompt for hat '{}'", hat_id);
-                continue;
+        let prompt = if script_triggers.is_some() {
+            String::new()
+        } else {
+            match event_loop.build_prompt(&hat_id) {
+                Some(p) => p,
+                None => {
+                    error!("Failed to build prompt for hat '{}'", hat_id);
+                    continue;
+                }
             }
         };
 
@@ -1629,7 +1654,9 @@ pub async fn run_loop_impl(
             resolve_display_hat_for_execution(&event_loop, &hat_id, &preview_display_hat);
 
         // Log full prompt to diagnostics (RALPH_DIAGNOSTICS=1)
-        event_loop.log_prompt(iteration, display_hat.as_str(), &prompt);
+        if script_triggers.is_none() {
+            event_loop.log_prompt(iteration, display_hat.as_str(), &prompt);
+        }
 
         let hat_display = event_loop
             .registry()
@@ -1660,7 +1687,11 @@ pub async fn run_loop_impl(
                 max_iterations: Some(config.event_loop.max_iterations),
                 hat: display_hat.as_str().to_string(),
                 hat_display: hat_display.clone(),
-                backend: config.cli.backend.clone(),
+                backend: if script_triggers.is_some() {
+                    SCRIPT_BACKEND.to_string()
+                } else {
+                    config.cli.backend.clone()
+                },
                 started_at,
             };
             let _ = tx.try_send(start_event);
@@ -1671,18 +1702,31 @@ pub async fn run_loop_impl(
         // visually distinguish where one iteration ends and another begins."
         // Skip when TUI is enabled - TUI has its own header showing iteration info
         // Skip in RPC mode - JSON events replace console output
+        // The budget fraction counts model iterations only: script runs
+        // don't count toward max_iterations.
+        let budget_iteration = if script_triggers.is_some() {
+            event_loop.state().model_iterations()
+        } else {
+            event_loop.state().model_iterations() + 1
+        };
         if tui_state.is_none() && !enable_rpc {
+            let separator_hat = if script_triggers.is_some() {
+                format!("{} (script)", display_hat.as_str())
+            } else {
+                display_hat.as_str().to_string()
+            };
             print_iteration_separator(
                 iteration,
-                display_hat.as_str(),
+                &separator_hat,
                 event_loop.state().elapsed(),
+                budget_iteration,
                 config.event_loop.max_iterations,
                 use_colors,
             );
         }
 
         // In verbose mode, print the full prompt before execution
-        if verbosity == Verbosity::Verbose {
+        if verbosity == Verbosity::Verbose && script_triggers.is_none() {
             eprintln!("\n{}", "=".repeat(80));
             eprintln!("PROMPT FOR {} (iteration {})", hat_id, iteration);
             eprintln!("{}", "-".repeat(80));
@@ -1697,8 +1741,12 @@ pub async fn run_loop_impl(
         // Step 1: Get hat backend configuration for the active hat
         // Use display_hat (the active hat) instead of hat_id ("ralph" in multi-hat mode)
         let hat_config_opt = event_loop.registry().get_config(&display_hat);
-        let hat_backend_opt = hat_config_opt.and_then(|c| c.backend.as_ref());
-        let hat_backend_args = hat_config_opt.and_then(|c| c.backend_args.clone());
+        let hat_backend_opt = hat_config_opt
+            .filter(|_| script_triggers.is_none())
+            .and_then(|c| c.backend.as_ref());
+        let hat_backend_args = hat_config_opt
+            .filter(|_| script_triggers.is_none())
+            .and_then(|c| c.backend_args.clone());
 
         // Step 2: Resolve effective backend and the backend name used for timeout
         // resolution. An invalid hat backend fails closed (propagates the error)
@@ -1721,7 +1769,9 @@ pub async fn run_loop_impl(
                     (hat_backend_instance, hat_backend.settings_name())
                 }
                 None => {
-                    // No custom backend - use global configuration
+                    // No custom backend - use global configuration. A script
+                    // hat never launches it; its timeout default still comes
+                    // from the global backend's adapter.
                     debug!(
                         "Using global backend for '{}': {}",
                         display_hat, config.cli.backend
@@ -1736,7 +1786,8 @@ pub async fn run_loop_impl(
         }
 
         // Step 2.6: Apply reasoning effort (hat-level, else cli.effort)
-        if let Some(effort) = hat_config_opt.and_then(|c| c.effort).or(config.cli.effort)
+        if script_triggers.is_none()
+            && let Some(effort) = hat_config_opt.and_then(|c| c.effort).or(config.cli.effort)
             && !effective_backend.apply_effort(effort.as_str())
         {
             debug!(
@@ -1755,6 +1806,11 @@ pub async fn run_loop_impl(
             &backend_name_for_timeout,
         );
         let timeout = Some(Duration::from_secs(timeout_secs));
+        let backend_label = if script_triggers.is_some() {
+            SCRIPT_BACKEND.to_string()
+        } else {
+            backend_name_for_timeout.clone()
+        };
 
         // For TUI mode, get the shared lines buffer for this iteration.
         // The buffer is owned by TuiState's IterationBuffer, so writes from
@@ -1767,7 +1823,7 @@ pub async fn run_loop_impl(
                 prepare_tui_iteration(
                     state,
                     hat_display.clone(),
-                    backend_name_for_timeout.clone(),
+                    backend_label.clone(),
                     config.event_loop.max_iterations,
                 )
             } else {
@@ -1780,7 +1836,46 @@ pub async fn run_loop_impl(
         let tui_lines_for_pty = tui_lines.clone();
         let rpc_stdout_for_pty = rpc_stdout.clone();
         let execute_future = async {
-            if effective_backend.output_format == BackendOutputFormat::Acp {
+            if let Some(triggers) = script_triggers.as_deref() {
+                let report = execute_script_hat(ScriptHatRequest {
+                    hat_id: &display_hat,
+                    argv: hat_config_opt
+                        .and_then(|c| c.run.as_ref())
+                        .map(|run| run.argv())
+                        .unwrap_or_default(),
+                    triggers,
+                    iteration,
+                    loop_id: &loop_id,
+                    workspace_root: &config.core.workspace_root,
+                    events_file: &resolve_current_events_path(&ctx),
+                    timeout_secs,
+                    max_output_bytes: config.hooks.defaults.max_output_bytes,
+                })
+                .await;
+                show_script_output(
+                    &report,
+                    &display_hat,
+                    iteration,
+                    verbosity,
+                    tui_lines_for_pty,
+                    rpc_stdout_for_pty,
+                );
+                let outcome = ExecutionOutcome {
+                    output: String::new(),
+                    success: report.succeeded(),
+                    post_event_grace_expired: false,
+                    termination: None,
+                    total_cost_usd: 0.0,
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_read_tokens: 0,
+                    cache_write_tokens: 0,
+                    context_window: 0,
+                    context_tokens: 0,
+                    num_turns: 0,
+                };
+                Ok((outcome, Some(report)))
+            } else if effective_backend.output_format == BackendOutputFormat::Acp {
                 execute_acp(
                     &effective_backend,
                     &config,
@@ -1793,6 +1888,7 @@ pub async fn run_loop_impl(
                     &backend_name_for_timeout,
                 )
                 .await
+                .map(|outcome| (outcome, None))
             } else if use_pty {
                 execute_pty(
                     pty_executor.as_mut(),
@@ -1809,6 +1905,7 @@ pub async fn run_loop_impl(
                     &backend_name_for_timeout,
                 )
                 .await
+                .map(|outcome| (outcome, None))
             } else {
                 let executor = CliExecutor::new(effective_backend.clone());
                 let result = executor
@@ -1828,24 +1925,30 @@ pub async fn run_loop_impl(
                         None,
                     ),
                 };
-                Ok(ExecutionOutcome {
-                    output,
-                    success: result.success,
-                    post_event_grace_expired: result.post_event_grace_expired,
-                    termination: None,
-                    total_cost_usd: metrics.as_ref().map_or(0.0, |m| m.total_cost_usd),
-                    input_tokens: metrics.as_ref().map_or(0, |m| m.input_tokens),
-                    output_tokens: metrics.as_ref().map_or(0, |m| m.output_tokens),
-                    cache_read_tokens: metrics.as_ref().map_or(0, |m| m.cache_read_tokens),
-                    cache_write_tokens: metrics.as_ref().map_or(0, |m| m.cache_write_tokens),
-                    context_window: context_window_for_backend(&config, &backend_name_for_timeout),
-                    context_tokens: 0,
-                    num_turns: metrics.as_ref().map_or(0, |m| m.num_turns),
-                })
+                Ok((
+                    ExecutionOutcome {
+                        output,
+                        success: result.success,
+                        post_event_grace_expired: result.post_event_grace_expired,
+                        termination: None,
+                        total_cost_usd: metrics.as_ref().map_or(0.0, |m| m.total_cost_usd),
+                        input_tokens: metrics.as_ref().map_or(0, |m| m.input_tokens),
+                        output_tokens: metrics.as_ref().map_or(0, |m| m.output_tokens),
+                        cache_read_tokens: metrics.as_ref().map_or(0, |m| m.cache_read_tokens),
+                        cache_write_tokens: metrics.as_ref().map_or(0, |m| m.cache_write_tokens),
+                        context_window: context_window_for_backend(
+                            &config,
+                            &backend_name_for_timeout,
+                        ),
+                        context_tokens: 0,
+                        num_turns: metrics.as_ref().map_or(0, |m| m.num_turns),
+                    },
+                    None,
+                ))
             }
         };
 
-        let outcome = tokio::select! {
+        let (outcome, script_report) = tokio::select! {
             result = execute_future => result?,
             _ = interrupt_rx_clone.changed() => {
                 // Immediately terminate children via process group signal
@@ -1855,10 +1958,14 @@ pub async fn run_loop_impl(
                     use nix::unistd::getpgrp;
                     let pgid = getpgrp();
                     debug!("Sending SIGTERM to process group {}", pgid);
+                    // Hook commands and script hats run in their own process
+                    // groups, so signal those too.
+                    ralph_core::signal_active_hook_process_groups(Signal::SIGTERM);
                     let _ = killpg(pgid, Signal::SIGTERM);
 
                     // Wait briefly for graceful exit, then SIGKILL
                     tokio::time::sleep(Duration::from_millis(250)).await;
+                    ralph_core::signal_active_hook_process_groups(Signal::SIGKILL);
                     let _ = killpg(pgid, Signal::SIGKILL);
                 }
 
@@ -2005,7 +2112,7 @@ pub async fn run_loop_impl(
         if tui_state.is_none() && !enable_rpc {
             let iter_duration = iteration_started_at.elapsed();
             print_iteration_footer(
-                iteration,
+                budget_iteration,
                 config.event_loop.max_iterations,
                 iter_duration,
                 event_loop.state().elapsed(),
@@ -2025,7 +2132,12 @@ pub async fn run_loop_impl(
         );
 
         // Emit synthetic iteration.summary row to events.jsonl (spec §10).
-        log_iteration_summary(&mut event_logger, iteration, summary_metrics);
+        log_iteration_summary(
+            &mut event_logger,
+            iteration,
+            &backend_label,
+            summary_metrics,
+        );
 
         // Update LoopState peak context-token tracking (spec §11).
         event_loop.record_iteration_tokens(&hat_id, outcome.context_tokens);
@@ -2034,6 +2146,16 @@ pub async fn run_loop_impl(
         // max_cost applies across iterations and across --continue resumes.
         event_loop.add_cost(outcome.total_cost_usd);
         let termination = event_loop.process_output(&hat_id, &output, success);
+
+        // A script that failed after emitting is not trusted: drop what it
+        // emitted, so only `<hat>.failed` routes (published below).
+        let script_discarded_events = match &script_report {
+            Some(report) if !report.succeeded() => event_loop
+                .discard_unread_events()
+                .inspect_err(|e| warn!(error = %e, "Failed to discard a failed script's events"))
+                .unwrap_or(0),
+            _ => 0,
+        };
 
         // A text backend terminated by the post-event grace deadline may have
         // completed its semantic handoff successfully even though the process
@@ -2545,10 +2667,23 @@ pub async fn run_loop_impl(
             .await;
         }
 
-        // Inject default_publishes for active hats only when agent wrote no events.
-        // Prefer the displayed execution hat first so a non-emitting turn still
-        // falls back to the hat the user actually saw in the banner.
-        if !agent_wrote_events && wave_events.is_empty() {
+        if let Some(report) = &script_report {
+            // A completion or cancel promise is an emission even though Ralph
+            // acts on it instead of publishing it (so `had_events` is false).
+            let emitted_promise = processed_events
+                .as_ref()
+                .is_some_and(|events| events.had_promise_events);
+            publish_script_outcome(
+                &mut event_loop,
+                &display_hat,
+                report,
+                agent_wrote_events || emitted_promise || !wave_events.is_empty(),
+                script_discarded_events,
+            );
+        } else if !agent_wrote_events && wave_events.is_empty() {
+            // Inject default_publishes for active hats only when agent wrote no events.
+            // Prefer the displayed execution hat first so a non-emitting turn still
+            // falls back to the hat the user actually saw in the banner.
             let mut fallback_hats = Vec::new();
             if display_hat.as_str() != "ralph" {
                 fallback_hats.push(display_hat.clone());
@@ -2824,6 +2959,63 @@ fn recover_expected_emit_after_output(
 
 fn output_mentions_ralph_emit(output: &str) -> bool {
     output.contains("ralph emit")
+}
+
+/// Shows a script hat's output where a model's output would go: the
+/// in-process TUI buffer, the RPC stream (which also feeds a TUI parent
+/// process), or the console.
+fn show_script_output(
+    report: &ScriptHatReport,
+    hat_id: &HatId,
+    iteration: u32,
+    verbosity: Verbosity,
+    tui_lines: Option<Arc<std::sync::Mutex<Vec<ratatui::text::Line<'static>>>>>,
+    rpc_stdout: Option<Arc<std::sync::Mutex<std::io::Stdout>>>,
+) {
+    if let Some(lines) = tui_lines {
+        let mut handler = TuiStreamHandler::with_lines(verbosity == Verbosity::Verbose, lines);
+        handler.on_text(&report.display_markdown(hat_id));
+        handler.flush_text_buffer();
+    } else if let Some(writer) = rpc_stdout {
+        let mut handler = JsonRpcStreamHandler::new(
+            writer,
+            iteration,
+            Some(hat_id.as_str().to_string()),
+            Some(SCRIPT_BACKEND.to_string()),
+        );
+        handler.on_text(&report.display_markdown(hat_id));
+    } else if verbosity != Verbosity::Quiet {
+        for line in report.display_lines(hat_id) {
+            println!("{line}");
+        }
+    }
+}
+
+/// Publishes what a script hat run leads to, once its emitted events have
+/// been processed: `<hat>.failed` for a failed command; for one that exited
+/// 0 without emitting, `default_publishes` if set, else `<hat>.failed`.
+fn publish_script_outcome(
+    event_loop: &mut EventLoop,
+    hat_id: &HatId,
+    report: &ScriptHatReport,
+    emitted: bool,
+    discarded_events: usize,
+) {
+    match &report.failure {
+        Some(failure) => event_loop.publish_script_failure(hat_id, failure, discarded_events),
+        None if emitted => {}
+        None => {
+            let has_default = event_loop
+                .registry()
+                .get_config(hat_id)
+                .is_some_and(|config| config.default_publishes.is_some());
+            if has_default {
+                event_loop.check_default_publishes(hat_id);
+            } else {
+                event_loop.publish_script_failure(hat_id, &ScriptFailure::NoEvents, 0);
+            }
+        }
+    }
 }
 
 fn resolve_display_hat_for_execution(
@@ -3394,6 +3586,7 @@ fn dispatch_phase_event_hooks(
             timeout_seconds: hook.timeout_seconds,
             max_output_bytes: hook.max_output_bytes,
             stdin_payload: stdin_payload.clone(),
+            own_process_group: false,
         };
 
         let outcome = dispatch_hook_with_suspend_policy(
@@ -4608,6 +4801,7 @@ struct IterationSummaryMetrics {
 fn log_iteration_summary(
     logger: &mut EventLogger,
     iteration: u32,
+    backend: &str,
     metrics: IterationSummaryMetrics,
 ) {
     let context_pct = if metrics.context_window > 0 {
@@ -4619,6 +4813,7 @@ fn log_iteration_summary(
         0
     };
     let payload = serde_json::json!({
+        "backend": backend,
         "duration_ms": metrics.duration_ms,
         "cost_usd": metrics.total_cost_usd,
         "num_turns": metrics.num_turns,
@@ -10361,6 +10556,7 @@ hats:
                 concurrency: 1,
                 aggregate: None,
                 scratchpad: None,
+                run: None,
             },
             events: vec![event],
             total: 1,
@@ -11418,6 +11614,7 @@ EOF"#,
                 concurrency: 1,
                 aggregate: None,
                 scratchpad: None,
+                run: None,
             },
             events,
             total,
@@ -13661,7 +13858,7 @@ sleep 300
             context_tokens: 88_000,
         };
 
-        log_iteration_summary(&mut logger, 42, metrics);
+        log_iteration_summary(&mut logger, 42, "claude", metrics);
 
         let content = std::fs::read_to_string(&log_path).expect("read events");
         let records: Vec<EventRecord> = content
@@ -13709,7 +13906,7 @@ sleep 300
             context_tokens: 0,
         };
 
-        log_iteration_summary(&mut logger, 1, metrics);
+        log_iteration_summary(&mut logger, 1, "claude", metrics);
 
         let content = std::fs::read_to_string(&log_path).expect("read events");
         let record: EventRecord =

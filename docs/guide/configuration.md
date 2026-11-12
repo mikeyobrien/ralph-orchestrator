@@ -115,7 +115,8 @@ If both are used (`-c` contains hats and `-H` is provided), `-H` wins for workfl
 # Event loop settings
 event_loop:
   completion_promise: "LOOP_COMPLETE"  # Output that signals completion
-  max_iterations: 100                   # Maximum orchestration loops
+  max_iterations: 100                   # Maximum model iterations
+  max_script_runs: 500                  # Maximum script hat runs
   max_runtime_seconds: 14400            # 4 hours max runtime
   idle_timeout_secs: 1800               # 30 min idle timeout
   starting_event: "task.start"          # First event published (hat mode)
@@ -192,6 +193,21 @@ hats:
       path: .ralph/agent/my-hat.md      #   Scratchpad file path. Inherits from core if omitted.
     instructions: |
       Hat-specific instructions...
+  my_script:
+    name: "My Script"                   # A script hat: runs a command, no model
+    description: "Checks the work"
+    triggers: ["event.done"]
+    publishes: ["check.done"]
+    run: ["sh", "scripts/check.sh"]     # argv list, or a string run via `sh -c`
+    timeout: 120                        # Seconds (default: the backend's adapter timeout)
+
+# Gates — evidence an event must carry before it is routed
+gates:
+  - event: "check.done"
+    requires:
+      - field: commit
+        verify: commit                  # Ralph checks the commit exists and is new
+    blocked: "check.blocked"            # Default: "<prefix>.blocked"
 ```
 
 ## Section Details
@@ -203,7 +219,8 @@ Controls the orchestration loop behavior.
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `completion_promise` | string | `"LOOP_COMPLETE"` | Output text that ends the loop |
-| `max_iterations` | integer | `100` | Maximum iterations before stopping |
+| `max_iterations` | integer | `100` | Maximum model iterations before stopping. Script hat runs don't count |
+| `max_script_runs` | integer | `500` | Maximum script hat runs before stopping (exit code 2). Must be at least 1 |
 | `max_runtime_seconds` | integer | `14400` | Maximum runtime (4 hours) |
 | `idle_timeout_secs` | integer | `1800` | Idle timeout (30 minutes) |
 | `starting_event` | string | `null` | First event (enables hat mode) |
@@ -400,15 +417,17 @@ Specialized personas for hat-based mode.
 | Option | Type | Required | Description |
 |--------|------|----------|-------------|
 | `name` | string | Yes | Display name |
-| `description` | string | No | Purpose description |
+| `description` | string | Yes | Purpose description |
 | `triggers` | list | Yes | Event subscription patterns |
 | `publishes` | list | Yes | Allowed event types |
-| `default_publishes` | string | No | Default event if none explicit |
-| `max_activations` | integer | No | Limit activations |
+| `default_publishes` | string | No | Event published when an iteration emits none |
+| `max_activations` | integer | No | Limit activations (script runs count) |
+| `run` | string or list | No | Run this command instead of a model. See [Script hats](#script-hats) |
+| `timeout` | integer | No | Seconds before the hat's backend or script is stopped |
 | `backend` | string | No | Backend override |
 | `effort` | string | No | Reasoning effort for this hat: `low`, `medium`, `high`, `xhigh`, or `max`. Inherits `cli.effort`. Passed as `--effort` to Claude; other backends ignore it |
 | `scratchpad` | string or object | No | Per-hat scratchpad override (inherits `core.scratchpad` if omitted) |
-| `instructions` | string | Yes | Hat-specific prompt |
+| `instructions` | string | Yes, unless `run` is set | Hat-specific prompt. Not allowed with `run` |
 
 Each hat can override the global scratchpad with its own `scratchpad` field. Like the core-level setting, it accepts a plain string or a structured object:
 
@@ -430,6 +449,211 @@ hats:
 ```
 
 **Resolution order:** hat override → `core.scratchpad` → defaults.
+
+### Script hats
+
+A hat with `run` is a script hat. It is triggered by events and publishes
+events like any hat, but each activation runs a command instead of a model.
+Use it for deterministic steps (advancing a queue, merging a branch, running a
+check) that would otherwise cost a full model iteration.
+
+```yaml
+hats:
+  advance:
+    name: "Queue keeper"
+    description: "Dispatches the next source, or finishes"
+    triggers: ["queue.start", "merge.done"]
+    publishes: ["queue.advance", "queue.done"]
+    run: ["sh", "scripts/advance.sh"]     # argv list
+    timeout: 120
+    default_publishes: "queue.advance"    # used when the command exits 0 without emitting
+  merger:
+    name: "Merger"
+    description: "Merges the finished source branch"
+    triggers: ["source.done"]
+    publishes: ["merge.done"]
+    run: 'git merge --no-edit "$RALPH_TRIGGER_PAYLOAD" && "$RALPH_BIN" emit merge.done "merged=$(git rev-parse HEAD)"'
+```
+
+`run` is either an argv list (`command[0]` must be an executable) or a string,
+which runs as `sh -c "<string>"`. The command runs in the workspace root and
+publishes with `"$RALPH_BIN" emit <topic> <payload>`, exactly as an agent does.
+Its events then go through the normal path: gates, completion handling, and
+routing.
+
+**Validation:**
+- `run` can't be combined with `instructions` or `extra_instructions`. The error names the hat.
+- `run` can't be empty or contain a NUL byte, and `concurrency` must be 1 (script hats don't run as waves).
+- `default_publishes` can't be the completion promise. Ralph never completes the loop from a default event, so the script would rerun until the loop goes stale. Have the script emit the promise itself.
+- `backend`, `backend_args`, `effort`, and `disallowed_tools` are ignored on a script hat, with a warning.
+
+**Environment.** The command inherits Ralph's environment, plus:
+
+| Variable | Value |
+|---|---|
+| `RALPH_BIN` | The running Ralph executable. Its directory is also first on `PATH` |
+| `RALPH_EVENTS_FILE` | The events file `ralph emit` writes to |
+| `RALPH_WORKSPACE_ROOT` | Workspace root (also the working directory) |
+| `RALPH_HAT` | Hat id |
+| `RALPH_ITERATION`, `RALPH_LOOP_ID` | Iteration number and loop id |
+| `RALPH_TRIGGER_TOPIC` | Topic of the first triggering event |
+| `RALPH_TRIGGER_PAYLOAD` | Its payload, truncated to 64 KiB, with NUL bytes removed |
+| `RALPH_TRIGGER_EVENTS_FILE` | JSONL file with every consumed event (`{"topic", "payload", "source"}`), untruncated. Deleted after the run |
+
+stdin carries `{"hat", "iteration", "trigger_topic"}` as JSON. A command
+doesn't have to read it.
+
+**Outcomes:**
+
+| Command result | What Ralph does |
+|---|---|
+| Exit 0, emitted at least one event (the completion or cancellation promise counts) | Normal iteration |
+| Exit 0, emitted nothing | Publishes `default_publishes` if set, otherwise `<hat>.failed` with `command exited 0 without emitting` |
+| Non-zero exit, timeout, or could not start | Discards anything it emitted, and publishes `<hat>.failed`. Counts toward `max_consecutive_failures` |
+
+The `<hat>.failed` payload's first line is the cause (`command exited 3`,
+`command timed out after 120s`, `command was killed by a signal`,
+`could not run command: ...`). Then comes how many emitted events were
+discarded, if any, and the last 4 KiB of stderr. Like any event,
+`<hat>.failed` goes to a hat that triggers on it, or to Ralph.
+
+**Scope.** Scope enforcement is always on for script hats, whatever
+`enforce_hat_scope` says. An emitted topic outside `publishes` is dropped and
+`<hat>.scope_violation` is published instead.
+
+**Accounting.** A script run gets an iteration number. It shows in the TUI
+(`<hat> (script)`), diagnostics, and `iteration.summary` (backend `script`,
+cost 0), and fires the lifecycle hooks like any iteration. It counts toward the
+hat's `max_activations`, stale-loop detection, and `event_loop.max_script_runs`,
+but not toward `max_iterations`, which bounds model work. Two script hats that
+trigger each other stop at `max_script_runs`, or sooner through stale-loop
+detection.
+
+**Limits.**
+- The hat's `timeout` stops the command. If the hat sets none, the global backend's adapter timeout (`adapters.<backend>.timeout`, default 300) applies. The command runs in its own process group, so a timeout or Ctrl+C stops its children too.
+- Each output stream is captured up to `hooks.defaults.max_output_bytes` (8192 by default). Anything past that is dropped without blocking the command.
+- A child left running in the background (`sleep 60 &`) keeps the output pipes open, so the run lasts until that child exits or the timeout fires. Redirect a background child's output (`cmd >/dev/null 2>&1 &`), or don't leave one running.
+
+## Gates
+
+`gates:` declares the evidence an event must carry before Ralph routes it. An
+event that fails its gate is replaced by a blocked event. Gates let a preset
+reject unverified work instead of asking the agent in prose to verify it.
+
+```yaml
+gates:
+  - event: "foundation.done"
+    requires:
+      - field: commit
+        verify: commit          # a real commit, reachable from HEAD, created this iteration
+  - event: "merge.done"
+    requires:
+      - field: merged
+        verify: { commit: { reachable_from: "HEAD", new: false } }
+  - event: "review.ready"
+    requires:
+      - field: tests
+        status: passed
+      - field: coverage
+        min: 80
+      - command: ["python3", "-m", "unittest", "-q"]   # Ralph runs it; exit 0 passes
+        timeout: 300
+    blocked: "review.blocked"
+```
+
+| Option | Required | Description |
+|---|---|---|
+| `event` | Yes | Exact topic the gate applies to (no wildcards) |
+| `requires` | No | Requirements, checked in order. All must pass |
+| `blocked` | No | Topic published when the gate fails. Default: the event's prefix plus `.blocked` (`merge.done` → `merge.blocked`) |
+
+### Requirement kinds
+
+| Requirement | Passes when | Trust |
+|---|---|---|
+| `field: k` | `k` is in the payload with a non-empty value | Agent's claim |
+| `field: k` + `status: passed` | `k` carries that status word | Agent's claim |
+| `field: k` + `min: n` / `max: n` | `k` parses as a number within the bounds (inclusive; a trailing `%` is allowed) | Agent's claim |
+| `field: k` + `verify: commit` | `k` is a commit, reachable from `HEAD`, and not reachable from the `HEAD` recorded when the iteration started | Checked by Ralph |
+| `field: k` + `verify: { commit: { reachable_from: <ref>, new: <bool> } }` | As above, from `<ref>` instead of `HEAD`. `new: false` drops the "created this iteration" check | Checked by Ralph |
+| `command: [argv]` (+ `timeout`) | Ralph runs the command and it exits 0 | Checked by Ralph |
+
+Checking stops at the first failure, so put cheap field checks before an
+expensive `command`.
+
+**Payloads.** Field requirements read the event payload as a JSON object or as
+`key=value` tokens:
+
+```bash
+ralph emit review.ready "tests=passed coverage=87% commit=abc1234"
+ralph emit review.ready --json '{"tests": "passed", "coverage": 87}'
+ralph emit review.ready --json '{"tests": {"value": "42", "status": "passed"}}'
+```
+
+A token value may be quoted (`note="two words"`) and may be followed by a
+status word (`tests=42 passed`). The status words are `passed`, `passing`,
+`failed`, and `failing`. A value that is itself the status word
+(`tests=passed`) also counts as a status. Values that are empty, `false`,
+`null`, an array, or an object without `value` count as missing.
+
+**Commit checks** run `git` in the workspace. A value that isn't a commit fails
+with `not a commit`. If git itself fails (for example, the workspace isn't a
+repository), the check fails with `git failed`, never passes.
+
+**Command requirements** get `RALPH_EVENT_TOPIC` and `RALPH_EVENT_PAYLOAD`
+(capped at 64 KiB) in their environment, and `{"topic"}` on stdin. They run in
+the workspace root, in their own process group. `timeout` defaults to 300
+seconds. A timed-out command is stopped with its children.
+
+### Blocked events
+
+A failing event is not routed. Ralph publishes the blocked topic instead. Its
+payload names the failed requirement and the reason, then gives details and
+the original payload:
+
+```text
+Gate on `review.ready` failed: field `coverage`: threshold
+value 62 is below min 80
+
+Original payload:
+tests=passed coverage=62%
+```
+
+Reasons are `missing`, `status`, `threshold`, `not a commit`, `not reachable`,
+`not new`, `git failed`, `command exited N` (with the stderr tail),
+`command timed out`, and `command failed`. A blocked event routes like any
+other: to a hat that triggers on it, or to Ralph. Each block is logged as
+`BackpressureTriggered` in diagnostics. Repeated blocks feed the usual
+thrashing and stale-loop detection.
+
+Gates apply wherever an event enters the loop: `ralph emit`, wave dispatch,
+events that arrive while Ralph waits for a human, and events replayed on
+resume.
+
+### Gating completion
+
+A gate on the completion promise stops a run from ending without evidence:
+
+```yaml
+gates:
+  - event: "LOOP_COMPLETE"
+    requires:
+      - command: ["cargo", "test", "--quiet"]
+```
+
+If the gate fails, the loop goes on and the blocked event (`LOOP_COMPLETE.blocked`
+here) is published. A completion promise found only in the agent's output text
+is gated too, with an empty payload, so only `command` requirements can pass it.
+
+### Validation
+
+- Two gates on the same event is an error.
+- A `command` with an empty argv, or a NUL byte in any argument, is an error.
+- The blocked topic can't be the gated event, another gate's event, the completion or cancellation promise, or `build.done`, `review.done`, or `verify.passed`. Each of these would let a failing event through unchecked.
+- A gate on an event that no hat publishes is a warning.
+
+The built-in `build.done` and `review.done` payload checks still apply
+alongside gates.
 
 ## Example Configurations
 

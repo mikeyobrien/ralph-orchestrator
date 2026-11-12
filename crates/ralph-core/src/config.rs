@@ -177,6 +177,10 @@ pub struct RalphConfig {
     #[serde(default)]
     pub events: HashMap<String, EventMetadata>,
 
+    /// Event gates: evidence an event must carry before it is routed.
+    #[serde(default)]
+    pub gates: Vec<GateConfig>,
+
     // ─────────────────────────────────────────────────────────────────────────
     // V1 COMPATIBILITY FIELDS (flat format)
     // These map to nested v2 fields for backwards compatibility.
@@ -290,6 +294,7 @@ impl Default for RalphConfig {
             core: CoreConfig::default(),
             hats: HashMap::new(),
             events: HashMap::new(),
+            gates: Vec::new(),
             // V1 compatibility fields
             agent: None,
             agent_priority: vec![],
@@ -474,9 +479,10 @@ impl RalphConfig {
             normalized_count += 1;
         }
 
-        // Merge extra_instructions into instructions for each hat
+        // Merge extra_instructions into instructions for each hat. Script hats
+        // keep theirs, so validation rejects the field the user actually set.
         for (hat_id, hat) in &mut self.hats {
-            if !hat.extra_instructions.is_empty() {
+            if !hat.extra_instructions.is_empty() && !hat.is_script() {
                 for fragment in hat.extra_instructions.drain(..) {
                     if !hat.instructions.ends_with('\n') {
                         hat.instructions.push('\n');
@@ -676,6 +682,8 @@ impl RalphConfig {
             }
         }
 
+        self.validate_script_hats(&mut warnings)?;
+
         // Validate each hat's backend selector. Named and named-with-args backends
         // must reference a catalogued backend; Kiro-agent forms must use a supported
         // Kiro mode; custom command forms must carry a non-empty command.
@@ -743,7 +751,186 @@ impl RalphConfig {
             }
         }
 
+        self.validate_gates(&mut warnings)?;
+
         Ok(warnings)
+    }
+
+    /// Script hat checks: `run` excludes a prompt and concurrency, must name
+    /// something to run, and can't carry a NUL. Model-only fields on a script
+    /// hat are ignored with a warning. Also rejects `max_script_runs: 0`.
+    fn validate_script_hats(&self, warnings: &mut Vec<ConfigWarning>) -> Result<(), ConfigError> {
+        if self.event_loop.max_script_runs == 0 {
+            return Err(ConfigError::InvalidMaxScriptRuns);
+        }
+
+        let mut hat_ids: Vec<&String> = self.hats.keys().collect();
+        hat_ids.sort();
+        for hat_id in hat_ids {
+            let hat = &self.hats[hat_id];
+            let Some(run) = &hat.run else {
+                continue;
+            };
+            let prompt_field = if !hat.instructions.trim().is_empty() {
+                Some("instructions")
+            } else if !hat.extra_instructions.is_empty() {
+                Some("extra_instructions")
+            } else {
+                None
+            };
+            if let Some(field) = prompt_field {
+                return Err(ConfigError::ScriptHatWithInstructions {
+                    hat: hat_id.clone(),
+                    field: field.to_string(),
+                });
+            }
+            if hat.concurrency > 1 {
+                return Err(ConfigError::ScriptHatConcurrency {
+                    hat: hat_id.clone(),
+                    value: hat.concurrency,
+                });
+            }
+            if run.is_empty() {
+                return Err(ConfigError::EmptyScriptHatRun {
+                    hat: hat_id.clone(),
+                });
+            }
+            if run.has_nul() {
+                return Err(ConfigError::ScriptHatRunHasNul {
+                    hat: hat_id.clone(),
+                });
+            }
+            if hat.default_publishes.as_deref() == Some(self.event_loop.completion_promise.as_str())
+            {
+                return Err(ConfigError::ScriptHatDefaultCompletion {
+                    hat: hat_id.clone(),
+                    promise: self.event_loop.completion_promise.clone(),
+                });
+            }
+
+            if self.suppress_warnings {
+                continue;
+            }
+            let ignored = [
+                ("backend", hat.backend.is_some()),
+                ("backend_args", hat.backend_args.is_some()),
+                ("effort", hat.effort.is_some()),
+                ("disallowed_tools", !hat.disallowed_tools.is_empty()),
+            ];
+            for (field, set) in ignored {
+                if set {
+                    warnings.push(ConfigWarning::InvalidValue {
+                        field: format!("hats.{hat_id}.{field}"),
+                        message: "ignored on a script hat (it sets 'run', so no model runs)"
+                            .to_string(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Gate checks: one gate per event, a blocked topic distinct from every
+    /// gated event, the completion and cancellation promises, and the topics
+    /// Ralph checks for evidence, non-empty command argv, no NUL
+    /// in strings that reach a spawned process, and a warning when no hat
+    /// publishes the gated event.
+    fn validate_gates(&self, warnings: &mut Vec<ConfigWarning>) -> Result<(), ConfigError> {
+        let mut seen = std::collections::HashSet::new();
+        for gate in &self.gates {
+            if !seen.insert(gate.event.as_str()) {
+                return Err(ConfigError::DuplicateGate {
+                    event: gate.event.clone(),
+                });
+            }
+        }
+        for gate in &self.gates {
+            // Blocked events are not gated again and skip Ralph's own checks.
+            // A blocked topic that is the gated event, another gate's event,
+            // or a topic Ralph checks or acts on would route a failing event
+            // as if it had passed.
+            let blocked = gate.blocked_topic();
+            let blocked_why = if blocked == gate.event {
+                Some(
+                    "which is the gated event itself, so failing events would route as if they passed",
+                )
+            } else if seen.contains(blocked.as_str()) {
+                Some(
+                    "which is another gate's event, so failing events would route without that gate running",
+                )
+            } else if blocked == self.event_loop.completion_promise {
+                Some("which is the completion promise")
+            } else if !self.event_loop.cancellation_promise.is_empty()
+                && blocked == self.event_loop.cancellation_promise
+            {
+                Some("which is the cancellation promise")
+            } else if ["build.done", "review.done", "verify.passed"].contains(&blocked.as_str()) {
+                Some(
+                    "which Ralph checks for backpressure evidence, so failing events would route as if they passed",
+                )
+            } else {
+                None
+            };
+            if let Some(why) = blocked_why {
+                return Err(ConfigError::GateBlockedTopic {
+                    event: gate.event.clone(),
+                    blocked,
+                    why: why.to_string(),
+                });
+            }
+            let has_nul = |field: &str| ConfigError::GateValueHasNul {
+                event: gate.event.clone(),
+                field: field.to_string(),
+            };
+            for requirement in &gate.requires {
+                match requirement {
+                    GateRequirement::Command(cmd) => {
+                        if cmd.command.first().is_none_or(|exe| exe.trim().is_empty()) {
+                            return Err(ConfigError::EmptyGateCommand {
+                                event: gate.event.clone(),
+                            });
+                        }
+                        if cmd.command.iter().any(|arg| arg.contains('\0')) {
+                            return Err(has_nul("command"));
+                        }
+                    }
+                    GateRequirement::Field(field) => {
+                        if let Some(verify) = &field.verify
+                            && verify.commit().reachable_from.contains('\0')
+                        {
+                            return Err(has_nul("reachable_from"));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Without custom hats Ralph itself may publish anything, and the
+        // completion promise is published by whichever hat finishes the work.
+        if self.suppress_warnings || self.hats.is_empty() {
+            return Ok(());
+        }
+        for (index, gate) in self.gates.iter().enumerate() {
+            if gate.event == self.event_loop.completion_promise {
+                continue;
+            }
+            let published = self.hats.values().any(|hat| {
+                hat.publishes
+                    .iter()
+                    .chain(hat.default_publishes.iter())
+                    .any(|pattern| Topic::new(pattern).matches_str(&gate.event))
+            });
+            if !published {
+                warnings.push(ConfigWarning::InvalidValue {
+                    field: format!("gates[{index}].event"),
+                    message: format!(
+                        "no hat publishes '{}', so this gate never applies",
+                        gate.event
+                    ),
+                });
+            }
+        }
+        Ok(())
     }
 
     fn validate_hooks(&self) -> Result<(), ConfigError> {
@@ -1096,6 +1283,11 @@ pub struct EventLoopConfig {
     /// (e.g. Sonnet 4.x `[1m]` users: `1_000_000`).
     #[serde(default)]
     pub context_window_tokens: Option<u64>,
+
+    /// Maximum number of script hat runs. Script runs don't count toward
+    /// `max_iterations`, so this bounds script hats that trigger each other.
+    #[serde(default = "default_max_script_runs")]
+    pub max_script_runs: u32,
 }
 
 /// Resolves the context-window ceiling in tokens for this run.
@@ -1142,6 +1334,10 @@ fn default_max_failures() -> u32 {
     5
 }
 
+fn default_max_script_runs() -> u32 {
+    500
+}
+
 impl Default for EventLoopConfig {
     fn default() -> Self {
         Self {
@@ -1161,6 +1357,7 @@ impl Default for EventLoopConfig {
             cancellation_promise: String::new(),
             enforce_hat_scope: false,
             context_window_tokens: None,
+            max_script_runs: default_max_script_runs(),
         }
     }
 }
@@ -2139,10 +2336,54 @@ pub struct HatConfig {
     /// Cannot be set on a hat with `concurrency > 1`.
     #[serde(default)]
     pub aggregate: Option<AggregateConfig>,
+
+    /// Command to run instead of a model, which makes this a script hat.
+    ///
+    /// A string runs via `sh -c`; a list is an argv. The command publishes
+    /// with `"$RALPH_BIN" emit`. Mutually exclusive with `instructions` and
+    /// `extra_instructions`.
+    #[serde(default)]
+    pub run: Option<HatRun>,
 }
 
 fn default_concurrency() -> u32 {
     1
+}
+
+/// The command a script hat runs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum HatRun {
+    /// A shell command line, run via `sh -c`.
+    Shell(String),
+    /// An argv list: executable followed by its arguments.
+    Argv(Vec<String>),
+}
+
+impl HatRun {
+    /// The argv to spawn: `["sh", "-c", line]` for a shell line, the list as-is otherwise.
+    pub fn argv(&self) -> Vec<String> {
+        match self {
+            HatRun::Shell(line) => vec!["sh".to_string(), "-c".to_string(), line.clone()],
+            HatRun::Argv(argv) => argv.clone(),
+        }
+    }
+
+    /// True when there is nothing to run: a blank shell line, an empty argv,
+    /// or an argv whose executable is blank.
+    pub fn is_empty(&self) -> bool {
+        match self {
+            HatRun::Shell(line) => line.trim().is_empty(),
+            HatRun::Argv(argv) => argv.first().is_none_or(|exe| exe.trim().is_empty()),
+        }
+    }
+
+    fn has_nul(&self) -> bool {
+        match self {
+            HatRun::Shell(line) => line.contains('\0'),
+            HatRun::Argv(argv) => argv.iter().any(|arg| arg.contains('\0')),
+        }
+    }
 }
 
 /// Configuration for wave result aggregation.
@@ -2165,6 +2406,11 @@ pub enum AggregateMode {
 }
 
 impl HatConfig {
+    /// True when this hat runs a command instead of a model.
+    pub fn is_script(&self) -> bool {
+        self.run.is_some()
+    }
+
     /// Converts trigger strings to Topic objects.
     pub fn trigger_topics(&self) -> Vec<Topic> {
         self.triggers.iter().map(|s| Topic::new(s)).collect()
@@ -2327,6 +2573,151 @@ pub struct TelegramBotConfig {
     pub api_url: Option<String>,
 }
 
+/// An event gate: evidence an event must carry before it is routed.
+///
+/// ```yaml
+/// gates:
+///   - event: "review.ready"
+///     requires:
+///       - field: tests
+///         status: passed
+///       - command: ["cargo", "test"]
+///         timeout: 300
+///     blocked: "review.blocked"
+/// ```
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GateConfig {
+    /// Topic this gate applies to.
+    pub event: String,
+
+    /// Requirements, evaluated in order; the first failure stops evaluation.
+    #[serde(default)]
+    pub requires: Vec<GateRequirement>,
+
+    /// Topic published instead of `event` when the gate fails.
+    /// Defaults to `<prefix>.blocked` (`merge.done` -> `merge.blocked`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked: Option<String>,
+}
+
+impl GateConfig {
+    /// Topic published when this gate fails.
+    pub fn blocked_topic(&self) -> String {
+        if let Some(blocked) = &self.blocked {
+            return blocked.clone();
+        }
+        match self.event.rsplit_once('.') {
+            Some((prefix, _)) => format!("{prefix}.blocked"),
+            None => format!("{}.blocked", self.event),
+        }
+    }
+}
+
+/// One requirement of a gate.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum GateRequirement {
+    /// A payload field check (presence, status, bounds, or commit verification).
+    Field(FieldRequirement),
+    /// A command Ralph runs; exit 0 passes.
+    Command(CommandRequirement),
+}
+
+/// Payload field requirement: `field: k` plus optional `status`, `min`/`max`, `verify`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FieldRequirement {
+    /// Payload key that must be present with a non-vacuous value.
+    pub field: String,
+
+    /// Required status word (for example `passed`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+
+    /// Inclusive lower bound; the value must parse as a number (trailing `%` allowed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+
+    /// Inclusive upper bound; the value must parse as a number (trailing `%` allowed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+
+    /// Verification Ralph performs itself on the value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verify: Option<FieldVerify>,
+}
+
+/// `verify:` on a field requirement: `verify: commit` or
+/// `verify: { commit: { reachable_from: "HEAD", new: false } }`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum FieldVerify {
+    /// Shorthand keyword form (`verify: commit`).
+    Keyword(VerifyKeyword),
+    /// Table form with options.
+    Commit {
+        /// Commit verification options.
+        commit: CommitVerify,
+    },
+}
+
+impl FieldVerify {
+    /// Commit verification options, with defaults applied for the keyword form.
+    pub fn commit(&self) -> CommitVerify {
+        match self {
+            FieldVerify::Keyword(VerifyKeyword::Commit) => CommitVerify::default(),
+            FieldVerify::Commit { commit } => commit.clone(),
+        }
+    }
+}
+
+/// Keyword verifications.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VerifyKeyword {
+    /// The value must be a commit.
+    Commit,
+}
+
+/// Options for commit verification.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommitVerify {
+    /// Ref the commit must be reachable from.
+    #[serde(default = "default_reachable_from")]
+    pub reachable_from: String,
+
+    /// Require the commit to be new: not reachable from the HEAD recorded at iteration start.
+    #[serde(default = "default_true")]
+    pub new: bool,
+}
+
+impl Default for CommitVerify {
+    fn default() -> Self {
+        Self {
+            reachable_from: default_reachable_from(),
+            new: true,
+        }
+    }
+}
+
+fn default_reachable_from() -> String {
+    "HEAD".to_string()
+}
+
+/// Command requirement: Ralph runs the argv and it must exit 0.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommandRequirement {
+    /// Command argv (`command[0]` executable + args).
+    pub command: Vec<String>,
+
+    /// Timeout in seconds (defaults to 300).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<u64>,
+}
+
 /// Configuration errors.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -2434,6 +2825,60 @@ pub enum ConfigError {
         "Hat '{hat}' has Kiro backend type '{backend_type}'. Supported Kiro modes: kiro, kiro-acp.\nFix: set 'type' to 'kiro' or 'kiro-acp'.\nSee: docs/guide/configuration.md"
     )]
     InvalidKiroBackendType { hat: String, backend_type: String },
+
+    #[error(
+        "More than one gate is declared for event '{event}'.\nFix: merge their 'requires' lists into a single gate.\nSee: docs/guide/configuration.md"
+    )]
+    DuplicateGate { event: String },
+
+    #[error(
+        "Gate for event '{event}' has a 'command' requirement with an empty argv.\nFix: give the command an executable, e.g. command: [\"cargo\", \"test\"].\nSee: docs/guide/configuration.md"
+    )]
+    EmptyGateCommand { event: String },
+
+    #[error(
+        "Gate for event '{event}' has a NUL byte in its '{field}' value, which cannot be passed to a process.\nFix: remove the \\0 escape from the value.\nSee: docs/guide/configuration.md"
+    )]
+    GateValueHasNul { event: String, field: String },
+
+    #[error(
+        "Gate for event '{event}' publishes '{blocked}' when it fails, {why}.\nFix: set 'blocked' to a distinct topic, e.g. blocked: \"{event}.rejected\".\nSee: docs/guide/configuration.md"
+    )]
+    GateBlockedTopic {
+        event: String,
+        blocked: String,
+        why: String,
+    },
+
+    #[error(
+        "Hat '{hat}' sets both 'run' and '{field}'. A script hat runs its command instead of a model, so it has no prompt.\nFix: remove '{field}', or remove 'run' to make it a model hat.\nSee: docs/guide/configuration.md"
+    )]
+    ScriptHatWithInstructions { hat: String, field: String },
+
+    #[error(
+        "Hat '{hat}' sets 'run' with concurrency {value}. Script hats run one command at a time.\nFix: remove 'concurrency' (or set it to 1).\nSee: docs/guide/configuration.md"
+    )]
+    ScriptHatConcurrency { hat: String, value: u32 },
+
+    #[error(
+        "Hat '{hat}' has an empty 'run' command.\nFix: give it a command line, e.g. run: \"sh scripts/step.sh\", or an argv list, e.g. run: [\"sh\", \"scripts/step.sh\"].\nSee: docs/guide/configuration.md"
+    )]
+    EmptyScriptHatRun { hat: String },
+
+    #[error(
+        "Hat '{hat}' has a NUL byte in its 'run' command, which cannot be passed to a process.\nFix: remove the \\0 escape from the command.\nSee: docs/guide/configuration.md"
+    )]
+    ScriptHatRunHasNul { hat: String },
+
+    #[error(
+        "Hat '{hat}' sets 'run' and default_publishes: \"{promise}\", the completion promise. Ralph never completes from a default event, so the script would rerun until the loop goes stale.\nFix: have the script emit it (\"$RALPH_BIN\" emit {promise} \"<summary>\"), or default to another topic.\nSee: docs/guide/configuration.md"
+    )]
+    ScriptHatDefaultCompletion { hat: String, promise: String },
+
+    #[error(
+        "event_loop.max_script_runs is 0, which would stop every loop before its first iteration.\nFix: set it to at least 1 (the default is 500).\nSee: docs/guide/configuration.md"
+    )]
+    InvalidMaxScriptRuns,
 }
 
 #[cfg(test)]
@@ -4904,5 +5349,533 @@ hats:
             "Aggregate on non-concurrent hat should be valid: {:?}",
             result.unwrap_err()
         );
+    }
+
+    // ── Event gates ─────────────────────────────────────────────────────────
+
+    const GATE_HATS: &str = r#"
+hats:
+  builder:
+    name: "Builder"
+    description: "Builds"
+    triggers: ["build.task"]
+    publishes: ["foundation.done", "review.ready"]
+"#;
+
+    fn gate_config(gates_yaml: &str) -> RalphConfig {
+        let yaml = format!("{GATE_HATS}{gates_yaml}");
+        serde_yaml::from_str(&yaml).unwrap()
+    }
+
+    #[test]
+    fn test_gates_default_empty() {
+        let config: RalphConfig = serde_yaml::from_str("hats: {}").unwrap();
+        assert!(config.gates.is_empty());
+    }
+
+    #[test]
+    fn test_gates_parse_every_requirement_kind() {
+        let config = gate_config(
+            r#"
+gates:
+  - event: "foundation.done"
+    requires:
+      - field: commit
+        verify: commit
+  - event: "merge.done"
+    requires:
+      - field: merged
+        verify: { commit: { reachable_from: "main", new: false } }
+  - event: "review.ready"
+    requires:
+      - field: tests
+        status: passed
+      - field: coverage
+        min: 80
+        max: 100
+      - command: ["python3", "-m", "unittest", "-q"]
+        timeout: 300
+    blocked: "review.blocked"
+"#,
+        );
+
+        assert_eq!(config.gates.len(), 3);
+
+        let foundation = &config.gates[0];
+        assert_eq!(foundation.blocked_topic(), "foundation.blocked");
+        let GateRequirement::Field(req) = &foundation.requires[0] else {
+            panic!("expected field requirement");
+        };
+        assert_eq!(req.field, "commit");
+        assert_eq!(
+            req.verify.as_ref().unwrap().commit(),
+            CommitVerify::default()
+        );
+        assert!(CommitVerify::default().new);
+        assert_eq!(CommitVerify::default().reachable_from, "HEAD");
+
+        let merge = &config.gates[1];
+        assert_eq!(merge.blocked_topic(), "merge.blocked");
+        let GateRequirement::Field(req) = &merge.requires[0] else {
+            panic!("expected field requirement");
+        };
+        let commit = req.verify.as_ref().unwrap().commit();
+        assert_eq!(commit.reachable_from, "main");
+        assert!(!commit.new);
+
+        let review = &config.gates[2];
+        assert_eq!(review.blocked_topic(), "review.blocked");
+        assert_eq!(review.requires.len(), 3);
+        let GateRequirement::Field(tests) = &review.requires[0] else {
+            panic!("expected field requirement");
+        };
+        assert_eq!(tests.status.as_deref(), Some("passed"));
+        let GateRequirement::Field(coverage) = &review.requires[1] else {
+            panic!("expected field requirement");
+        };
+        assert_eq!(coverage.min, Some(80.0));
+        assert_eq!(coverage.max, Some(100.0));
+        let GateRequirement::Command(cmd) = &review.requires[2] else {
+            panic!("expected command requirement");
+        };
+        assert_eq!(cmd.command, vec!["python3", "-m", "unittest", "-q"]);
+        assert_eq!(cmd.timeout, Some(300));
+
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_gate_blocked_topic_without_dot() {
+        let gate = GateConfig {
+            event: "LOOP_COMPLETE".to_string(),
+            requires: vec![],
+            blocked: None,
+        };
+        assert_eq!(gate.blocked_topic(), "LOOP_COMPLETE.blocked");
+    }
+
+    #[test]
+    fn test_gate_unknown_requirement_key_rejected() {
+        let yaml = format!(
+            "{GATE_HATS}{}",
+            r#"
+gates:
+  - event: "review.ready"
+    requires:
+      - feild: tests
+"#
+        );
+        assert!(serde_yaml::from_str::<RalphConfig>(&yaml).is_err());
+    }
+
+    #[test]
+    fn test_duplicate_gate_on_same_event_rejected() {
+        let config = gate_config(
+            r#"
+gates:
+  - event: "review.ready"
+    requires: [{ field: tests }]
+  - event: "review.ready"
+    requires: [{ field: lint }]
+"#,
+        );
+        let err = config.validate().unwrap_err();
+        assert!(
+            matches!(&err, ConfigError::DuplicateGate { event } if event == "review.ready"),
+            "expected DuplicateGate, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_gate_blocked_topic_must_differ_from_event_and_completion() {
+        for (gate_yaml, blocked) in [
+            // Explicitly blocked onto itself.
+            (
+                r#"event: "review.ready"
+    blocked: "review.ready""#,
+                "review.ready",
+            ),
+            // Default `<prefix>.blocked` of an event that is already `.blocked`.
+            (r#"event: "build.blocked""#, "build.blocked"),
+            (
+                r#"event: "review.ready"
+    blocked: "LOOP_COMPLETE""#,
+                "LOOP_COMPLETE",
+            ),
+        ] {
+            let config = gate_config(&format!(
+                "\ngates:\n  - {gate_yaml}\n    requires:\n      - field: tests\n"
+            ));
+            let err = config.validate().unwrap_err();
+            assert!(
+                matches!(&err, ConfigError::GateBlockedTopic { blocked: b, .. } if b == blocked),
+                "{gate_yaml}: expected GateBlockedTopic, got {err:?}"
+            );
+            assert!(err.to_string().contains("Fix:"), "{err}");
+        }
+
+        let config = gate_config(
+            "\ngates:\n  - event: \"review.ready\"\n    blocked: \"review.rejected\"\n    requires:\n      - field: tests\n",
+        );
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_gate_blocked_topic_must_not_be_checked_elsewhere() {
+        // Blocked events are not gated again and skip Ralph's own checks, so a
+        // blocked topic that is another gate's event, a hard-coded checked
+        // topic, or the cancellation promise would act as if the event passed.
+        let cases = [
+            (
+                "\ngates:\n  - event: \"review.ready\"\n    blocked: \"merge.done\"\n    requires:\n      - field: tests\n  - event: \"merge.done\"\n    requires:\n      - field: tests\n",
+                "merge.done",
+            ),
+            (
+                "\ngates:\n  - event: \"merge.done\"\n    requires:\n      - field: tests\n  - event: \"review.ready\"\n    blocked: \"merge.done\"\n    requires:\n      - field: tests\n",
+                "merge.done",
+            ),
+            (
+                "\nevent_loop:\n  cancellation_promise: \"loop.cancel\"\ngates:\n  - event: \"review.ready\"\n    blocked: \"loop.cancel\"\n    requires:\n      - field: tests\n",
+                "loop.cancel",
+            ),
+        ];
+        let special = ["build.done", "review.done", "verify.passed"].map(|topic| {
+            (
+                format!(
+                    "\ngates:\n  - event: \"review.ready\"\n    blocked: \"{topic}\"\n    requires:\n      - field: tests\n"
+                ),
+                topic,
+            )
+        });
+        for (yaml, blocked) in cases
+            .iter()
+            .map(|(yaml, blocked)| ((*yaml).to_string(), *blocked))
+            .chain(special)
+        {
+            let err = gate_config(&yaml).validate().unwrap_err();
+            assert!(
+                matches!(&err, ConfigError::GateBlockedTopic { blocked: b, .. } if b == blocked),
+                "{yaml}: expected GateBlockedTopic, got {err:?}"
+            );
+            assert!(err.to_string().contains("Fix:"), "{err}");
+        }
+
+        // An empty cancellation promise (the default) does not match an
+        // empty-looking blocked topic, and a chain of distinct topics is fine.
+        let config = gate_config(
+            "\ngates:\n  - event: \"review.ready\"\n    blocked: \"review.rejected\"\n    requires:\n      - field: tests\n  - event: \"merge.done\"\n    blocked: \"merge.failed\"\n    requires:\n      - field: tests\n",
+        );
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_gate_command_with_empty_argv_rejected() {
+        for argv in ["[]", r#"["  "]"#] {
+            let config = gate_config(&format!(
+                "\ngates:\n  - event: \"review.ready\"\n    requires:\n      - command: {argv}\n"
+            ));
+            let err = config.validate().unwrap_err();
+            assert!(
+                matches!(&err, ConfigError::EmptyGateCommand { event } if event == "review.ready"),
+                "argv {argv}: expected EmptyGateCommand, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_gate_strings_with_nul_rejected() {
+        // YAML's "\0" escape decodes to a NUL, which no spawned argv can carry.
+        for (requirement, field) in [
+            (r#"command: ["sh", "-c", "true\0"]"#, "command"),
+            (
+                r#"field: "commit"
+        verify: { commit: { reachable_from: "main\0" } }"#,
+                "reachable_from",
+            ),
+        ] {
+            let config = gate_config(&format!(
+                "\ngates:\n  - event: \"review.ready\"\n    requires:\n      - {requirement}\n"
+            ));
+            let err = config.validate().unwrap_err();
+            assert!(
+                matches!(&err, ConfigError::GateValueHasNul { event, field: f } if event == "review.ready" && f == field),
+                "{field}: expected GateValueHasNul, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_gate_on_unpublished_event_warns() {
+        let config = gate_config(
+            r#"
+gates:
+  - event: "nobody.publishes.this"
+    requires: [{ field: commit }]
+"#,
+        );
+        let warnings = config.validate().unwrap();
+        assert!(
+            warnings.iter().any(|w| matches!(
+                w,
+                ConfigWarning::InvalidValue { field, .. } if field == "gates[0].event"
+            )),
+            "expected unpublished-event warning, got {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn test_gate_on_published_or_completion_event_does_not_warn() {
+        let config = gate_config(
+            r#"
+gates:
+  - event: "foundation.done"
+    requires: [{ field: commit }]
+  - event: "LOOP_COMPLETE"
+    requires: [{ field: summary }]
+"#,
+        );
+        let warnings = config.validate().unwrap();
+        assert!(
+            !warnings
+                .iter()
+                .any(|w| matches!(w, ConfigWarning::InvalidValue { field, .. } if field.starts_with("gates"))),
+            "unexpected gate warning: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn test_gate_matches_wildcard_publishes() {
+        let yaml = r#"
+hats:
+  builder:
+    name: "Builder"
+    description: "Builds"
+    triggers: ["build.task"]
+    publishes: ["clean.*"]
+gates:
+  - event: "clean.done"
+    requires: [{ field: commit }]
+"#;
+        let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+        let warnings = config.validate().unwrap();
+        assert!(
+            !warnings
+                .iter()
+                .any(|w| matches!(w, ConfigWarning::InvalidValue { field, .. } if field.starts_with("gates"))),
+            "unexpected gate warning: {warnings:?}"
+        );
+    }
+    const SCRIPT_HAT_BASE: &str = r#"
+hats:
+  advance:
+    name: "Queue keeper"
+    description: "Advances the queue"
+    triggers: ["queue.start"]
+    publishes: ["queue.advance"]
+"#;
+
+    fn script_hat_config(extra: &str) -> RalphConfig {
+        let yaml = format!("{SCRIPT_HAT_BASE}{extra}");
+        serde_yaml::from_str(&yaml).unwrap()
+    }
+
+    #[test]
+    fn test_script_hat_run_parses_string_and_argv() {
+        let config = script_hat_config("    run: \"sh scripts/advance.sh\"\n");
+        let hat = &config.hats["advance"];
+        assert!(hat.is_script());
+        assert_eq!(
+            hat.run.as_ref().unwrap().argv(),
+            vec!["sh", "-c", "sh scripts/advance.sh"]
+        );
+
+        let config = script_hat_config("    run: [\"python3\", \"step.py\", \"--x\"]\n");
+        assert_eq!(
+            config.hats["advance"].run.as_ref().unwrap().argv(),
+            vec!["python3", "step.py", "--x"]
+        );
+        assert!(config.validate().is_ok());
+
+        let config = script_hat_config("    instructions: \"Do it\"\n");
+        assert!(!config.hats["advance"].is_script());
+        assert!(config.hats["advance"].run.is_none());
+    }
+
+    #[test]
+    fn test_script_hat_run_rejects_non_string_values() {
+        for run in ["run: 42", "run: [\"sh\", 1]", "run: { cmd: x }"] {
+            let yaml = format!("{SCRIPT_HAT_BASE}    {run}\n");
+            assert!(
+                serde_yaml::from_str::<RalphConfig>(&yaml).is_err(),
+                "{run} should not parse"
+            );
+        }
+    }
+
+    #[test]
+    fn test_script_hat_with_instructions_rejected_naming_hat() {
+        for (extra, field) in [
+            (
+                "    run: \"true\"\n    instructions: \"Do the thing\"\n",
+                "instructions",
+            ),
+            (
+                "    run: \"true\"\n    extra_instructions: [\"More\"]\n",
+                "extra_instructions",
+            ),
+        ] {
+            let err = script_hat_config(extra).validate().unwrap_err();
+            assert!(
+                matches!(&err, ConfigError::ScriptHatWithInstructions { hat, field: f } if hat == "advance" && f == field),
+                "{field}: expected ScriptHatWithInstructions, got {err:?}"
+            );
+            let message = err.to_string();
+            assert!(message.contains("'advance'"), "message: {message}");
+            assert!(message.contains(field), "message: {message}");
+        }
+    }
+
+    /// The CLI normalizes before it validates. Normalizing merges
+    /// `extra_instructions` into `instructions`, which must not hide the
+    /// field the user actually set on a script hat.
+    #[test]
+    fn test_script_hat_extra_instructions_named_after_normalize() {
+        let mut config =
+            script_hat_config("    run: \"true\"\n    extra_instructions: [\"More\"]\n");
+        config.normalize();
+        let err = config.validate().unwrap_err();
+        assert!(
+            matches!(&err, ConfigError::ScriptHatWithInstructions { hat, field } if hat == "advance" && field == "extra_instructions"),
+            "expected extra_instructions, got {err:?}"
+        );
+    }
+
+    /// Ralph never accepts a completion promise from `default_publishes`, so
+    /// a script hat with one would rerun until the loop goes stale.
+    #[test]
+    fn test_script_hat_default_publishes_completion_promise_rejected() {
+        let err =
+            script_hat_config("    run: \"true\"\n    default_publishes: \"LOOP_COMPLETE\"\n")
+                .validate()
+                .unwrap_err();
+        assert!(
+            matches!(&err, ConfigError::ScriptHatDefaultCompletion { hat, promise } if hat == "advance" && promise == "LOOP_COMPLETE"),
+            "expected ScriptHatDefaultCompletion, got {err:?}"
+        );
+        assert!(err.to_string().contains("'advance'"), "{err}");
+
+        // Another default topic is fine, and so is a model hat defaulting to
+        // the promise (Ralph asks it for an explicit event instead).
+        assert!(
+            script_hat_config("    run: \"true\"\n    default_publishes: \"queue.advance\"\n")
+                .validate()
+                .is_ok()
+        );
+        assert!(
+            script_hat_config(
+                "    instructions: \"Finish\"\n    default_publishes: \"LOOP_COMPLETE\"\n"
+            )
+            .validate()
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_script_hat_with_concurrency_rejected() {
+        let err = script_hat_config("    run: \"true\"\n    concurrency: 3\n")
+            .validate()
+            .unwrap_err();
+        assert!(
+            matches!(&err, ConfigError::ScriptHatConcurrency { hat, value: 3 } if hat == "advance"),
+            "expected ScriptHatConcurrency, got {err:?}"
+        );
+        // concurrency 1 is the default and is fine.
+        assert!(
+            script_hat_config("    run: \"true\"\n    concurrency: 1\n")
+                .validate()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_script_hat_empty_run_rejected() {
+        for run in [
+            "run: \"\"",
+            "run: \"   \"",
+            "run: []",
+            "run: [\"\"]",
+            "run: [\" \", \"x\"]",
+        ] {
+            let err = script_hat_config(&format!("    {run}\n"))
+                .validate()
+                .unwrap_err();
+            assert!(
+                matches!(&err, ConfigError::EmptyScriptHatRun { hat } if hat == "advance"),
+                "{run}: expected EmptyScriptHatRun, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_script_hat_run_with_nul_rejected() {
+        for run in ["run: \"true\\0\"", "run: [\"sh\", \"-c\", \"a\\0b\"]"] {
+            let err = script_hat_config(&format!("    {run}\n"))
+                .validate()
+                .unwrap_err();
+            assert!(
+                matches!(&err, ConfigError::ScriptHatRunHasNul { hat } if hat == "advance"),
+                "{run}: expected ScriptHatRunHasNul, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_script_hat_ignored_fields_warn() {
+        let config = script_hat_config(
+            "    run: \"true\"\n    backend: \"claude\"\n    backend_args: [\"--model\", \"x\"]\n    effort: high\n    disallowed_tools: [\"Edit\"]\n",
+        );
+        let warnings = config.validate().unwrap();
+        for field in ["backend", "backend_args", "effort", "disallowed_tools"] {
+            let expected = format!("hats.advance.{field}");
+            assert!(
+                warnings.iter().any(|w| matches!(w, ConfigWarning::InvalidValue { field, message } if *field == expected && message.contains("ignored"))),
+                "no warning for {expected}: {warnings:?}"
+            );
+        }
+
+        // A model hat with the same fields gets no such warning.
+        let config = script_hat_config(
+            "    instructions: \"x\"\n    backend: \"claude\"\n    effort: high\n    disallowed_tools: [\"Edit\"]\n",
+        );
+        let warnings = config.validate().unwrap();
+        assert!(
+            !warnings
+                .iter()
+                .any(|w| matches!(w, ConfigWarning::InvalidValue { field, .. } if field.starts_with("hats."))),
+            "unexpected warning: {warnings:?}"
+        );
+
+        // Suppressed warnings stay suppressed; errors still fire.
+        let mut config = script_hat_config("    run: \"true\"\n    effort: high\n");
+        config.suppress_warnings = true;
+        assert!(config.validate().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_max_script_runs_default_and_zero_rejected() {
+        let config: RalphConfig = serde_yaml::from_str("hats: {}").unwrap();
+        assert_eq!(config.event_loop.max_script_runs, 500);
+        assert_eq!(EventLoopConfig::default().max_script_runs, 500);
+
+        let config: RalphConfig =
+            serde_yaml::from_str("event_loop:\n  max_script_runs: 7\n").unwrap();
+        assert_eq!(config.event_loop.max_script_runs, 7);
+
+        let config: RalphConfig =
+            serde_yaml::from_str("event_loop:\n  max_script_runs: 0\n").unwrap();
+        assert!(matches!(
+            config.validate().unwrap_err(),
+            ConfigError::InvalidMaxScriptRuns
+        ));
     }
 }

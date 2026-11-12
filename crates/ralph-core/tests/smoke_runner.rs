@@ -39,6 +39,21 @@ fn test_complex_session_fixture_exists() {
     );
 }
 
+/// The LLM-then-script fixture also replays through `SmokeRunner`. Its
+/// event-loop replay is `tests/script_hat_smoke.rs`.
+#[test]
+fn test_script_hat_fixture_replays() {
+    let fixture = fixtures_dir().join("script-hats/llm_then_script_session.jsonl");
+    let result = SmokeRunner::run(&SmokeTestConfig::new(&fixture)).expect("Should replay");
+    assert!(result.completed_successfully());
+    assert_eq!(
+        result.iterations_run(),
+        2,
+        "one terminal write per iteration"
+    );
+    assert!(result.output_bytes() > 0);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Acceptance Criteria #7: Integration Test Validates Full Replay Flow
 // ─────────────────────────────────────────────────────────────────────────────

@@ -1,0 +1,8 @@
+{"ts": 1000, "event": "_meta.loop_start", "data": {"prompt_file": "", "max_iterations": 3, "ux_mode": "cli"}}
+{"ts": 1010, "event": "_meta.iteration", "data": {"n": 1, "elapsed_ms": 10, "hat": "builder"}}
+{"ts": 1100, "event": "ux.terminal.write", "data": {"bytes": "SSdsbCB3cml0ZSBncmVldGluZy50eHQgYW5kIGhhbmQgb2ZmIHRvIHRoZSBjaGVja2VyLgoKW1Rvb2xdIFdyaXRlIGdyZWV0aW5nLnR4dApoZWxsbwoKW1Rvb2xdIEJhc2g6IHJhbHBoIGVtaXQgYnVpbGQucmVhZHkgImZpbGU9Z3JlZXRpbmcudHh0IgpFdmVudCBidWlsZC5yZWFkeSBlbWl0dGVkLgo=", "stdout": true, "offset_ms": 100}}
+{"ts": 1200, "event": "bus.publish", "data": {"topic": "build.ready", "payload": "file=greeting.txt", "source": "builder", "target": null}}
+{"ts": 1300, "event": "_meta.iteration", "data": {"n": 2, "elapsed_ms": 300, "hat": "checker"}}
+{"ts": 1350, "event": "ux.terminal.write", "data": {"bytes": "Z3JlZXRpbmcgb2sK", "stdout": true, "offset_ms": 350}}
+{"ts": 1400, "event": "bus.publish", "data": {"topic": "LOOP_COMPLETE", "payload": "checked after build.ready", "source": "checker", "target": null}}
+{"ts": 1500, "event": "_meta.termination", "data": {"reason": "completed", "iterations": 2, "elapsed_secs": 0.5, "ux_writes": 2}}
