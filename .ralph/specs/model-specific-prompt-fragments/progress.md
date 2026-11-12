@@ -90,6 +90,24 @@ For step 3: coordinator text is `config.coordinator_fragments()`; per-hat report
 `config.fragment_indices_for_hat(id)`; unknown IDs in `hats:` are not errors yet — they should show
 up as the "matches no hat" warning (AC9). `COORDINATOR_FRAGMENT_TARGET` is exported from ralph-core.
 
+### Step 2 — fragment resolution (Critic)
+
+Logs: `logs/critic-step2-*.log`, `logs/critic-step2-smoke-run.out`. Re-ran independently against `0d16336`:
+- fmt, clippy (`-D warnings`), `sync-embedded-files.sh check` → clean.
+- `cargo test -p ralph-core` and `-p ralph-adapters` → all pass (incl. 18 `tests/prompt_fragments.rs`).
+- `cargo test -p ralph-cli --no-fail-fast -- --test-threads=1` → only `integration_gitignore` fails
+  (pre-existing, task `fix:gitignore-memories-test`).
+- Real binary (`ralph run --no-tui -H hats.yml`, fake `claude` on PATH, `/var/tmp/critic-frag.*`): core
+  config `cli.model: claude-opus-5-5` + core fragment `hats: [planner]`; hats file Planner pinned only via
+  `backend_args: ["--model","claude-fable-5-2"]` plus two hats-file fragments (fable/all, opus/builder).
+  Planner argv `--model claude-fable-5-2`; prompt has `PLANNER BASE`, `CORE-FABLE-FRAG`, `HATS-FABLE-FRAG`
+  in that order, no `HATS-OPUS-FRAG` (AC5 + overlay append end to end). Adversarial: hats-file fragment naming
+  a script hat → load fails naming `advance` and `fragments`; `fragments:` as a mapping in a hats file →
+  `hats 'fragments' must be a list when provided`.
+- Reviewed DEC-014 (args flag wins for matching): consistent with `resolve_hat_backend`, all ACs hold. Accepted.
+- Checked double-`normalize()` paths (`start_loop`, bot daemon temp-config round trip): marker keeps it to
+  one application; daemon reload passes no hats source, so the marker never suppresses fresh hats.
+
 ## Completed Tasks
 
 _Builder and Critic append one entry per closed task: task key, what landed, and the
@@ -99,6 +117,11 @@ verification that backed closing it._
   `model:` on hats and `cli`, `CliBackend::apply_model` (claude/kiro `--model`, codex `-m`,
   explicit flag in args wins), shared `resolve_hat_backend` for iterations and wave workers,
   preset migrated, docs updated. Closed by Critic after the verification above.
+- `code-assist:model-specific-prompt-fragments:step-02:fragment-resolution` (task-1794522135-27a0) —
+  top-level `fragments:` resolved in `normalize()` (glob matcher, effective model mirrors the command line,
+  config-order append after `extra_instructions`, script hats skipped/rejected, malformed fragments rejected),
+  coordinator fragments exposed for step 3, hats files/presets carry fragments, docs. Closed by Critic after
+  the Step 2 verification above.
 
 ## Follow-ups
 
@@ -110,3 +133,11 @@ verification that backed closing it._
   the outer context. Outcome is still correct (fails closed, no worker spawned).
 - **minor:** `model: ""` is accepted and becomes `--model ""` on the command line. Consider a
   `validate()` error/warning for an empty model string on hats and `cli`.
+- **minor (error handling, step 2):** fragment errors index the *merged* list, so a hats file's first
+  fragment is reported as `fragments[1]` when the core config has one fragment, and the message does not
+  name the source file. Repro: core `fragments:` with one entry, `-H hats.yml` whose `fragments[0]` names a
+  script hat → `fragments[1].hats names script hat 'advance'`. Outcome is correct (load fails, hat named).
+- **minor (step 2):** `model_in_args` treats `-m <id>` as pinned on every backend, but `apply_model` only
+  honors `-m` for codex. On claude, `backend_args: ["-m","X"]` + `model: Y` runs `--model Y` while fragments
+  match `X`. Unrealistic input (claude has no `-m` model flag).
+- **step 3 note:** docs already say `hats: [ralph]` reaches the coordinator prompt; step 3 makes that true.
