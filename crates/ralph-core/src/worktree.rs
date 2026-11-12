@@ -606,12 +606,8 @@ pub fn sync_working_directory_to_worktree(
         }
         // Exclude the worktree directory itself
         let worktree_dir_str = worktree_dir.to_string_lossy();
-        if path_str.starts_with(&*worktree_dir_str)
+        path_str.starts_with(&*worktree_dir_str)
             || path_str.starts_with(&format!("{}/", worktree_dir_str))
-        {
-            return true;
-        }
-        false
     };
 
     // Get untracked files
