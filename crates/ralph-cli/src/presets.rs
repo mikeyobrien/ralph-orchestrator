@@ -36,6 +36,12 @@ const PRESETS: &[EmbeddedPreset] = &[
         public: true,
     },
     EmbeddedPreset {
+        name: "code-assist-multimodel",
+        description: "code-assist with per-role models: Fable 5.2 plans, Opus 5.5 builds, reviews, and gates",
+        content: include_str!("../presets/code-assist-multimodel.yml"),
+        public: true,
+    },
+    EmbeddedPreset {
         name: "debug",
         description: "Bug investigation, root-cause analysis, and adversarial fix verification",
         content: include_str!("../presets/debug.yml"),
@@ -134,7 +140,7 @@ mod tests {
     #[test]
     fn test_list_presets_returns_all() {
         let presets = list_presets();
-        assert_eq!(presets.len(), 6, "Expected 6 public presets");
+        assert_eq!(presets.len(), 7, "Expected 7 public presets");
     }
 
     #[test]
@@ -208,7 +214,8 @@ mod tests {
     #[test]
     fn test_preset_names_returns_all_names() {
         let names = preset_names();
-        assert_eq!(names.len(), 6);
+        assert_eq!(names.len(), 7);
+        assert!(names.contains(&"code-assist-multimodel"));
         assert!(names.contains(&"autoresearch"));
         assert!(names.contains(&"debug"));
         assert!(names.contains(&"code-assist"));
@@ -472,6 +479,68 @@ mod tests {
                 .instructions
                 .contains("`code-assist:{task_name}:fix-NN:{slug}`")
         );
+    }
+
+    #[test]
+    fn test_code_assist_multimodel_matches_code_assist_events_with_per_hat_backends() {
+        use ralph_core::{EffortLevel, HatBackend};
+        let base = RalphConfig::parse_yaml(get_preset("code-assist").unwrap().content).unwrap();
+        let multi =
+            RalphConfig::parse_yaml(get_preset("code-assist-multimodel").unwrap().content).unwrap();
+
+        assert_eq!(
+            multi.event_loop.required_events,
+            base.event_loop.required_events
+        );
+        assert_eq!(
+            multi.event_loop.starting_event,
+            base.event_loop.starting_event
+        );
+        for (id, hat) in &base.hats {
+            let m = multi
+                .hats
+                .get(id)
+                .expect("multimodel keeps every code-assist hat");
+            assert_eq!(m.triggers, hat.triggers, "{id} triggers");
+            assert_eq!(m.publishes, hat.publishes, "{id} publishes");
+            assert_eq!(
+                m.default_publishes, hat.default_publishes,
+                "{id} default_publishes"
+            );
+        }
+
+        let backend = |id: &str| match multi.hats[id].backend.as_ref() {
+            Some(HatBackend::NamedWithArgs { backend_type, args }) => {
+                (backend_type.clone(), args.clone())
+            }
+            other => panic!("{id} should pin a backend with args, got {other:?}"),
+        };
+        assert_eq!(
+            backend("planner"),
+            ("claude".into(), strings(&["--model", "claude-fable-5-2"]))
+        );
+        assert_eq!(
+            backend("builder"),
+            ("claude".into(), strings(&["--model", "claude-opus-5-5"]))
+        );
+        assert_eq!(
+            backend("finalizer"),
+            ("claude".into(), strings(&["--model", "claude-opus-5-5"]))
+        );
+        assert_eq!(
+            backend("critic"),
+            ("claude".into(), strings(&["--model", "claude-opus-5-5"]))
+        );
+
+        for id in ["planner", "builder", "critic", "finalizer"] {
+            assert_eq!(
+                multi.hats[id].effort,
+                Some(EffortLevel::High),
+                "{id} effort"
+            );
+        }
+        // The Critic only rejects for blocking findings and tracks minor ones as follow-ups.
+        assert!(multi.hats["critic"].instructions.contains("## Follow-ups"));
     }
 
     #[test]
