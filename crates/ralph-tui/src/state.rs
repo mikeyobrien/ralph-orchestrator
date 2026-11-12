@@ -2243,13 +2243,9 @@ mod tests {
             state.start_new_iteration();
 
             // Add content to each iteration
-            for i in 0..3 {
+            for (i, iteration) in state.iterations.iter_mut().take(3).enumerate() {
                 for j in 0..20 {
-                    state.iterations[i].append_line(Line::from(format!(
-                        "iter {} line {}",
-                        i + 1,
-                        j
-                    )));
+                    iteration.append_line(Line::from(format!("iter {} line {}", i + 1, j)));
                 }
             }
 
