@@ -77,7 +77,6 @@ fn ralph_gitignore_tracks_committed_artifacts_not_runtime_state() -> Result<()> 
         ".ralph/tasks/example.code-task.md",
         ".ralph/tasks/data-pipeline/step02/task-01-create-model.code-task.md",
         ".ralph/agent/decisions.md",
-        ".ralph/agent/memories.md",
     ] {
         assert!(
             !git_check_ignore(repo, tracked)?,
@@ -89,6 +88,7 @@ fn ralph_gitignore_tracks_committed_artifacts_not_runtime_state() -> Result<()> 
         ".ralph/tasks/debug.log",
         ".ralph/tasks/note.txt",
         ".ralph/tasks/data-pipeline/step02/tmp.json",
+        ".ralph/agent/memories.md",
         ".ralph/agent/tasks.jsonl",
         ".ralph/agent/scratchpad.md",
         ".ralph/loops.json",
