@@ -127,6 +127,11 @@ fragments:
   No model anywhere means no fragment applies.
 - Matching fragments append after `extra_instructions`, in config order.
 - Fragments never apply to script hats; naming one in `hats` fails config load.
+- `ralph` fragments reach the coordinator prompt only when Ralph coordinates,
+  never a hat's iteration.
+- `ralph hats validate` lists which `fragments[<index>]` apply to each hat and
+  the coordinator, and warns (with index and patterns) for a fragment that
+  applies nowhere.
 - Empty `models`, an empty pattern, empty `text`, `hats: []`, or a misspelled
   key fail config load and name `fragments[<index>]`.
 - Fragments in a hats file are appended after any in the core config.

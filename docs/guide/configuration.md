@@ -592,6 +592,10 @@ once, when the config loads.
 **Script hats.** Fragments never apply to script hats (`run:`). A fragment
 whose `hats` names a script hat fails config load.
 
+**The coordinator.** Fragments that target `ralph` (or omit `hats`) are added to
+the coordinator prompt, after its workflow section, only on iterations where
+Ralph coordinates. A hat iteration carries only that hat's own fragments.
+
 **Sharing text.** YAML anchors let one block serve several fragments:
 
 ```yaml
@@ -617,6 +621,23 @@ both apply.
 - `hats` names `ralph` while a hat is also named `ralph`
 - `hats` names a script hat
 - a key is missing or misspelled (`hat:` for `hats:` would otherwise widen the fragment to every hat)
+
+**Checking what applies.** `ralph hats validate` lists, for each hat and the
+coordinator, its model and the `fragments[<index>]` entries that apply
+(`none` for a hat with no model). It warns about any fragment that applies to
+no hat and not to the coordinator, naming its index, its `models` patterns, and
+its `hats` list, which usually means a typo in a glob or a hat ID. It also fails
+on any config error that `ralph run` would reject at load.
+
+```text
+Checks:
+  [warn] fragments[2] matches no hat or the coordinator (models: ["claude-fabel-*"], hats: ["planner"])
+
+Fragments:
+  builder              claude-opus-5-5          fragments[1]
+  planner              claude-fable-5-2         fragments[0]
+  ralph                claude-opus-5-5          none  (coordinator)
+```
 
 ## Gates
 

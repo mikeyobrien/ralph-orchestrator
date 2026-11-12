@@ -24,6 +24,9 @@ pub struct HatlessRalph {
     /// Pre-built skill index section for prompt injection.
     /// Set by EventLoop after SkillRegistry is initialized.
     skill_index: String,
+    /// Model-specific fragments resolved for the coordinator (`hats: [ralph]`
+    /// or no `hats:`), in config order. Rendered only when no hat is active.
+    coordinator_fragments: Vec<String>,
     /// Collected robot guidance messages for injection into prompts.
     /// Set by EventLoop before build_prompt(), cleared after injection.
     robot_guidance: Vec<String>,
@@ -256,6 +259,7 @@ impl HatlessRalph {
             memories_enabled: false, // Default: scratchpad-only mode
             objective: None,
             skill_index: String::new(),
+            coordinator_fragments: Vec::new(),
             robot_guidance: Vec::new(),
             active_scratchpad,
             iteration: 0,
@@ -298,6 +302,15 @@ impl HatlessRalph {
     /// between GUARDRAILS and OBJECTIVE in the prompt.
     pub fn with_skill_index(mut self, index: String) -> Self {
         self.skill_index = index;
+        self
+    }
+
+    /// Sets the model-specific fragments that apply to the coordinator prompt.
+    ///
+    /// Hat fragments are already merged into each hat's instructions at
+    /// config load; these are the ones resolved for the `ralph` target.
+    pub fn with_coordinator_fragments(mut self, fragments: Vec<String>) -> Self {
+        self.coordinator_fragments = fragments;
         self
     }
 
@@ -397,6 +410,16 @@ impl HatlessRalph {
 
         if !has_custom_workflow {
             prompt.push_str(&self.workflow_section());
+        }
+
+        // The coordinator's own fragments, appended after its workflow the way
+        // a hat's fragments follow its instructions. A hat iteration runs on
+        // the hat's model, so these stay out of it.
+        if active_hats.is_empty() {
+            for fragment in &self.coordinator_fragments {
+                prompt.push_str(fragment.trim_end());
+                prompt.push_str("\n\n");
+            }
         }
 
         if let Some(topology) = &self.hat_topology {

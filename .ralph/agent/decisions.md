@@ -182,3 +182,12 @@ Use this template for new entries:
 - Reasoning: Without the overlay change, a builtin preset used as `-H builtin:<name>` silently dropped its `fragments:` (spec goal 2 says an embedded preset must be able to carry them) and a user hats file with `fragments:` was rejected.
 - Reversibility: High.
 - Timestamp: 2026-11-12T22:52Z
+
+## DEC-016 (2026-11-12T23:20Z)
+- Decision: `ralph hats validate` runs `RalphConfig::validate()` and reports a load error as an `[err]` check (exit non-zero).
+- Chosen Option: Check 0 in `validate_hats`, before the topology checks; also runs in solo mode when fragments exist.
+- Confidence: 80
+- Alternatives Considered: (A) Leave it: `load_config_for_preflight` only normalizes, so a fragment naming a script hat (AC8) showed up merely as a "matches no hat" warning and `Result: Valid`, while `ralph run` rejects the same config. (B) Re-implement the script-hat check inside the fragment report — duplicates `validate_fragments`, and misses every other load error.
+- Reasoning: A validator that passes configs `run` rejects is worse than none; human guidance for this run is "focus on error handling". Config-level *warnings* from `validate()` are not printed here (`ralph run` already prints them), to keep the report about hats.
+- Reversibility: High; one `if let` in `validate_hats`.
+- Timestamp: 2026-11-12T23:20Z

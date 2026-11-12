@@ -108,6 +108,45 @@ Logs: `logs/critic-step2-*.log`, `logs/critic-step2-smoke-run.out`. Re-ran indep
 - Checked double-`normalize()` paths (`start_loop`, bot daemon temp-config round trip): marker keeps it to
   one application; daemon reload passes no hats source, so the marker never suppresses fresh hats.
 
+### Step 3 — coordinator fragments + `hats validate` (Builder)
+
+Logs: `logs/step03-*.log`.
+
+- `cargo fmt --all --check` → clean. `cargo clippy --workspace --all-targets --all-features -- -D warnings` → clean.
+- `./scripts/sync-embedded-files.sh check` → in sync (no preset touched).
+- `cargo test -p ralph-core` → all pass (`tests/prompt_fragments.rs` now 22 tests).
+- `cargo test -p ralph-adapters` → first run: `pty_executor::tests::test_run_observe_large_stdin_backend_does_not_deadlock`
+  failed with an empty panic body (`logs/step03-adapters.log`); untouched crate, re-run all 335 pass
+  (`logs/step03-adapters-rerun.log`). Treat as a timing flake under load.
+- `cargo test -p ralph-cli --no-fail-fast -- --test-threads=1` → 25 binaries ok; only `integration_gitignore` fails
+  (pre-existing, task `fix:gitignore-memories-test`).
+  `presets::tests::test_code_assist_multimodel_matches_code_assist_events_with_per_hat_backends` passes (AC10 preset half).
+- Mutation checks: neutralizing either `with_coordinator_fragments` call in `event_loop/mod.rs` fails exactly one
+  distinct test (`..._on_a_matching_cli_model` for the loop-context constructor,
+  `..._without_a_loop_context` for `with_diagnostics`); dropping the `config.validate()` check fails
+  `config_that_run_rejects_fails_validate`.
+- Real binary, coordinator (`logs/step03-coord-smoke.log`, harness `/var/tmp/step3-coord-smoke.sh`, fake `claude` from
+  `/var/tmp/frag-smoke-bin`): `cli.model: claude-fable-5-2`, `task.start` with no hat → coordinator prompt has
+  `SMOKE-COORD-FRAGMENT` once, planner fragment absent; `cli.model: claude-opus-5-5` → absent; solo mode → present.
+- Real binary, validate (`logs/step03-validate-smoke.log`): report lists each hat + `ralph (coordinator)` with model
+  and `fragments[i]`, script hat shown as `(script hat) none`, typo glob warns with index, patterns, and hats.
+  Adversarial: a fragment naming a script hat used to print `Result: Valid` (only a "matches no hat" warning) though
+  `ralph run` rejects it → now `[err] Config is invalid: fragments[1].hats names script hat 'advance'…`, exit 1 (DEC-016).
+
+New tests:
+- `tests/prompt_fragments.rs`: `coordinator_fragment_reaches_the_coordinator_prompt_on_a_matching_cli_model` (AC7, also
+  asserts a hat fragment is absent), `coordinator_fragment_is_absent_on_a_non_matching_cli_model` (AC7 pair),
+  `coordinator_fragment_does_not_leak_into_an_active_hat_prompt`, `coordinator_fragment_reaches_the_prompt_without_a_loop_context`.
+  All build through a real `EventLoop` → `HatlessRalph::build_prompt`.
+- `hats::fragment_report_tests` (YAML → parse/normalize/validate → `HatRegistry::from_config` → `validate_hats` into a
+  buffer): right-hat reporting, no-model hat lists nothing (AC6), unmatched warning with index + patterns (AC9),
+  unknown hat ID warns, no `fragments:` → no report, solo mode reports the coordinator, run-rejected config fails.
+
+What landed: `HatlessRalph::with_coordinator_fragments` (rendered after the workflow section, only when no hat is
+active), wired at both `EventLoop` constructors; `validate_hats` split (`check_topology`), plus `fragment_targets`,
+`check_unmatched_fragments`, `print_fragment_report`, and a `config.validate()` check. Docs: configuration.md
+("The coordinator", "Checking what applies"), ralph-hats schema.md.
+
 ## Completed Tasks
 
 _Builder and Critic append one entry per closed task: task key, what landed, and the
@@ -141,3 +180,8 @@ verification that backed closing it._
   honors `-m` for codex. On claude, `backend_args: ["-m","X"]` + `model: Y` runs `--model Y` while fragments
   match `X`. Unrealistic input (claude has no `-m` model flag).
 - **step 3 note:** docs already say `hats: [ralph]` reaches the coordinator prompt; step 3 makes that true.
+- **minor (step 2 matching, found in step 3):** `hat_model` falls back to `cli.model` for a hat on a *different* backend
+  (e.g. `backend: gemini` under `cli: {backend: claude, model: claude-opus-5-5}`), so `hats validate` reports and
+  fragments match `claude-opus-5-5` for a gemini hat, while `apply_model` never passes it to gemini. Spec §1 says
+  "hat.model, else cli.model" literally, so this follows the spec; consider only inheriting `cli.model` when the hat
+  uses the global backend.

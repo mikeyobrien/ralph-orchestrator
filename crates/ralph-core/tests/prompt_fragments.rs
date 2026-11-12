@@ -511,3 +511,104 @@ fn resolved_fragment_reaches_the_built_hat_prompt() {
     assert!(prompt.contains("PLANNER BASE"));
     assert!(!prompt.contains(FABLE_TEXT), "{prompt}");
 }
+
+/// One Planner hat that `task.start` does not reach, so the first iteration is
+/// the coordinator's. One fragment per target: coordinator, planner, both.
+fn coordinator_config(cli_model: &str) -> String {
+    format!(
+        r#"
+cli:
+  backend: claude
+  model: {cli_model}
+hats:
+  planner:
+    name: Planner
+    description: Plans
+    triggers: ["plan.start"]
+    publishes: ["plan.ready"]
+    model: claude-fable-5-2
+    instructions: "PLANNER BASE"
+fragments:
+  - models: ["claude-fable-*"]
+    hats: [ralph]
+    text: "COORD-FRAGMENT"
+  - models: ["claude-fable-*"]
+    hats: [planner]
+    text: "PLANNER-FRAGMENT"
+"#
+    )
+}
+
+/// Builds the iteration prompt through a real `EventLoop` constructed with a
+/// loop context (the `ralph run` path), after publishing the objective.
+fn loop_prompt(yaml: &str, objective: &str) -> (String, String) {
+    let dir = TempDir::new().expect("temp dir");
+    let mut config = load_ok(yaml);
+    config.core.workspace_root = dir.path().to_path_buf();
+    let context = LoopContext::primary(dir.path().to_path_buf());
+    std::fs::create_dir_all(context.ralph_dir()).expect("create .ralph");
+    std::fs::write(context.current_events_marker(), ".ralph/events.jsonl")
+        .expect("write events marker");
+    let mut event_loop = EventLoop::with_context(config, context);
+    event_loop.initialize(objective);
+    let active = event_loop.get_active_hat_id().as_str().to_string();
+    let prompt = event_loop
+        .build_prompt(&HatId::new("ralph"))
+        .expect("iteration prompt");
+    (active, prompt)
+}
+
+#[test]
+fn coordinator_fragment_reaches_the_coordinator_prompt_on_a_matching_cli_model() {
+    // AC7
+    let (active, prompt) = loop_prompt(&coordinator_config("claude-fable-5-2"), "coordinate");
+    assert_eq!(
+        active, "ralph",
+        "task.start has no hat, so Ralph coordinates"
+    );
+    assert_eq!(prompt.matches("COORD-FRAGMENT").count(), 1, "{prompt}");
+    // A hat-targeted fragment stays out of the coordinator prompt.
+    assert!(!prompt.contains("PLANNER-FRAGMENT"), "{prompt}");
+}
+
+#[test]
+fn coordinator_fragment_is_absent_on_a_non_matching_cli_model() {
+    // AC7, paired case
+    let (active, prompt) = loop_prompt(&coordinator_config("claude-opus-5-5"), "coordinate");
+    assert_eq!(active, "ralph");
+    assert!(!prompt.contains("COORD-FRAGMENT"), "{prompt}");
+}
+
+#[test]
+fn coordinator_fragment_does_not_leak_into_an_active_hat_prompt() {
+    // cli.model matches, so the coordinator fragment is live; the Planner's
+    // iteration must still carry only its own fragment.
+    let yaml = format!(
+        "event_loop:\n  starting_event: plan.start\n{}",
+        coordinator_config("claude-fable-5-2")
+    );
+    let (active, prompt) = loop_prompt(&yaml, "plan the work");
+    assert_eq!(active, "planner");
+    assert!(prompt.contains("PLANNER BASE"));
+    assert_eq!(prompt.matches("PLANNER-FRAGMENT").count(), 1, "{prompt}");
+    assert!(!prompt.contains("COORD-FRAGMENT"), "{prompt}");
+}
+
+#[test]
+fn coordinator_fragment_reaches_the_prompt_without_a_loop_context() {
+    // The other `EventLoop` constructor (no loop context). Solo mode, so the
+    // fragment's default target set (every hat plus the coordinator) applies.
+    let yaml = r#"
+cli:
+  backend: claude
+  model: claude-fable-5-2
+fragments:
+  - models: ["claude-fable-*"]
+    text: "SOLO-COORD-FRAGMENT"
+"#;
+    let config = load_ok(yaml);
+    let event_loop =
+        EventLoop::with_diagnostics(config, ralph_core::DiagnosticsCollector::disabled());
+    let prompt = event_loop.build_ralph_prompt("");
+    assert_eq!(prompt.matches("SOLO-COORD-FRAGMENT").count(), 1, "{prompt}");
+}
