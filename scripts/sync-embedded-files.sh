@@ -28,6 +28,7 @@ MIRRORED_FILES=(
     # Presets (canonical -> mirror for cargo install)
     "presets/autoresearch.yml:crates/ralph-cli/presets/autoresearch.yml"
     "presets/code-assist.yml:crates/ralph-cli/presets/code-assist.yml"
+    "presets/code-assist-multimodel.yml:crates/ralph-cli/presets/code-assist-multimodel.yml"
     "presets/debug.yml:crates/ralph-cli/presets/debug.yml"
     "presets/hatless-baseline.yml:crates/ralph-cli/presets/hatless-baseline.yml"
     "presets/minimal/amp.yml:crates/ralph-cli/presets/minimal/amp.yml"

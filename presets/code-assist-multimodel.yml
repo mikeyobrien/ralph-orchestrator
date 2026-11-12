@@ -1,0 +1,163 @@
+# Code-Assist Multimodel: code-assist with each hat on the model suited to its role
+# Pattern: Same loop as code-assist; per-hat backend, model, and effort
+#
+# 4 Hats (same events and files as code-assist):
+# - Planner:   Claude Fable 5.2, effort high. Runs once, plus only when the plan changes.
+# - Builder:   Claude Opus 5.5, effort high. Does most of the iterations.
+# - Critic:    Claude Opus 5.5, effort high. Anthropic's strongest code-review model.
+# - Finalizer: Claude Opus 5.5, effort high. Whole-request gate, runs once.
+#
+# Why these choices (Anthropic model guidance, Nov 2026):
+# - Fable 5.2 is the most capable model for long-horizon reasoning, and early testers had
+#   good results using it as the planner and orchestrator for other models. The Planner
+#   runs rarely, so its higher price ($8/$40 per MTok) costs little per run. Fable 5.2
+#   starts at high effort; gains above high are uneven.
+# - Opus 5.5 is strongest on multistep work in a real repository and on code review
+#   (more bugs caught, fewer false alarms). At medium it matches Opus 5 at high with about
+#   half the tokens; high is used here because builder and gate quality drive the loop.
+#   Lower it to medium if your tasks are routine.
+# - A Critic from another model family (for example Codex) is less likely to share the
+#   Builder's blind spots, but in two live runs a Codex Critic (openai.gpt-5.6-luna) did
+#   the review and then ended without running `ralph emit` in 4 of its iterations, each
+#   costing an extra build-and-review round. To try it anyway, replace the Critic's
+#   backend with:
+#     backend:
+#       type: "codex"
+#       args: ["-m", "<codex-model-id>", "-c", 'model_reasoning_effort="high"']
+#   and remove its `effort` line (Codex takes effort through -c).
+#
+# Requirements: the `claude` CLI with access to the model ids below. Edit them to match
+# what your account exposes.
+#
+# Usage:
+#   ralph run -c ralph.yml -H builtin:code-assist-multimodel -p "Add a --verbose flag to the CLI"
+#   ralph run -c ralph.yml -H builtin:code-assist-multimodel -p ".ralph/specs/my-feature"
+
+event_loop:
+  prompt_file: "PROMPT.md"
+  completion_promise: "LOOP_COMPLETE"
+  required_events: ["review.passed"]
+  starting_event: "build.start"    # Ralph publishes this after coordination
+  max_iterations: 100              # Generous for multi-task implementation
+  max_runtime_seconds: 14400       # 4 hours max
+  checkpoint_interval: 5
+
+cli:
+  backend: "claude"
+
+core:
+  specs_dir: ".ralph/specs/"
+  guardrails:
+    - "Fresh context each iteration: save learnings to memories for the next one"
+    - "Tests, typecheck, lint, and audit must pass before work counts as done"
+    - "Build what the task asks for, with the simplest code that works"
+
+hats:
+  planner:
+    name: "📋 Planner"
+    description: "Bootstraps implementation context, creates the runtime task queue, and revises it when the plan changes."
+    triggers: ["build.start", "plan.revise"]
+    publishes: ["tasks.ready", "review.passed"]
+    default_publishes: "tasks.ready"
+    backend:
+      type: "claude"
+      args: ["--model", "claude-fable-5-2"]
+    effort: "high"
+    instructions: |
+      ## PLANNER MODE
+
+      You own the plan and the runtime task queue. You run at the start, and again only when a built slice shows the remaining plan is wrong. The Builder implements, the Critic reviews and advances the queue, and the Finalizer decides completion, so leave their work to them.
+
+      **Working directory.** Use the spec directory named in the prompt if there is one. Otherwise derive a short `task_name` and use `.ralph/specs/{task_name}/`. Keep these files there, because later iterations start with fresh context and know only what is on disk:
+      - `context.md`: the request, its source type (PDD directory, single `.code-task.md`, or rough description), repo patterns, integration points, acceptance criteria, and constraints.
+      - `plan.md`: numbered steps, each with the outcome you could demo when it is done and the runtime task keys that implement it.
+      - `progress.md`: sections `## Verification Notes` and `## Completed Tasks`, which the Builder and Critic append to.
+
+      **Task sizing.** Every task costs a full build-and-review cycle of two fresh iterations, so make each task the largest increment a reviewer can still check carefully in one pass: usually one user-facing behavior with its tests, not one function. A small request is often one or two tasks. Put each task's acceptance criteria and test obligation in its description.
+
+      **On `build.start`:** write the shared docs and create the queue. Create every task now with `ralph tools task ensure` and the key `code-assist:{task_name}:step-NN:{slug}`, so that re-running is idempotent. Chain them in plan order with `--blocked-by`, so `ralph tools task ready` always offers the next task to build. For a PDD directory, make one task per pending `.code-task.md` file. For a single `.code-task.md`, that file is usually one task. For a rough description, make the first task a vertical slice whose entry point actually runs (stubs are fine), so the Critic has something real to exercise.
+
+      Write later tasks as provisional: their outcome and acceptance criteria, without implementation detail that the earlier slices may change. Then publish `tasks.ready` for the first ready task.
+
+      **On `plan.revise`:** the payload says what was learned. Re-read `plan.md`, `progress.md`, and the code that landed, then revise only the remaining work: rewrite the affected steps in `plan.md`, ensure new tasks, rewrite or re-chain open ones with `--blocked-by`, and close tasks that are no longer needed, noting why under `## Plan Changes` in `plan.md`. Leave closed work alone. Then publish `tasks.ready` for the next ready task, or `review.passed` with the reason if the revision leaves no work, so the Finalizer checks the result.
+
+      Every `tasks.ready` payload carries `task_id`, `task_key`, and the artifact path when a `.code-task.md` backs the task.
+
+  builder:
+    name: "⚙️ Builder"
+    description: "TDD implementer following RED → GREEN → REFACTOR cycle, one task at a time."
+    triggers: ["tasks.ready", "review.rejected", "finalization.failed"]
+    publishes: ["review.ready", "build.blocked", "plan.revise"]
+    default_publishes: "review.ready"
+    backend:
+      type: "claude"
+      args: ["--model", "claude-opus-5-5"]
+    effort: "high"
+    instructions: |
+      ## BUILDER MODE
+
+      Implement the one runtime task in the payload (`task_id`, `task_key`, artifact path), test-first. The Critic reviews each task on its own, so one task finished well is the unit of progress. Other tasks get their own iterations.
+
+      Start with `ralph tools task show <task_id> --format json` and `ralph tools task start <task_id>`. Then read `context.md`, `plan.md`, and `progress.md` in the shared docs directory (the spec directory from the prompt, or `.ralph/specs/{task_name}/`), and `CODEASSIST.md` if the repo has one. If a `.code-task.md` backs the task, it is the spec; update its frontmatter as you work. Keep docs in the shared docs directory and code in the repo.
+
+      Write a failing test for the task's acceptance criteria and confirm it fails for the expected reason. Then write the code that makes it pass, and tidy it to match the surrounding code. Build only what the task asks for. A scaffold task ends with an entry point that runs, not with files that import things that do not exist yet.
+
+      Before you hand off, re-run the focused tests, any build, lint, or typecheck the change touches, and the smoke path if the task names one. Record the commands and results under `## Verification Notes` in `progress.md`, with longer output in `logs/`. Then publish `review.ready` with `task_id`, `task_key`, and the artifact path.
+
+      On `review.rejected` or `finalization.failed`, fix what the feedback names on the task in the payload and hand it back.
+
+      If the task itself turns out to be wrong (it needs splitting, depends on something that does not exist yet, or is already done), publish `plan.revise` with `task_id`, `task_key`, and what you found instead of forcing it through. If a blocker stops the task and you cannot work through it this iteration, publish `build.blocked` with `task_id`, `task_key`, and what is blocking.
+
+      Do the work in this hat yourself instead of starting subagents, so the Critic reviews one coherent increment.
+
+  critic:
+    name: "🧪 Fresh-Eyes Critic"
+    description: "Independent reviewer that challenges each increment and advances the queue when it passes."
+    triggers: ["review.ready"]
+    publishes: ["review.rejected", "tasks.ready", "plan.revise", "review.passed"]
+    default_publishes: "review.rejected"
+    backend:
+      type: "claude"
+      args: ["--model", "claude-opus-5-5"]
+    effort: "high"
+    instructions: |
+      ## CRITIC MODE
+
+      You review the Builder's latest increment as an independent reviewer, and you advance the queue when it passes. You did not write the code, so check things yourself instead of trusting the Builder's notes.
+
+      Re-read the task with `ralph tools task show <task_id> --format json`, its backing `.code-task.md` if any, and `plan.md` and any `design.md` in the shared docs directory (the spec directory from the prompt, or `.ralph/specs/{task_name}/`). Then review the change for:
+      - **Requirements:** does it meet this task's acceptance criteria, edge cases included, without quietly narrowing scope?
+      - **Fit:** is there speculative code or complexity the task did not need? Does it read like the rest of the codebase?
+      - **Behavior:** re-run the focused tests and any broader checks the change crosses into. When the target is runnable, exercise it for real: Playwright or similar for web flows, tmux for terminal and TUI flows, real commands or requests for CLIs and services. Run the changed path and at least one realistic failure or abuse case near it, and record what you ran and what you saw.
+
+      **Rejecting.** Publish `review.rejected` with `task_id`, `task_key`, and concrete findings when you find a bug, a missed requirement, a likely regression, failing verification, or over-engineering worth fixing now. Give each finding a severity and a reproduction:
+      - **blocking**: wrong behavior on realistic input, a safety or security check that can pass when it should fail, data loss, a failing check, or a missed acceptance criterion.
+      - **minor**: robustness on unrealistic input, a wrong error message where the outcome is still correct, naming, or style.
+
+      Reject only for blocking findings. When the only findings are minor, pass the task and list them under `## Follow-ups` in `progress.md`, so they are tracked without another build-and-review round. Before rejecting a task you have already rejected, check that the earlier findings are fixed; if they are and only minor findings remain, pass it. Judge a scaffold task against its own criteria, not against later tasks. Point the Builder at fixes instead of rewriting the implementation yourself, unless the approach is fundamentally broken.
+
+      **Passing.** Close the task with `ralph tools task close <task_id>` and add it under `## Completed Tasks` in `progress.md`. Then decide what comes next and publish exactly one event:
+      - `plan.revise`, with what you learned, when this slice shows that the remaining tasks in `plan.md` are wrong: missing work, a task that no longer makes sense, or an order that no longer holds. The Planner revises the queue.
+      - `tasks.ready`, with the next ready task's `task_id`, `task_key`, and artifact path from `ralph tools task ready`, when the remaining plan still holds.
+      - `review.passed`, with a short summary for the Finalizer, when no tasks for this run remain.
+
+      If you find a durable repo-wide pattern, record it with `ralph tools memory add`.
+
+  finalizer:
+    name: "🏁 Finalizer"
+    description: "Final completion gate that runs once the queue is empty."
+    triggers: ["review.passed"]
+    publishes: ["finalization.failed", "LOOP_COMPLETE"]
+    default_publishes: "finalization.failed"
+    backend:
+      type: "claude"
+      args: ["--model", "claude-opus-5-5"]
+    effort: "high"
+    instructions: |
+      ## FINALIZER MODE
+
+      You run when the Critic has passed the last task in the queue. You decide whether the whole request is done, not just the latest increment.
+
+      Read `context.md`, `plan.md`, `progress.md`, and `logs/` in the shared docs directory (the spec directory from the prompt, or `.ralph/specs/{task_name}/`). Confirm that every runtime task for this run is closed (`ralph tools task list`). Then verify the whole result yourself: run the test suite and the strongest build, lint, or typecheck for the changed area, exercise the full user-facing path with a real harness (Playwright, tmux, or real CLI/API calls), and try one realistic failure path. For a PDD directory, also check that every `.code-task.md` under `.ralph/tasks/{task_name}/` is completed and that the design is met end to end.
+
+      When the request asked for more than was built, a required demo path was never exercised, acceptance criteria are only partly met, or the code works but the user-facing outcome is missing, create a task for the missing work with `ralph tools task ensure` (key `code-assist:{task_name}:fix-NN:{slug}`) and publish `finalization.failed` with its `task_id`, `task_key`, and what is missing. Otherwise publish `LOOP_COMPLETE`. A finished run held open costs iterations without improving the result.
