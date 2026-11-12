@@ -66,7 +66,7 @@ ralph tools memory delete <mem-id>
 
 **Memory ID format:** `mem-{timestamp}-{4hex}` (e.g., `mem-1737372000-a1b2`)
 
-**NEVER use echo/cat to write tasks or memories** — always use CLI tools.
+Write tasks and memories with the CLI tools rather than echo/cat, which bypass the stores' formatting.
 
 ### When to Search Memories
 
@@ -88,22 +88,27 @@ ralph tools memory delete <mem-id>
 - You make or learn why an architectural choice was made (decision)
 - You solve a problem that might recur (fix)
 - You learn project-specific knowledge others need (context)
-- Any non-zero command, missing dependency/skill, or blocked step (fix + task if unresolved)
 
-**Do NOT create memories for:**
+**Leave out of memories:**
 - Session-specific state (use tasks instead)
 - Obvious/universal practices
-- Temporary workarounds
+- Temporary workarounds and one-off failures
+
+Every memory is injected into every later iteration, and later iterations follow
+memories closely. Write each one with its scope and reason ("When X, do Y,
+because Z"), not as an absolute rule ("never retry"). If a memory turns out to be
+wrong, stale, or narrower than it claims, fix or delete it with
+`ralph tools memory delete <mem-id>`.
 
 ### Failure Capture (Generic Rule)
 
-If any command fails (non-zero exit), or you hit a missing dependency/skill, or you are blocked:
-1. **Record a fix memory** with the exact command, error, and intended fix.
-2. **Open or reopen a task** if it won't be resolved in the same iteration.
+When a command fails, a dependency is missing, or you are blocked:
+1. **Solved it, and it could recur?** Record a fix memory that says how to recognize the problem and what fixed it.
+2. **Not solved this iteration?** Open or reopen a task so the next iteration picks it up. A failure you have not solved is work, not a lesson, so it goes in a task rather than a memory.
 
 ```bash
 ralph tools memory add \
-  "failure: cmd=<command>, exit=<code>, error=<message>, next=<intended fix>" \
+  "When <command> fails with <error>, <fix>, because <cause>" \
   -t fix --tags tooling,error-handling
 
 ralph tools task ensure "Fix: <short description>" --key fix:<short-key> -p 2
@@ -115,7 +120,7 @@ Before searching or adding, check what tags already exist:
 
 ```bash
 ralph tools memory list
-grep -o 'tags: [^|]*' .agent/memories.md | sort -u
+grep -o 'tags: [^|]*' .ralph/agent/memories.md | sort -u
 ```
 
 Reuse existing tags for consistency. Common tag patterns:
@@ -132,14 +137,11 @@ Reuse existing tags for consistency. Common tag patterns:
 
 ## Decision Journal
 
-Use `.ralph/agent/decisions.md` to capture consequential decisions and their
-confidence scores. Follow the template at the top of the file and keep IDs
-sequential (DEC-001, DEC-002, ...).
-
-Confidence thresholds:
-- **>80**: Proceed autonomously.
-- **50-80**: Proceed, but document the decision in `.ralph/agent/decisions.md`.
-- **<50**: Choose the safest default and document the decision in `.ralph/agent/decisions.md`.
+Make reversible decisions yourself, and record consequential ones in
+`.ralph/agent/decisions.md` so a later iteration or a human can see why. Follow
+the template at the top of the file and keep IDs sequential (DEC-001, DEC-002, ...).
+When you are unsure, prefer the reversible, narrower option that follows existing
+patterns, and say so in the entry.
 
 Template fields:
 - Decision
@@ -158,4 +160,4 @@ All commands support `--format`:
 - `quiet` - IDs only (for scripting)
 - `markdown` - Memory prime only
 
-**NEVER use echo/cat to write tasks or memories** — always use CLI tools.
+Write tasks and memories with the CLI tools rather than echo/cat, which bypass the stores' formatting.

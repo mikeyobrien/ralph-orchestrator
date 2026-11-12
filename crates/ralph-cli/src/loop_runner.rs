@@ -1735,6 +1735,18 @@ pub async fn run_loop_impl(
             effective_backend.args.extend(args);
         }
 
+        // Step 2.6: Apply reasoning effort (hat-level, else cli.effort)
+        if let Some(effort) = hat_config_opt.and_then(|c| c.effort).or(config.cli.effort)
+            && !effective_backend.apply_effort(effort.as_str())
+        {
+            debug!(
+                "Backend '{}' has no effort control; ignoring effort '{}' for '{}'",
+                backend_name_for_timeout,
+                effort.as_str(),
+                display_hat
+            );
+        }
+
         // Step 3: R13 per-worker timeout — active hat.timeout, else the resolved
         // adapter settings timeout for the effective backend (override → default
         // → built-in 300s). aggregate.timeout is excluded (aggregator-wait only).
@@ -5453,6 +5465,9 @@ async fn execute_wave(
             })?,
             None => global_backend.clone(),
         };
+        if let Some(effort) = hat_config.effort {
+            worker_backend.apply_effort(effort.as_str());
+        }
 
         #[cfg(test)]
         {
@@ -10338,6 +10353,7 @@ hats:
                 extra_instructions: vec![],
                 backend: None,
                 backend_args: None,
+                effort: None,
                 default_publishes: None,
                 max_activations: None,
                 disallowed_tools: vec![],
@@ -11394,6 +11410,7 @@ EOF"#,
                 extra_instructions: vec![],
                 backend: None,
                 backend_args: None,
+                effort: None,
                 default_publishes: None,
                 max_activations: None,
                 disallowed_tools: vec![],

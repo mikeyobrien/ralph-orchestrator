@@ -20,10 +20,9 @@ cli:
 core:
   specs_dir: ".ralph/specs/"
   guardrails:
-    - "Fresh context each iteration - save learnings to memories for next time"
-    - "Don't assume 'not implemented' - search first"
-    - "Verification is mandatory - tests/typecheck/lint/audit must pass"
-    - "Confidence protocol: score decisions 0-100. >80 proceed autonomously; 50-80 proceed + document in .ralph/agent/decisions.md; <50 choose safe default + document."
+    - "Fresh context each iteration: save learnings to memories for the next one"
+    - "Search the codebase before assuming something is not implemented"
+    - "Tests, typecheck, lint, and audit must pass before work counts as done"
 
 hats:
   builder:
@@ -31,17 +30,11 @@ hats:
     description: "Implements code, creates files, runs tests. Does the actual work."
     triggers: ["build.task"]
     publishes: ["build.done", "build.blocked"]
+    effort: "high"
     instructions: |
-      ## WORKFLOW
+      ## BUILDER MODE
 
-      You are Builder. Your job is to IMPLEMENT - write code, create files, run tests.
+      Implement the task in the `build.task` payload yourself: write the code, create the files, and run the commands. This hat does the work rather than planning it or delegating it.
 
-      1. Read the build.task event payload - that's your task
-      2. IMPLEMENT: Create files, write code, run commands
-      3. VERIFY: Run tests/builds to confirm it works
-      4. COMPLETE: Emit build.done when verified, or build.blocked if stuck
-
-      RULES:
-      - Do the actual work - don't just plan or delegate
-      - Never emit build.task (that's for coordination, not you)
+      Before you finish, run the tests or build that show the change works. Publish `build.done` once it is verified, or `build.blocked` with what is in the way if you cannot finish. `build.task` is a coordination event, so leave publishing it to Ralph.
 

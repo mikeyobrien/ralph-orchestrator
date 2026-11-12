@@ -126,6 +126,7 @@ event_loop:
 cli:
   backend: "claude"                     # Backend name
   prompt_mode: "arg"                    # arg or stdin
+  effort: "medium"                      # Default reasoning effort for hats without their own
 
 # Core behaviors
 core:
@@ -185,6 +186,7 @@ hats:
     default_publishes: "event.done"     # Default when no explicit
     max_activations: 10                 # Activation limit
     backend: "claude"                   # Backend override
+    effort: "high"                      # Reasoning effort (low|medium|high|xhigh|max)
     scratchpad:                         # Per-hat scratchpad override
       enabled: true                     #   Enable scratchpad (default: true)
       path: .ralph/agent/my-hat.md      #   Scratchpad file path. Inherits from core if omitted.
@@ -404,6 +406,7 @@ Specialized personas for hat-based mode.
 | `default_publishes` | string | No | Default event if none explicit |
 | `max_activations` | integer | No | Limit activations |
 | `backend` | string | No | Backend override |
+| `effort` | string | No | Reasoning effort for this hat: `low`, `medium`, `high`, `xhigh`, or `max`. Inherits `cli.effort`. Passed as `--effort` to Claude; other backends ignore it |
 | `scratchpad` | string or object | No | Per-hat scratchpad override (inherits `core.scratchpad` if omitted) |
 | `instructions` | string | Yes | Hat-specific prompt |
 

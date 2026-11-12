@@ -203,7 +203,7 @@ tasks:
         "Prompt should identify Ralph with RFC2119 style"
     );
     assert!(
-        prompt.contains("You have fresh context each iteration"),
+        prompt.contains("Each iteration starts with fresh context"),
         "Prompt should include RFC2119 identity"
     );
     assert!(
@@ -348,7 +348,7 @@ tasks:
         "Workflow should have VERIFY & COMMIT step"
     );
     assert!(
-        prompt.contains("AFTER commit"),
+        prompt.contains("after the commit"),
         "Workflow should emphasize closing only after commit"
     );
 }
@@ -430,7 +430,7 @@ tasks:
         "Scratchpad mode should have COMMIT step"
     );
     assert!(
-        prompt.contains("mark the task `[x]`"),
+        prompt.contains("Mark the task `[x]`"),
         "Scratchpad mode should use markdown task markers"
     );
 }

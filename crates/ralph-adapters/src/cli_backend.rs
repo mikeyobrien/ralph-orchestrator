@@ -341,6 +341,31 @@ impl CliBackend {
         }
     }
 
+    /// Applies a reasoning-effort level using the backend's own control.
+    ///
+    /// Only Claude has an effort flag today (`--effort <level>`). An explicit
+    /// `--effort` already present in the args wins. Returns whether the level
+    /// was applied, so callers can note when a backend ignores it.
+    pub fn apply_effort(&mut self, effort: &str) -> bool {
+        let is_claude = std::path::Path::new(&self.command)
+            .file_name()
+            .and_then(|s| s.to_str())
+            == Some("claude");
+        if !is_claude {
+            return false;
+        }
+        if self
+            .args
+            .iter()
+            .any(|a| a == "--effort" || a.starts_with("--effort="))
+        {
+            return true;
+        }
+        self.args.push("--effort".to_string());
+        self.args.push(effort.to_string());
+        true
+    }
+
     /// Creates the Gemini backend.
     pub fn gemini() -> Self {
         Self {
@@ -1480,6 +1505,7 @@ mod tests {
             command: Some("my-agent".to_string()),
             prompt_mode: "arg".to_string(),
             prompt_flag: Some("-p".to_string()),
+            effort: None,
             ..Default::default()
         };
         let backend = CliBackend::from_config(&config).unwrap();
@@ -1497,6 +1523,7 @@ mod tests {
             command: Some("my-agent".to_string()),
             prompt_mode: "arg".to_string(),
             prompt_flag: Some("--prompt".to_string()),
+            effort: None,
             ..Default::default()
         };
         let backend = CliBackend::from_config(&config).unwrap();
@@ -1514,6 +1541,7 @@ mod tests {
             command: Some("my-agent".to_string()),
             prompt_mode: "arg".to_string(),
             prompt_flag: None,
+            effort: None,
             ..Default::default()
         };
         let backend = CliBackend::from_config(&config).unwrap();

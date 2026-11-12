@@ -64,6 +64,16 @@ pub struct HatInfo {
     pub disallowed_tools: Vec<String>,
 }
 
+/// Guidance against ending an iteration early, adapted from Anthropic's
+/// prompting guidance for long-running agentic work.
+const FINISHING_WORK: &str = "### FINISHING WORK
+Finish what this iteration owes before you hand off. An iteration that ends with a summary of what's left, or an offer to continue, leaves the work undone until the loop notices.
+You will meet ordinary obstacles: failing commands, timeouts, locked files, empty results. Diagnose them and work through them with the access you have (retry, fix the command, use another tool or source) instead of stopping.
+Leave deliberate blockers alone, such as a file marked not to be touched, withheld access, or a guardrail: say plainly what you found and hand off with the blocked or failure event your role publishes.
+Nobody answers questions mid-iteration, so make reversible decisions yourself and record consequential ones in `.ralph/agent/decisions.md`. Confirm before risky or irreversible actions such as force-pushes, deleting data, or changes outside the repository.
+
+";
+
 impl HatInfo {
     /// Generates an Event Publishing Guide section showing what happens when this hat publishes events.
     ///
@@ -75,9 +85,8 @@ impl HatInfo {
 
         let mut guide = String::from(
             "### Event Publishing Guide\n\n\
-             You MUST publish exactly ONE event when your work is complete.\n\
-             You MUST use `ralph emit \"<topic>\" \"<brief summary>\"` to publish it.\n\
-             Plain-language summaries do NOT publish events.\n\
+             When your work is complete, publish exactly one event with `ralph emit \"<topic>\" \"<brief summary>\"`.\n\
+             A plain-language summary does not publish anything.\n\
              Publishing hands off to the next hat and starts a fresh iteration with clear context.\n\n\
              When you publish:\n",
         );
@@ -328,8 +337,8 @@ impl HatlessRalph {
 
         let mut section = String::from("## ROBOT GUIDANCE\n\n");
         section.push_str(
-            "This guidance is blocking. You MUST address it before declaring completion. \
-             After addressing it, emit `human.guidance.ack` with a brief summary.\n\n",
+            "This guidance comes from the human running the loop. Address it before declaring completion, \
+             then emit `human.guidance.ack` with a brief summary.\n\n",
         );
 
         if self.robot_guidance.len() == 1 {
@@ -375,7 +384,7 @@ impl HatlessRalph {
         // Include pending events BEFORE workflow so Ralph sees the task first
         if !context.trim().is_empty() {
             prompt.push_str("## PENDING EVENTS\n\n");
-            prompt.push_str("You MUST handle these events in this iteration:\n\n");
+            prompt.push_str("Handle these events in this iteration:\n\n");
             prompt.push_str(context);
             prompt.push_str("\n\n");
         }
@@ -414,8 +423,7 @@ impl HatlessRalph {
 
 > {objective}
 
-You MUST keep this objective in mind throughout the iteration.
-You MUST NOT get distracted by workflow mechanics — they serve this goal.
+The workflow mechanics below exist to serve this objective.
 
 ",
             objective = objective
@@ -479,8 +487,8 @@ You MUST NOT get distracted by workflow mechanics — they serve this goal.
             if self.active_scratchpad.enabled {
                 r"
 ### 0a. ORIENTATION
-You are Ralph. You are running in a loop. You have fresh context each iteration.
-You MUST complete only one atomic task for the overall objective. Leave work for future iterations.
+You are Ralph, running in a loop. Each iteration starts with fresh context, so the state that carries over is what lives on disk: tasks, memories, and the files you write.
+Take one task and finish it in this iteration: done, verified, and recorded. Later iterations pick up the rest, and they know only what you leave behind.
 
 **First thing every iteration:**
 1. Review your `<scratchpad>` (auto-injected above) for context on your thinking
@@ -491,8 +499,8 @@ You MUST complete only one atomic task for the overall objective. Leave work for
             } else {
                 r"
 ### 0a. ORIENTATION
-You are Ralph. You are running in a loop. You have fresh context each iteration.
-You MUST complete only one atomic task for the overall objective. Leave work for future iterations.
+You are Ralph, running in a loop. Each iteration starts with fresh context, so the state that carries over is what lives on disk: tasks, memories, and the files you write.
+Take one task and finish it in this iteration: done, verified, and recorded. Later iterations pick up the rest, and they know only what you leave behind.
 
 **First thing every iteration:**
 1. Review your `<ready-tasks>` (auto-injected above) to see what work exists
@@ -503,8 +511,8 @@ You MUST complete only one atomic task for the overall objective. Leave work for
         } else {
             r"
 ### 0a. ORIENTATION
-You are Ralph. You are running in a loop. You have fresh context each iteration.
-You MUST complete only one atomic task for the overall objective. Leave work for future iterations.
+You are Ralph, running in a loop. Each iteration starts with fresh context, so the state that carries over is what lives on disk: tasks, memories, and the files you write.
+Take one task and finish it in this iteration: done, verified, and recorded. Later iterations pick up the rest, and they know only what you leave behind.
 "
             .to_string()
         };
@@ -549,10 +557,8 @@ Its content is auto-injected in `<scratchpad>` tags at the top of your context e
 - Analysis and temporary notes\n\
 - Read when relevant\n\
 \n\
-**Tool reliability rule:** Assume the workflow commands are available when the loop is already running and use the task-specific command you actually need.\n\
-The loop sets `$RALPH_BIN` to the current Ralph executable. Prefer `$RALPH_BIN emit ...` and `$RALPH_BIN tools ...` when you need a direct command form.\n\
-Do not spend turns on shell or tool-availability diagnosis unless the task is explicitly about the runtime environment.\n\
-Do NOT infer failure from empty or terse stdout alone. Verify the intended side effect in the task/event state or in the files and artifacts the command should have changed.\n\
+**Workflow commands:** The workflow commands are available while the loop runs; `$RALPH_BIN` points at the current Ralph executable (`$RALPH_BIN emit ...`, `$RALPH_BIN tools ...`).\n\
+Many of them print little or nothing on success, so check the side effect (task/event state, or the files the command should have changed) before concluding one failed.\n\
 Keep temporary artifacts where later steps can still inspect them, such as a repo-local `logs/` directory or `/var/tmp` when needed.\n\
 \n",
                 scratchpad = self.active_scratchpad.path,
@@ -611,6 +617,8 @@ Keep temporary artifacts where later steps can still inspect them, such as a rep
             }
         }
 
+        prompt.push_str(FINISHING_WORK);
+
         prompt.push_str(&format!(
             r"### GUARDRAILS
 {guardrails}
@@ -634,9 +642,8 @@ Keep temporary artifacts where later steps can still inspect them, such as a rep
                 return format!(
                     r#"## WORKFLOW
 
-**FAST PATH**: You MUST publish `{}` immediately to start the hat workflow.
-You MUST use `ralph emit "{}" "<brief handoff>"` and stop immediately.
-You MUST NOT plan or analyze — delegate now.
+**FAST PATH**: Publish `{}` now with `ralph emit "{}" "<brief handoff>"` and end the iteration.
+The hats that receive it do the planning, so this iteration only hands off.
 
 "#,
                     self.starting_event.as_ref().unwrap(),
@@ -652,16 +659,13 @@ You MUST NOT plan or analyze — delegate now.
                         r"## WORKFLOW
 
 ### 1. PLAN
-You MUST update `{scratchpad}` with your understanding and plan.
-You MUST check `<ready-tasks>` first.
-You MUST represent work items with runtime tasks using `ralph tools task ensure` when you can derive a stable key, otherwise `ralph tools task add`.
-You SHOULD search memories with `ralph tools memory search` before acting in unfamiliar areas.
-If confidence is 80 or below on a consequential decision, you MUST document it in `.ralph/agent/decisions.md`.
+Update `{scratchpad}` with your understanding and plan.
+Check `<ready-tasks>` first, then represent work items as runtime tasks: `ralph tools task ensure` when you can derive a stable key, otherwise `ralph tools task add`.
+Search memories with `ralph tools memory search` before acting in unfamiliar areas.
 
 ### 2. DELEGATE
-You MUST emit exactly ONE next event via `ralph emit` to hand off to specialized hats.
-Plain-language summaries do NOT hand off work.
-You MUST NOT do implementation work — delegation is your only job.
+Hand off by emitting exactly one next event with `ralph emit`; a plain-language summary hands off nothing.
+Leave implementation to the specialized hats: coordinating is this role's whole job.
 
 ",
                     )
@@ -669,11 +673,11 @@ You MUST NOT do implementation work — delegation is your only job.
                     // Memories mode, scratchpad disabled
                     "## WORKFLOW\n\n\
 ### 1. PLAN\n\
-You MUST create tasks with `ralph tools task add` for each work item (check `<ready-tasks>` first to avoid duplicates).\n\
+Create a task with `ralph tools task add` for each work item (check `<ready-tasks>` first to avoid duplicates).\n\
 \n\
 ### 2. DELEGATE\n\
-You MUST publish exactly ONE event to hand off to specialized hats.\n\
-You MUST NOT do implementation work — delegation is your only job.\n\
+Hand off by publishing exactly one event.\n\
+Leave implementation to the specialized hats: coordinating is this role's whole job.\n\
 \n"
                     .to_string()
                 }
@@ -683,12 +687,11 @@ You MUST NOT do implementation work — delegation is your only job.\n\
                     r"## WORKFLOW
 
 ### 1. PLAN
-You MUST update `{scratchpad}` with prioritized tasks to complete the objective end-to-end.
+Update `{scratchpad}` with prioritized tasks that complete the objective end to end.
 
 ### 2. DELEGATE
-You MUST emit exactly ONE next event via `ralph emit` to hand off to specialized hats.
-Plain-language summaries do NOT hand off work.
-You MUST NOT do implementation work — delegation is your only job.
+Hand off by emitting exactly one next event with `ralph emit`; a plain-language summary hands off nothing.
+Leave implementation to the specialized hats: coordinating is this role's whole job.
 
 ",
                 )
@@ -696,8 +699,8 @@ You MUST NOT do implementation work — delegation is your only job.
                 // Legacy mode, scratchpad disabled (unusual)
                 "## WORKFLOW\n\n\
 ### 1. DELEGATE\n\
-You MUST publish exactly ONE event to hand off to specialized hats.\n\
-You MUST NOT do implementation work — delegation is your only job.\n\
+Hand off by publishing exactly one event.\n\
+Leave implementation to the specialized hats: coordinating is this role's whole job.\n\
 \n"
                 .to_string()
             }
@@ -710,33 +713,23 @@ You MUST NOT do implementation work — delegation is your only job.\n\
                         r"## WORKFLOW
 
 ### 1. Study the prompt.
-You MUST study, explore, and research what needs to be done.
+Work out what the objective needs, from the prompt, the code, and memories (`ralph tools memory search` before acting in unfamiliar areas).
 
 ### 2. PLAN
-You MUST update `{scratchpad}` with your understanding and plan.
-You MUST check `<ready-tasks>` first.
-You MUST represent work items with runtime tasks using `ralph tools task ensure` when you can derive a stable key, otherwise `ralph tools task add`.
-You SHOULD search memories with `ralph tools memory search` before acting in unfamiliar areas.
-If confidence is 80 or below on a consequential decision, you MUST document it in `.ralph/agent/decisions.md`.
+Update `{scratchpad}` with your understanding and plan.
+Check `<ready-tasks>` first, then represent work items as runtime tasks: `ralph tools task ensure` when you can derive a stable key, otherwise `ralph tools task add`.
 
 ### 3. IMPLEMENT
-You MUST pick exactly ONE task from `<ready-tasks>` to implement.
-You MUST mark it in progress with `ralph tools task start <id>` before implementation.
+Pick one task from `<ready-tasks>` and mark it in progress with `ralph tools task start <id>`.
 
 ### 4. VERIFY & COMMIT
-You MUST run tests and verify the implementation works.
-If the target is runnable or user-facing, you MUST exercise it with the strongest available harness (Playwright, tmux, real CLI/API) before committing.
-You SHOULD try at least one realistic failure-path or adversarial input during verification.
-If this turn is likely to take more than a few minutes, you SHOULD send `ralph tools interact progress`.
-You MUST commit after verification passes - one commit per task.
-You SHOULD run `git diff --cached` to review staged changes before committing.
-You MUST close the task with `ralph tools task close <id>` AFTER commit.
-You SHOULD save learnings to memories with `ralph tools memory add`.
-If a command fails, a dependency is missing, or work becomes blocked and you cannot resolve it in this iteration, you MUST record a `fix` memory and `ralph tools task fail <id>` or `ralph tools task reopen <id>` before stopping.
-You MUST update scratchpad with what you learned (tasks track what remains).
+Run the tests and confirm the implementation works. If the target is runnable or user-facing, exercise it with the strongest available harness (Playwright, tmux, real CLI/API), including at least one realistic failure path.
+Commit once verification passes, one commit per task, after reviewing `git diff --cached`. Close the task with `ralph tools task close <id>` after the commit.
+If a blocker stops the task and you cannot work through it this iteration, `ralph tools task fail <id>` or `ralph tools task reopen <id>` with the reason.
+Update the scratchpad with what you learned (tasks track what remains), and save durable learnings with `ralph tools memory add`.
 
 ### 5. EXIT
-You MUST exit after completing ONE task.
+End the iteration once the task is closed; the next iteration starts the next task with fresh context.
 
 ",
                     )
@@ -744,23 +737,21 @@ You MUST exit after completing ONE task.
                     // Memories mode, scratchpad disabled
                     "## WORKFLOW\n\n\
 ### 1. Study the prompt.\n\
-You MUST study, explore, and research what needs to be done.\n\
+Work out what the objective needs, from the prompt, the code, and memories.\n\
 \n\
 ### 2. PLAN\n\
-You MUST create tasks with `ralph tools task add` for each work item (check `<ready-tasks>` first to avoid duplicates).\n\
+Create a task with `ralph tools task add` for each work item (check `<ready-tasks>` first to avoid duplicates).\n\
 \n\
 ### 3. IMPLEMENT\n\
-You MUST pick exactly ONE task from `<ready-tasks>` to implement.\n\
+Pick one task from `<ready-tasks>` and implement it.\n\
 \n\
 ### 4. VERIFY & COMMIT\n\
-You MUST run tests and verify the implementation works.\n\
-You MUST commit after verification passes - one commit per task.\n\
-You SHOULD run `git diff --cached` to review staged changes before committing.\n\
-You MUST close the task with `ralph tools task close <id>` AFTER commit.\n\
-You SHOULD save learnings to memories with `ralph tools memory add`.\n\
+Run the tests and confirm the implementation works.\n\
+Commit once verification passes, one commit per task, after reviewing `git diff --cached`.\n\
+Close the task with `ralph tools task close <id>` after the commit, and save durable learnings with `ralph tools memory add`.\n\
 \n\
 ### 5. EXIT\n\
-You MUST exit after completing ONE task.\n\
+End the iteration once the task is closed; the next iteration starts the next task with fresh context.\n\
 \n"
                     .to_string()
                 }
@@ -770,26 +761,21 @@ You MUST exit after completing ONE task.\n\
                     r"## WORKFLOW
 
 ### 1. Study the prompt.
-You MUST study, explore, and research what needs to be done.
-You MAY use parallel subagents (up to 10) for searches.
+Work out what the objective needs. Parallel subagents (up to 10) are useful for broad searches.
 
 ### 2. PLAN
-You MUST update `{scratchpad}` with prioritized tasks to complete the objective end-to-end.
+Update `{scratchpad}` with prioritized tasks that complete the objective end to end.
 
 ### 3. IMPLEMENT
-You MUST pick exactly ONE task to implement.
-You MUST NOT use more than 1 subagent for build/tests.
+Pick one task and implement it. Run builds and tests in one place at a time, because parallel runs contend for the same build output.
 
 ### 4. COMMIT
-If the target is runnable or user-facing, you MUST exercise it with the strongest available harness (Playwright, tmux, real CLI/API) before committing.
-You SHOULD try at least one realistic failure-path or adversarial input during verification.
-You MUST commit after completing each atomic unit of work.
-You MUST capture the why, not just the what.
-You SHOULD run `git diff` before committing to review changes.
-You MUST mark the task `[x]` in scratchpad when complete.
+If the target is runnable or user-facing, exercise it with the strongest available harness (Playwright, tmux, real CLI/API), including at least one realistic failure path, before committing.
+Commit each atomic unit of work after reviewing `git diff`, with a message that captures the why, not just the what.
+Mark the task `[x]` in the scratchpad when it is complete.
 
 ### 5. REPEAT
-You MUST continue until all tasks are `[x]` or `[~]`.
+Continue until every task is `[x]` or `[~]`.
 
 ",
                 )
@@ -797,20 +783,16 @@ You MUST continue until all tasks are `[x]` or `[~]`.
                 // Legacy mode, scratchpad disabled (unusual)
                 "## WORKFLOW\n\n\
 ### 1. Study the prompt.\n\
-You MUST study, explore, and research what needs to be done.\n\
-You MAY use parallel subagents (up to 10) for searches.\n\
+Work out what the objective needs. Parallel subagents (up to 10) are useful for broad searches.\n\
 \n\
 ### 2. IMPLEMENT\n\
-You MUST pick exactly ONE task to implement.\n\
-You MUST NOT use more than 1 subagent for build/tests.\n\
+Pick one task and implement it. Run builds and tests in one place at a time, because parallel runs contend for the same build output.\n\
 \n\
 ### 3. COMMIT\n\
-You MUST commit after completing each atomic unit of work.\n\
-You MUST capture the why, not just the what.\n\
-You SHOULD run `git diff` before committing to review changes.\n\
+Commit each atomic unit of work after reviewing `git diff`, with a message that captures the why, not just the what.\n\
 \n\
 ### 4. REPEAT\n\
-You MUST continue.\n\
+Continue with the next task.\n\
 \n"
                 .to_string()
             }
@@ -883,7 +865,7 @@ You MUST continue.\n\
             // Add explicit constraint listing valid events Ralph can publish
             if !ralph_publishes.is_empty() {
                 section.push_str(&format!(
-                    "**CONSTRAINT:** You MUST only publish events from this list: `{}`\n\
+                    "**CONSTRAINT:** Publish only events from this list: `{}`\n\
                      Publishing other events will have no effect - no hat will receive them.\n\n",
                     ralph_publishes.join("`, `")
                 ));
@@ -927,7 +909,7 @@ You MUST continue.\n\
                     && !info.disallowed_tools.is_empty()
                 {
                     section.push_str("### TOOL RESTRICTIONS\n\n");
-                    section.push_str("You MUST NOT use these tools in this hat:\n");
+                    section.push_str("This hat does not use these tools:\n");
                     for tool in &info.disallowed_tools {
                         section.push_str(&format!("- **{}** — blocked for this hat\n", tool));
                     }
@@ -1053,7 +1035,7 @@ You MUST continue.\n\
     fn event_writing_section(&self) -> String {
         let detailed_output_hint = if self.active_scratchpad.enabled {
             format!(
-                "\nYou SHOULD write detailed output to `{}` and emit only a brief event.\n",
+                "\nWrite detailed output to `{}` and emit only a brief event.\n",
                 self.active_scratchpad.path
             )
         } else {
@@ -1063,19 +1045,17 @@ You MUST continue.\n\
         format!(
             r#"## EVENT WRITING
 
-Events are routing signals, not data transport. You SHOULD keep payloads brief.
+Events are routing signals, not data transport, so keep payloads brief.
 
-You MUST use `ralph emit` to write events (handles JSON escaping correctly):
+Write events with `ralph emit`, which handles JSON escaping:
 ```bash
 ralph emit "build.done" "tests: pass, lint: pass, typecheck: pass, audit: pass, coverage: pass"
 ralph emit "review.done" --json '{{"status": "approved", "issues": 0}}'
 ```
 
-You MUST NOT use echo/cat to write events because shell escaping breaks JSON.
+Writing events with echo/cat breaks the JSON through shell escaping.
 {detailed_output_hint}
-**Constraints:**
-- You MUST stop working after publishing an event because a new iteration will start with fresh context
-- You MUST NOT continue with additional work after publishing because the next iteration handles it with the appropriate hat persona
+Publishing an event ends your part of the iteration: stop there, because the next iteration starts with fresh context and the hat that receives the event.
 "#,
             detailed_output_hint = detailed_output_hint
         )
@@ -1086,7 +1066,7 @@ You MUST NOT use echo/cat to write events because shell escaping breaks JSON.
             format!(
                 r"## DONE
 
-You MUST emit the completion event `{}` via `ralph emit` when the objective is complete and all tasks are done.
+Emit the completion event `{}` via `ralph emit` when the objective is complete and all tasks are done.
 Stdout text does NOT end the loop in coordinated mode.
 ",
                 self.completion_promise
@@ -1095,9 +1075,8 @@ Stdout text does NOT end the loop in coordinated mode.
             format!(
                 r"## DONE
 
-You MUST output the literal completion promise `{}` as the final non-empty line when the objective is complete and all tasks are done.
-You MUST NOT substitute a prose summary for `{}`.
-You MUST NOT print any text after `{}`.
+When the objective is complete and all tasks are done, output the literal completion promise `{}` as the final non-empty line.
+The loop matches that exact line, so a prose summary in place of `{}` does not count, and no text may follow `{}`.
 ",
                 self.completion_promise, self.completion_promise, self.completion_promise
             )
@@ -1114,7 +1093,7 @@ You MUST NOT print any text after `{}`.
 
 Tasks from other parallel loops are filtered out automatically. You only need to verify tasks YOU created for THIS objective are complete.
 
-You MUST NOT declare completion while tasks remain open.
+Completion with tasks still open is rejected, so resolve them first.
 ",
             );
         }
@@ -1126,7 +1105,7 @@ You MUST NOT declare completion while tasks remain open.
 **Remember your objective:**
 > {}
 
-You MUST NOT declare completion until this objective is fully satisfied.
+Declare completion only once this objective is fully satisfied.
 ",
                 obj
             ));
@@ -1151,12 +1130,12 @@ mod tests {
 
         // Identity with RFC2119 style
         assert!(prompt.contains(
-            "You are Ralph. You are running in a loop. You have fresh context each iteration."
+            "You are Ralph, running in a loop. Each iteration starts with fresh context"
         ));
 
         // Numbered orientation phases (RFC2119)
         assert!(prompt.contains("### 0a. ORIENTATION"));
-        assert!(prompt.contains("MUST complete only one atomic task"));
+        assert!(prompt.contains("Take one task and finish it in this iteration"));
 
         // Scratchpad section with auto-inject and append instructions
         assert!(prompt.contains("### 0b. SCRATCHPAD"));
@@ -1166,12 +1145,12 @@ mod tests {
         // Workflow with numbered steps (solo mode) using RFC2119
         assert!(prompt.contains("## WORKFLOW"));
         assert!(prompt.contains("### 1. Study the prompt"));
-        assert!(prompt.contains("You MAY use parallel subagents (up to 10)"));
+        assert!(prompt.contains("Parallel subagents (up to 10) are useful"));
         assert!(prompt.contains("### 2. PLAN"));
         assert!(prompt.contains("### 3. IMPLEMENT"));
-        assert!(prompt.contains("You MUST NOT use more than 1 subagent for build/tests"));
+        assert!(prompt.contains("Run builds and tests in one place at a time"));
         assert!(prompt.contains("### 4. COMMIT"));
-        assert!(prompt.contains("You MUST capture the why"));
+        assert!(prompt.contains("captures the why"));
         assert!(prompt.contains("### 5. REPEAT"));
 
         // Should NOT have hats section when no hats
@@ -1179,8 +1158,8 @@ mod tests {
 
         // Event writing and completion using RFC2119
         assert!(prompt.contains("## EVENT WRITING"));
-        assert!(prompt.contains("You MUST use `ralph emit`"));
-        assert!(prompt.contains("You MUST NOT use echo/cat"));
+        assert!(prompt.contains("Write events with `ralph emit`"));
+        assert!(prompt.contains("Writing events with echo/cat breaks the JSON"));
         assert!(prompt.contains("LOOP_COMPLETE"));
     }
 
@@ -1207,7 +1186,7 @@ hats:
 
         // Identity with RFC2119 style
         assert!(prompt.contains(
-            "You are Ralph. You are running in a loop. You have fresh context each iteration."
+            "You are Ralph, running in a loop. Each iteration starts with fresh context"
         ));
 
         // Orientation phases
@@ -1226,7 +1205,7 @@ hats:
             "Multi-hat mode should NOT tell Ralph to implement"
         );
         assert!(
-            prompt.contains("You MUST stop working after publishing"),
+            prompt.contains("Publishing an event ends your part of the iteration"),
             "Should explicitly tell Ralph to stop after publishing event"
         );
 
@@ -1252,34 +1231,28 @@ hats:
     }
 
     #[test]
-    fn test_rfc2119_patterns_present() {
+    fn test_core_prompt_states_guidance_plainly() {
         let config = RalphConfig::default();
         let registry = HatRegistry::new();
         let ralph = HatlessRalph::new("LOOP_COMPLETE", config.core.clone(), &registry, None);
 
         let prompt = ralph.build_prompt("", &[]);
 
-        // Key RFC2119 language patterns
-        assert!(
-            prompt.contains("You MUST study"),
-            "Should use RFC2119 MUST with 'study' verb"
-        );
-        assert!(
-            prompt.contains("You MUST complete only one atomic task"),
-            "Should have RFC2119 MUST complete atomic task constraint"
-        );
-        assert!(
-            prompt.contains("You MAY use parallel subagents"),
-            "Should mention parallel subagents with MAY"
-        );
-        assert!(
-            prompt.contains("You MUST NOT use more than 1 subagent"),
-            "Should limit to 1 subagent for builds with MUST NOT"
-        );
-        assert!(
-            prompt.contains("You MUST capture the why"),
-            "Should emphasize 'why' in commits with MUST"
-        );
+        // Core guidance survives the move away from RFC2119 emphasis
+        assert!(prompt.contains("Work out what the objective needs"));
+        assert!(prompt.contains("Take one task and finish it in this iteration"));
+        assert!(prompt.contains("Parallel subagents (up to 10) are useful"));
+        assert!(prompt.contains("Run builds and tests in one place at a time"));
+        assert!(prompt.contains("captures the why"));
+        assert!(prompt.contains("### FINISHING WORK"));
+
+        // Current models follow instructions closely; all-caps directives over-apply.
+        for shout in ["MUST", "SHOULD", "MAY ", "NEVER"] {
+            assert!(
+                !prompt.contains(shout),
+                "Core prompt should state guidance plainly, found {shout:?}"
+            );
+        }
 
         // Numbered guardrails (999+)
         assert!(
@@ -1497,7 +1470,7 @@ hats:
             "Prompt should indicate fast path when starting_event set and no scratchpad"
         );
         assert!(
-            prompt.contains("You MUST publish `tdd.start` immediately"),
+            prompt.contains("Publish `tdd.start` now"),
             "Prompt should instruct immediate event publishing with MUST"
         );
         assert!(
@@ -1888,7 +1861,7 @@ hats:
 
         // Workflow should mention scratchpad
         assert!(
-            prompt.contains("update scratchpad"),
+            prompt.contains("Update the scratchpad"),
             "Workflow should reference scratchpad when memories enabled"
         );
         // Workflow should also mention tasks CLI
@@ -1982,7 +1955,7 @@ hats:
             "Should reference task list command in DONE section"
         );
         assert!(
-            prompt.contains("MUST NOT declare completion while tasks remain open"),
+            prompt.contains("Completion with tasks still open is rejected"),
             "Should require tasks closed before completion"
         );
     }
@@ -2003,7 +1976,7 @@ hats:
             "Should have VERIFY & COMMIT step in workflow"
         );
         assert!(
-            prompt.contains("run tests and verify"),
+            prompt.contains("Run the tests and confirm the implementation works"),
             "Should require verification"
         );
         assert!(
@@ -2032,7 +2005,7 @@ hats:
             "Should have COMMIT step in workflow"
         );
         assert!(
-            prompt.contains("mark the task `[x]`"),
+            prompt.contains("Mark the task `[x]`"),
             "Should mark task in scratchpad"
         );
         // Scratchpad mode doesn't have the TASKS section
@@ -2348,7 +2321,7 @@ hats:
             "Guide should explain what happens when publishing"
         );
         assert!(
-            prompt.contains("You MUST use `ralph emit"),
+            prompt.contains("publish exactly one event with `ralph emit"),
             "Guide should require explicit event emission"
         );
         // build.done has a receiver (Confessor)
@@ -2832,7 +2805,7 @@ hats:
         );
         // EVENT WRITING should not have detailed output hint
         assert!(
-            !prompt.contains("write detailed output to"),
+            !prompt.contains("Write detailed output to"),
             "Disabled scratchpad: EVENT WRITING should not reference scratchpad"
         );
     }
@@ -2870,7 +2843,7 @@ hats:
         );
         // EVENT WRITING should use custom path
         assert!(
-            prompt.contains("write detailed output to `.ralph/agent/planner.md`"),
+            prompt.contains("Write detailed output to `.ralph/agent/planner.md`"),
             "EVENT WRITING should use custom scratchpad path"
         );
     }

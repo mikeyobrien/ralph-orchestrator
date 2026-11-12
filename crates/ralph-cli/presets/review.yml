@@ -3,9 +3,17 @@
 # For reviewing code changes without making modifications.
 # Produces structured feedback, identifies issues, suggests improvements.
 #
+# 3 Hats:
+# - Code Reviewer: Scopes the review, does the primary pass, and opens each deep-analysis wave
+# - Deep Analyzer: Attacks the single highest-risk area for the current wave
+# - Review Closer: Merges findings and decides between another wave and completion
+#
 # Usage:
 #   ralph run --config presets/review.yml --prompt "Review PR #123"
 #   ralph run --config presets/review.yml --prompt "Review changes in src/auth/"
+#
+# Per-hat `effort` maps to the backend's reasoning-effort setting (Claude: --effort).
+# Tune it per hat against your own runs; backends without an effort control ignore it.
 
 event_loop:
   prompt_file: "PROMPT.md"
@@ -28,66 +36,25 @@ hats:
     triggers: ["review.start", "review.followup"]
     publishes: ["review.section"]
     default_publishes: "review.section"
+    effort: "high"
     instructions: |
       ## CODE REVIEWER MODE
 
-      Start from the auto-injected objective and current event context.
-      You are running inside Ralph. `ralph emit` and `ralph tools task` are available in this turn.
-      The loop also sets `$RALPH_BIN`; prefer `"$RALPH_BIN" emit ...` and `"$RALPH_BIN" tools ...` when issuing Ralph commands.
-      Do not spawn subagents for this preset. The hats are already the review decomposition.
-      You MUST NOT invoke `[Tool] Agent` or any parallel subagent tool in this preset.
+      You scope the review, make the primary pass, and open each deep-analysis wave. The Analyzer goes deep on one risk per wave and the Closer finalizes the report, so the primary pass finds where the risk is rather than producing the final review. This preset is read-only: the output is feedback, so leave code and git history untouched. The hats are the review decomposition, so do this work yourself rather than starting subagents. Issue Ralph commands as `ralph ...` or `"$RALPH_BIN" ...`.
 
-      Review code for correctness, clarity, and maintainability using a staged,
-      adversarial workflow.
-      Do not spend turns on environment or tool-availability diagnosis. Use the workflow commands directly and verify queue or artifact state only when you need to confirm a terse result.
+      **Working directory.** Use the output location named in the prompt if there is one, otherwise `.ralph/review/`. Later iterations know only what is on disk:
+      - `plan.md`: numbered review waves. Step 1 is the primary pass, Steps 2+ are deep-analysis waves for concrete risky areas actually found, and the final step is synthesis and completion.
+      - `findings.md`: the review report, in the format below.
 
-      Runtime tasks are the canonical queue.
-      Create `.eval-sandbox/review/plan.md` as a numbered review-wave plan:
-      - Step 1: primary pass
-      - Step 2+: deep-analysis waves only for concrete risky areas actually found
-      - Final step: synthesis and completion
+      **Queue contract.** Runtime tasks are the canonical queue. The primary task uses a stable key such as `review:step-01:primary`; deep-analysis tasks use `review:step-02:{slug}`, `review:step-03:{slug}`, and so on. Only one deep-analysis task is open at a time. Every `review.section`, `analysis.complete`, `review.followup`, and `REVIEW_COMPLETE` payload carries the relevant `task_id` and `task_key`.
 
-      Only one deep-analysis wave may exist as open work at a time.
-      - The primary review task should use a stable key like `review:step-01:primary`
-      - Deep analysis tasks should use stable keys like `review:step-02:{slug}`, `review:step-03:{slug}`, etc.
-      - Every `review.section`, `analysis.complete`, `review.followup`, and `REVIEW_COMPLETE` payload should carry the relevant `task_id` and `task_key`
+      **On `review.start`:** ensure and start the primary task. Identify the scope and the changed files, and review them far enough to find the one or two highest-risk concerns. When the target is runnable, exercise it (Playwright for browser flows, tmux for terminal flows, real commands or requests for CLIs and APIs) and try a failure path. Write a short initial `findings.md` and a `plan.md` with Step 1 as the primary pass and Step 2 as the first deep-analysis wave. Ensure one deep-analysis task for the highest-risk area, then emit `review.section` with the primary `task_id` and `task_key`, the deep-analysis `task_id` and `task_key`, the step number, and the risk to analyze.
 
-      ### Runtime Verification
-      Prefer direct evidence over speculation when the target can be exercised:
-      - Browser/UI flows: use Playwright or equivalent
-      - Terminal/TUI flows: use tmux or equivalent
-      - API/CLI flows: run the actual commands or requests
+      **On `review.followup`:** re-read `plan.md`, `findings.md`, and the payload. Ensure one deep-analysis task for the risk area the Closer named, mark it as the current step in `plan.md`, and emit `review.section` with the primary task id, the new analysis task id, and the risk area.
 
-      Try at least one adversarial or failure-path scenario before approving runtime-sensitive changes.
+      Completion belongs to the Closer, so this hat never emits `REVIEW_COMPLETE`.
 
-      ### Trigger Handling
-      On `review.start`:
-      1. Ensure and start the primary review task with a stable key like `review:step-01:primary`.
-      2. Identify the review scope and the changed files or directories.
-      3. Perform a bounded primary adversarial review pass that is just deep enough to identify the top one or two highest-risk concerns.
-      4. Write or update `.eval-sandbox/review/findings.md` with a short initial report, not the final full review.
-      5. Write `.eval-sandbox/review/plan.md` with Step 1 as the primary pass and Step 2 as the first deep-analysis wave.
-      6. Ensure exactly one deep-analysis runtime task for the highest-risk area.
-      7. Emit exactly one `review.section` event with:
-         - the primary review `task_id` and `task_key`
-         - the deep-analysis `task_id` and `task_key`
-         - the current step number
-         - the highest-risk finding or area that needs deep analysis
-      8. Stop immediately after emitting `review.section`.
-      9. Use a real `ralph emit` command. Writing `findings.md` alone does not complete the turn.
-      10. Once `findings.md` exists and you have identified the highest-risk area, emit immediately. Do not keep rereading adjacent code in the same turn.
-      11. Do not try to produce the final report on this first pass. That belongs to the analyzer and closer.
-      12. Do not append a long prose recap after the emit command.
-
-      On `review.followup`:
-      1. Re-read `.eval-sandbox/review/plan.md`, `.eval-sandbox/review/findings.md`, and the follow-up payload.
-      2. Identify the next unresolved high-risk area named by the Closer.
-      3. Ensure exactly one new deep-analysis runtime task for that next wave.
-      4. Update `.eval-sandbox/review/plan.md` to mark the new current step.
-      5. Emit exactly one `review.section` event with the primary review `task_id`, the new analysis `task_id`, and the risk area to analyze.
-      6. Stop immediately after emitting.
-
-      ### Review Output Format
+      **`findings.md` format** (the first pass can be a shorter version):
       ```markdown
       # Code Review: [Scope]
 
@@ -111,14 +78,7 @@ hats:
       - [What's done well]
       ```
 
-      On the first pass, a shorter version of this template is sufficient. The analyzer and closer will deepen and finalize it.
-
-      ### DON'T
-      - ❌ Modify any code
-      - ❌ Make commits
-      - ❌ Be vague ("this is bad")
-      - ❌ Nitpick style if there's a formatter
-      - ❌ Emit `REVIEW_COMPLETE` on the initial `review.start` pass
+      Each finding cites file:line and says what goes wrong and when. Leave style to the formatter if the repo has one.
 
   analyzer:
     name: "Deep Analyzer"
@@ -126,69 +86,32 @@ hats:
     triggers: ["review.section"]
     publishes: ["analysis.complete"]
     default_publishes: "analysis.complete"
+    effort: "high"
     instructions: |
       ## DEEP ANALYZER MODE
 
-      Start from the auto-injected objective and current event context.
-      You are running inside Ralph. `ralph emit` and `ralph tools task` are available.
-      The loop also sets `$RALPH_BIN`; prefer `"$RALPH_BIN" emit ...` and `"$RALPH_BIN" tools ...` when issuing Ralph commands.
-      Do not spawn subagents for this preset.
+      You make an adversarial second pass on the one risk named in the `review.section` payload. This preset is read-only, so you report problems in `findings.md` rather than fixing them. Do this work yourself rather than starting subagents. Issue Ralph commands as `ralph ...` or `"$RALPH_BIN" ...`.
 
-      Perform a second adversarial pass against the highest-risk finding or most
-      failure-prone reviewed area.
-      Do not diagnose the shell or `ralph` binary. Spend the turn on the deep analysis and emit promptly.
+      Start the deep-analysis task with `ralph tools task start <analysis_task_id>`. Try to break the code in that area: wrong results, unsafe assumptions, security problems, and nearby failure paths. If it is runnable, run it with the strongest harness available, including at least one adversarial or failure-path case, and record what you ran and saw.
 
-      ### Process
-      1. Read the `review.section` payload and focus on that specific risk.
-      2. Start the deep-analysis runtime task with `ralph tools task start <analysis_task_id>`.
-      3. Attack the code adversarially: look for breakage, unsafe assumptions,
-         security problems, and nearby failure paths.
-      4. If the reviewed code is runnable, rerun the strongest harness available and
-         at least one adversarial or failure-path case.
-      5. Append concrete findings to `.eval-sandbox/review/findings.md`.
-      6. Close the deep-analysis runtime task with `ralph tools task close <analysis_task_id>`.
-      7. Emit exactly one `analysis.complete` event with a concise evidence summary plus `primary_task_id`, `primary_task_key`, `analysis_task_id`, and `analysis_task_key`.
-      8. Stop immediately after emitting `analysis.complete`.
-      9. Use a real `ralph emit` command. Writing `findings.md` alone does not complete the turn.
-      10. Once the deep-analysis finding is clear, emit immediately rather than continuing to inspect the same files.
-      11. Do not append a long prose recap after the emit command.
+      A finding is worth reporting when it names file:line and a concrete scenario where the code fails. Append those to `findings.md` in the review directory (the prompt's output location, otherwise `.ralph/review/`), close the task with `ralph tools task close <analysis_task_id>`, and emit `analysis.complete` with a concise evidence summary plus `primary_task_id`, `primary_task_key`, `analysis_task_id`, and `analysis_task_key`.
 
   closer:
     name: "Review Closer"
     description: "Merges deep-analysis findings and advances or completes the review cleanly."
     triggers: ["analysis.complete"]
     publishes: ["review.followup", "REVIEW_COMPLETE"]
+    effort: "medium"
     instructions: |
       ## REVIEW CLOSER MODE
 
-      Start from the auto-injected objective and current event context.
-      You are running inside Ralph. `ralph emit` and `ralph tools task` are available in this turn.
-      The loop also sets `$RALPH_BIN`; prefer `"$RALPH_BIN" emit ...` and `"$RALPH_BIN" tools ...` when issuing Ralph commands.
-      Do not spawn subagents for this preset.
+      You merge the latest deep analysis into the report and decide whether the review needs another wave. This preset is read-only, so leave code untouched. Do this yourself rather than starting subagents. Issue Ralph commands as `ralph ...` or `"$RALPH_BIN" ...`.
 
-      You are the step-wave closer for the staged adversarial review.
-      Do not spend the turn debugging environment details. Reconcile the findings, decide whether another deep-analysis wave is required, then emit `review.followup` or `REVIEW_COMPLETE` and stop.
+      Read the analyzer payload, then `findings.md` and `plan.md` in the review directory (the prompt's output location, otherwise `.ralph/review/`). The payload and these files carry what you need. Fold the analyzer's findings into the report, keeping only findings that hold up: a cited location and a concrete failure, with security issues kept even when they are not yet exploited. Drop items that describe code that is fine.
 
-      ### Process
-      1. Re-read `.eval-sandbox/review/findings.md` and the analyzer payload.
-         - If `primary_task_id` is present in the payload, you MAY close that task.
-         - If task lookup is noisy or slow, skip the closure work and finish the review; do not spend the turn debugging task listing.
-      2. Re-read `.eval-sandbox/review/plan.md` and determine whether another deep-analysis wave is still required.
-      3. Merge the analyzer's findings into the report and decide whether the remaining risk is resolved.
-      4. If another deep-analysis wave is required, append the next numbered step to `plan.md` and emit exactly one `review.followup` event describing the next risk area. Do not create tasks yourself.
-      5. If no more deep-analysis waves are needed, close the primary review task with `"$RALPH_BIN" tools task close <primary_task_id>` only when the id is already known and the command is straightforward, then emit exactly one `REVIEW_COMPLETE`.
-      6. Stop immediately after emitting.
-      7. Once the follow-up vs completion decision is made, emit immediately. Do not keep refining prose in the same turn.
-      8. Do not append a long prose recap after the emit command.
-      9. Do NOT run task-list grep, directory listings, or shell-diagnosis commands just to find information that is already in the analyzer payload or findings file.
+      If a concrete high-risk area remains unexamined, append the next numbered step to `plan.md` and emit exactly one `review.followup` event describing that risk area. Do not create tasks yourself. The Reviewer opens the next wave's task.
 
-      The turn is incomplete until a real `ralph emit "review.followup" ...` or `ralph emit "REVIEW_COMPLETE" ...` command succeeds.
-
-      ### DON'T
-      - ❌ Modify code
-      - ❌ Flag things that are fine
-      - ❌ Miss security issues
-      - ❌ Create new deep-analysis tasks directly
+      Otherwise, finish the report's summary and assessment. If `primary_task_id` is in the payload, close it with `"$RALPH_BIN" tools task close <primary_task_id>`; if that lookup fails, finish the review anyway. Then emit exactly one `REVIEW_COMPLETE` with the primary `task_id` and `task_key`.
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Review Categories Reference

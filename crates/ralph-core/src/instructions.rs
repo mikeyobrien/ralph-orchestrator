@@ -186,7 +186,7 @@ impl InstructionBuilder {
         if !hat.publishes.is_empty() {
             let topics: Vec<&str> = hat.publishes.iter().map(|t| t.as_str()).collect();
             behaviors.push(format!(
-                "You MUST publish one of: `{}` every iteration or the loop will terminate.",
+                "Publish one of `{}` every iteration; an iteration without one terminates the loop.",
                 topics.join("`, `")
             ));
         }
@@ -226,7 +226,7 @@ impl InstructionBuilder {
             (
                 format!("You publish to: {}", topics_list),
                 format!(
-                    "\n\nYou MUST emit exactly ONE of these events via `ralph emit \"<topic>\" \"<summary>\"`: {}\nUse `ralph emit \"{}\" \"<summary>\"` as the pattern.\nPlain-language summaries do NOT count as event publication.\nYou MUST stop immediately after emitting.\nYou MUST NOT end the iteration without publishing because this will terminate the loop.",
+                    "\n\nEmit exactly one of these events with `ralph emit \"<topic>\" \"<summary>\"`: {}\nUse `ralph emit \"{}\" \"<summary>\"` as the pattern; a plain-language summary does not publish anything.\nStop after emitting. An iteration that ends without publishing terminates the loop.",
                     topics_backticked, example_topic
                 ),
             )
@@ -236,45 +236,36 @@ impl InstructionBuilder {
             r"You are {name}. You have fresh context each iteration.
 
 ### 0. ORIENTATION
-You MUST study the incoming event context.
-You MUST NOT assume work isn't done — verify first.
+Start from the incoming event context, and check what already exists before assuming work is missing.
 
 ### 0b. TOOL DISCIPLINE
 Runtime work state lives in `ralph tools task`, not in ad hoc markdown checklists.
-You MUST check `<ready-tasks>` before creating more tasks.
-If this iteration creates or discovers durable work, you MUST represent it with `ralph tools task ensure`, `start`, `close`, `reopen`, or `fail` as appropriate.
-If you are entering an unfamiliar area, you SHOULD search memories with `ralph tools memory search` before acting.
-You SHOULD assume the workflow commands are available when the loop is already running and use the task-specific command you actually need.
-The loop sets `$RALPH_BIN` to the current Ralph executable. Prefer `$RALPH_BIN emit ...` and `$RALPH_BIN tools ...` when you need a direct command form.
-Do not spend iterations on shell or tool-availability diagnosis unless the task is explicitly about the runtime environment.
-If a command's stdout is empty or terse, verify the intended side effect in the task/event state or in the files and artifacts the command should have changed.
-Keep temporary artifacts where later steps can still inspect them, such as a repo-local `logs/` directory or `/var/tmp` when needed.
-If a command fails, a dependency is missing, or you become blocked, you MUST record a `fix` memory with `ralph tools memory add`.
-If the issue is not resolved in the same iteration, you MUST fail or reopen the relevant runtime task before stopping.
-If your confidence is 80 or below on a consequential decision, you MUST document it in `.ralph/agent/decisions.md`.
-If this turn is likely to run longer than a few minutes, you SHOULD send a non-blocking progress update with `ralph tools interact progress`.
+Check `<ready-tasks>` before creating more tasks, and track durable work with `ralph tools task ensure`, `start`, `close`, `reopen`, or `fail`.
+Search memories with `ralph tools memory search` before acting in an unfamiliar area, and save durable learnings with `ralph tools memory add`.
+The workflow commands are available while the loop runs; `$RALPH_BIN` points at the current Ralph executable (`$RALPH_BIN emit ...`, `$RALPH_BIN tools ...`).
+Many of them print little or nothing on success, so check the side effect (task/event state, or the files the command should have changed) before concluding one failed.
+Keep temporary artifacts where later steps can still inspect them, such as a repo-local `logs/` directory or `/var/tmp`.
+If a blocker stops the work and you cannot work through it this iteration, fail or reopen the relevant runtime task with the reason.
+Make reversible decisions yourself and record consequential ones in `.ralph/agent/decisions.md`.
+If this turn will run longer than a few minutes, send a progress update with `ralph tools interact progress`.
 
 ### 1. EXECUTE
 {role_instructions}
-You MUST NOT use more than 1 subagent for build/tests.
+Run builds and tests in one place at a time, because parallel runs contend for the same build output.
 
 ### 2. VERIFY
-You MUST run tests and verify implementation before reporting done.
-You MUST NOT report completion without evidence (test output, build success).
-You MUST NOT close tasks unless ALL conditions are met:
-- Implementation is actually complete (not partially done)
-- Tests pass (run them and verify output)
-- Build succeeds (if applicable)
+Run the tests and verify the implementation before reporting done, and include the evidence (test output, build result).
+Close a task only when the implementation is complete, the tests pass, and the build succeeds where there is one.
 
 ### 3. REPORT
-You MUST publish a result event with evidence using `ralph emit`.
+Publish a result event with that evidence using `ralph emit`.
 {publish_topics}{must_publish}
 
 ### GUARDRAILS
 {guardrails}
 
 ---
-You MUST handle these events:
+Handle these events:
 {events}",
             name = hat.name,
             role_instructions = role_instructions,
@@ -313,11 +304,11 @@ mod tests {
 
         // Numbered orientation phase with RFC2119
         assert!(instructions.contains("### 0. ORIENTATION"));
-        assert!(instructions.contains("You MUST study the incoming event context"));
-        assert!(instructions.contains("You MUST NOT assume work isn't done"));
+        assert!(instructions.contains("Start from the incoming event context"));
+        assert!(instructions.contains("check what already exists before assuming work is missing"));
 
         assert!(instructions.contains("### 0b. TOOL DISCIPLINE"));
-        assert!(instructions.contains("You MUST check `<ready-tasks>` before creating more tasks"));
+        assert!(instructions.contains("Check `<ready-tasks>` before creating more tasks"));
         assert!(
             instructions
                 .contains("`ralph tools task ensure`, `start`, `close`, `reopen`, or `fail`")
@@ -330,18 +321,17 @@ mod tests {
         // Numbered execute phase with RFC2119
         assert!(instructions.contains("### 1. EXECUTE"));
         assert!(instructions.contains("Review PRs for quality"));
-        assert!(instructions.contains("You MUST NOT use more than 1 subagent for build/tests"));
+        assert!(instructions.contains("Run builds and tests in one place at a time"));
 
         // Verify phase with RFC2119 (task completion verification)
         assert!(instructions.contains("### 2. VERIFY"));
-        assert!(instructions.contains("You MUST run tests and verify implementation"));
-        assert!(instructions.contains("You MUST NOT close tasks unless"));
+        assert!(instructions.contains("Run the tests and verify the implementation"));
+        assert!(instructions.contains("Close a task only when the implementation is complete"));
 
         // Report phase with RFC2119
         assert!(instructions.contains("### 3. REPORT"));
         assert!(
-            instructions
-                .contains("You MUST publish a result event with evidence using `ralph emit`")
+            instructions.contains("Publish a result event with that evidence using `ralph emit`")
         );
 
         // Guardrails section with high numbers
@@ -349,7 +339,7 @@ mod tests {
         assert!(instructions.contains("999."));
 
         // Event context is included with RFC2119 directive
-        assert!(instructions.contains("You MUST handle these events"));
+        assert!(instructions.contains("Handle these events"));
         assert!(instructions.contains("PR #123 ready for review"));
     }
 
@@ -392,16 +382,16 @@ mod tests {
 
         // Must-publish rule should be injected even with explicit instructions (RFC2119)
         assert!(
-            instructions.contains("You MUST emit exactly ONE of these events via `ralph emit"),
+            instructions.contains("Emit exactly one of these events with `ralph emit"),
             "Must-publish rule should be injected for custom hats with publishes"
         );
         assert!(instructions.contains("`review.approved`"));
         assert!(instructions.contains("`review.changes_requested`"));
+        assert!(instructions.contains("a plain-language summary does not publish anything"));
+        assert!(instructions.contains("Stop after emitting"));
         assert!(
-            instructions.contains("Plain-language summaries do NOT count as event publication")
+            instructions.contains("An iteration that ends without publishing terminates the loop")
         );
-        assert!(instructions.contains("You MUST stop immediately after emitting"));
-        assert!(instructions.contains("You MUST NOT end the iteration without publishing"));
     }
 
     #[test]
@@ -417,7 +407,7 @@ mod tests {
         // Note: The prompt says "You MUST publish a result event" in the REPORT section,
         // but the specific emitted-topics list should not appear
         assert!(
-            !instructions.contains("You MUST emit exactly ONE of these events via `ralph emit"),
+            !instructions.contains("Emit exactly one of these events with `ralph emit"),
             "Specific must-publish list should NOT be injected when hat has no publishes"
         );
     }

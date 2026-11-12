@@ -734,7 +734,7 @@ hats:
         "Builder should use RFC2119-style orientation phase"
     );
     assert!(
-        builder_prompt.contains("You MUST NOT use more than 1 subagent for build/tests"),
+        builder_prompt.contains("Run builds and tests in one place at a time"),
         "Builder prompt should have subagent limit with MUST NOT"
     );
 }
@@ -1347,6 +1347,7 @@ fn test_default_publishes_injects_when_no_events() {
             instructions: "Test hat".to_string(),
             extra_instructions: vec![],
             backend_args: None,
+            effort: None,
             backend: None,
             default_publishes: Some("task.done".to_string()),
             max_activations: None,
@@ -1404,6 +1405,7 @@ fn test_default_publishes_completion_promise_requires_explicit_agent_event() {
             instructions: "Verify the objective is complete".to_string(),
             extra_instructions: vec![],
             backend_args: None,
+            effort: None,
             backend: None,
             default_publishes: Some("LOOP_COMPLETE".to_string()),
             max_activations: None,
@@ -1544,6 +1546,7 @@ fn test_default_publishes_not_injected_when_events_written() {
             instructions: "Test hat".to_string(),
             extra_instructions: vec![],
             backend_args: None,
+            effort: None,
             backend: None,
             default_publishes: Some("task.done".to_string()),
             max_activations: None,
@@ -1744,6 +1747,7 @@ fn test_default_publishes_skipped_when_non_orphan_event_written() {
             instructions: "Do the task".to_string(),
             extra_instructions: vec![],
             backend_args: None,
+            effort: None,
             backend: None,
             default_publishes: Some("task.done".to_string()),
             max_activations: None,
@@ -1815,6 +1819,7 @@ fn test_default_publishes_not_injected_when_not_configured() {
             instructions: "Test hat".to_string(),
             extra_instructions: vec![],
             backend_args: None,
+            effort: None,
             backend: None,
             default_publishes: None, // No default configured
             max_activations: None,
@@ -4555,6 +4560,7 @@ fn test_default_publishes_satisfies_required_events_for_completion() {
             extra_instructions: vec![],
             backend: None,
             backend_args: None,
+            effort: None,
             default_publishes: Some("plan.draft".to_string()),
             max_activations: None,
             scratchpad: None,
@@ -4613,6 +4619,7 @@ fn test_default_publishes_completion_promise_injects_recovery() {
             extra_instructions: vec![],
             backend: None,
             backend_args: None,
+            effort: None,
             default_publishes: Some("LOOP_COMPLETE".to_string()),
             max_activations: None,
             scratchpad: None,
