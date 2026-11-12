@@ -33,7 +33,7 @@ ralph run -H ralph.reviewer.yml -p "Review PR #<N>"
 - `timeout: 600000` (10 minutes)
 - `run_in_background: true`
 
-Use `TaskOutput` with `block: true` to wait for completion.
+You are notified when the background job exits; wait for that before reading the report.
 
 ### 3. Display the report
 
