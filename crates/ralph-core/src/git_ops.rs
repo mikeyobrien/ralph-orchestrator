@@ -74,11 +74,102 @@ pub fn has_uncommitted_changes(path: impl AsRef<Path>) -> Result<bool, GitOpsErr
     Ok(!stdout.trim().is_empty())
 }
 
-/// Auto-commit any uncommitted changes in the repository.
+/// Whether an untracked path (relative to the workspace) is a Ralph run artifact
+/// that the auto-commit must leave out.
 ///
-/// This stages all changes (untracked, staged, unstaged) and creates a commit
-/// with a standardized message. If there are no uncommitted changes, returns
-/// without creating a commit.
+/// Artifacts are:
+/// - anything under a nested `.ralph/` directory (e.g. `crates/foo/.ralph/diagnostics/`),
+///   which only appears when something ran Ralph code with a subdirectory as cwd;
+/// - anything under the workspace's own `.ralph/` except the durable text artifacts
+///   (specs, `*.code-task.md` files, `agent/memories.md`, `agent/decisions.md`), and
+///   never a `logs/` directory inside them;
+/// - anything under the workspace-root `logs/`, which Ralph's prompts hand to agents
+///   as scratch space for temporary artifacts.
+///
+/// Ignore rules alone can't express this: the auto-commit runs in user repos whose
+/// `.gitignore` knows nothing about Ralph's layout.
+fn is_run_artifact(path: &str) -> bool {
+    let components: Vec<&str> = path.split('/').collect();
+    match components.as_slice() {
+        ["logs", ..] => true,
+        [".ralph", rest @ ..] => !is_durable_ralph_artifact(rest),
+        [_, rest @ ..] => rest.contains(&".ralph"),
+        [] => false,
+    }
+}
+
+/// Durable files under the workspace `.ralph/` that a loop commits on purpose.
+/// `rest` is the path below `.ralph/`.
+fn is_durable_ralph_artifact(rest: &[&str]) -> bool {
+    match rest {
+        ["agent", "memories.md" | "decisions.md"] => true,
+        ["specs", inner @ .., _file] => !inner.contains(&"logs"),
+        ["tasks", .., file] => file.ends_with(".code-task.md"),
+        _ => false,
+    }
+}
+
+/// Stage the loop's work: every change to tracked files, plus untracked files
+/// that are not run artifacts (see [`is_run_artifact`]).
+fn stage_loop_work(path: &Path) -> Result<(), GitOpsError> {
+    let run_git = |args: &[&str], stdin: Option<&[u8]>| -> Result<Vec<u8>, GitOpsError> {
+        let mut child = Command::new("git")
+            .args(args)
+            .current_dir(path)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()?;
+        if let Some(input) = stdin {
+            use std::io::Write;
+            child
+                .stdin
+                .take()
+                .expect("stdin is piped")
+                .write_all(input)?;
+        }
+        let output = child.wait_with_output()?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(GitOpsError::Git(format!(
+                "Failed to stage changes: {}",
+                stderr
+            )));
+        }
+        Ok(output.stdout)
+    };
+
+    // Tracked files are always the loop's business: modifications and deletions.
+    run_git(&["add", "--update"], None)?;
+
+    let untracked = run_git(&["ls-files", "--others", "--exclude-standard", "-z"], None)?;
+    let mut pathspecs = Vec::new();
+    for file in untracked.split(|b| *b == 0).filter(|f| !f.is_empty()) {
+        if !is_run_artifact(&String::from_utf8_lossy(file)) {
+            pathspecs.extend_from_slice(file);
+            pathspecs.push(0);
+        }
+    }
+    if !pathspecs.is_empty() {
+        run_git(
+            &[
+                "--literal-pathspecs",
+                "add",
+                "--pathspec-from-file=-",
+                "--pathspec-file-nul",
+            ],
+            Some(&pathspecs),
+        )?;
+    }
+    Ok(())
+}
+
+/// Auto-commit the loop's uncommitted work in the repository.
+///
+/// This stages changes to tracked files and untracked files that are not Ralph
+/// run artifacts (diagnostics, logs, scratchpads, runtime state — see
+/// [`is_run_artifact`]), then creates a commit with a standardized message. If
+/// nothing is left to stage, returns without creating a commit.
 ///
 /// # Arguments
 ///
@@ -104,24 +195,12 @@ pub fn auto_commit_changes(
         return Ok(AutoCommitResult::no_commit());
     }
 
-    // Stage all changes (including untracked files)
-    let output = Command::new("git")
-        .args(["add", "-A"])
-        .current_dir(path)
-        .output()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(GitOpsError::Git(format!(
-            "Failed to stage changes: {}",
-            stderr
-        )));
-    }
+    stage_loop_work(path)?;
 
     // Count staged files
     let files_staged = count_staged_files(path)?;
 
-    // If nothing was staged after git add -A, return no commit
+    // If only run artifacts were present, nothing is staged: no commit
     if files_staged == 0 {
         return Ok(AutoCommitResult::no_commit());
     }
@@ -641,6 +720,128 @@ mod tests {
 
         let result = auto_commit_changes(temp.path(), "loop-ignored").unwrap();
         assert!(!result.committed);
+    }
+
+    fn write_file(root: &Path, rel: &str, contents: &str) {
+        let path = root.join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, contents).unwrap();
+    }
+
+    fn files_in_head_commit(dir: &Path) -> Vec<String> {
+        let output = Command::new("git")
+            .args(["show", "--name-only", "--pretty=format:", "HEAD"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        let mut files: Vec<String> = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect();
+        files.sort();
+        files
+    }
+
+    /// The artifacts from the observed 893-file auto-commit, in a repo with no
+    /// .gitignore help: nested `.ralph/` state under crate dirs, root `logs/`,
+    /// and the loop's own runtime state and scratchpad.
+    const RUN_ARTIFACTS: &[&str] = &[
+        "crates/ralph-core/.ralph/diagnostics/2026-11-12T21-00-00/agent-output.jsonl",
+        "crates/ralph-cli/.ralph/diagnostics/2026-11-12T21-00-00/orchestration.jsonl",
+        "crates/ralph-core/.ralph/agent/scratchpad.md",
+        "logs/report.txt",
+        "logs/nested/run-1.txt",
+        ".ralph/agent/scratchpad.md",
+        ".ralph/agent/tasks.jsonl",
+        ".ralph/events-20261112-210407.jsonl",
+        ".ralph/diagnostics/2026-11-12T21-00-00/errors.jsonl",
+        ".ralph/loop.lock",
+        ".ralph/specs/feature/logs/step01-red.txt",
+    ];
+
+    #[test]
+    fn test_auto_commit_leaves_run_artifacts_out() {
+        let temp = TempDir::new().unwrap();
+        init_git_repo(temp.path());
+
+        write_file(temp.path(), "src/feature.rs", "pub fn feature() {}\n");
+        for artifact in RUN_ARTIFACTS {
+            write_file(temp.path(), artifact, "artifact\n");
+        }
+
+        let result = auto_commit_changes(temp.path(), "loop-artifacts").unwrap();
+
+        assert!(result.committed);
+        assert_eq!(files_in_head_commit(temp.path()), vec!["src/feature.rs"]);
+        assert_eq!(result.files_staged, 1);
+    }
+
+    #[test]
+    fn test_auto_commit_only_artifacts_makes_no_commit() {
+        let temp = TempDir::new().unwrap();
+        init_git_repo(temp.path());
+        let head_before = get_head_sha(temp.path()).unwrap();
+
+        for artifact in RUN_ARTIFACTS {
+            write_file(temp.path(), artifact, "artifact\n");
+        }
+
+        let result = auto_commit_changes(temp.path(), "loop-artifacts-only").unwrap();
+
+        assert!(!result.committed);
+        assert_eq!(get_head_sha(temp.path()).unwrap(), head_before);
+    }
+
+    #[test]
+    fn test_auto_commit_still_commits_intended_new_files_alongside_artifacts() {
+        let temp = TempDir::new().unwrap();
+        init_git_repo(temp.path());
+
+        // A tracked file under logs/ was committed on purpose; edits to it stay in.
+        write_file(temp.path(), "logs/README.md", "# Logs\n");
+        Command::new("git")
+            .args(["add", "logs/README.md"])
+            .current_dir(temp.path())
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-m", "track logs readme"])
+            .current_dir(temp.path())
+            .output()
+            .unwrap();
+        write_file(temp.path(), "logs/README.md", "# Logs, edited\n");
+
+        let intended = [
+            "src/feature.rs",
+            "src/logs/mod.rs",
+            "crates/new-crate/src/lib.rs",
+            "docs/file with spaces.md",
+            // Must be staged literally: as a glob it would also match `logs/`.
+            "logs*",
+            ".ralph/agent/memories.md",
+            ".ralph/agent/decisions.md",
+            ".ralph/specs/feature/design.md",
+            ".ralph/tasks/feature/task-01.code-task.md",
+        ];
+        for file in intended {
+            write_file(temp.path(), file, "intended\n");
+        }
+        for artifact in RUN_ARTIFACTS {
+            write_file(temp.path(), artifact, "artifact\n");
+        }
+
+        let result = auto_commit_changes(temp.path(), "loop-intended").unwrap();
+
+        let mut expected: Vec<String> = intended
+            .iter()
+            .chain(["logs/README.md"].iter())
+            .map(|s| s.to_string())
+            .collect();
+        expected.sort();
+        assert!(result.committed);
+        assert_eq!(files_in_head_commit(temp.path()), expected);
+        assert_eq!(result.files_staged, expected.len());
     }
 
     #[test]

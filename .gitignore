@@ -52,6 +52,8 @@ backend/**/.ralph/
 backend/**/.agent/
 frontend/**/.ralph/
 frontend/**/.agent/
+# Same for crates: tests run with a crate dir as cwd and write .ralph/diagnostics etc.
+crates/**/.ralph/
 frontend/**/dist/
 backend/**/dist/
 backend/**/target/
@@ -63,6 +65,8 @@ IMPLEMENTATION_PLAN.md
 # Ralph specific
 .sop/
 .logs/
+# Scratch space Ralph's prompts point agents at for temporary artifacts
+/logs/
 prompts/
 prompts/archive/
 ralph_*.log
@@ -119,6 +123,8 @@ PROMPT.md
 .ralph/agent/*
 !.ralph/agent/decisions.md
 !.ralph/agent/memories.md
+# Verification logs inside spec dirs are run output, not spec content
+.ralph/specs/**/logs/
 
 # Codex local state
 .codex/

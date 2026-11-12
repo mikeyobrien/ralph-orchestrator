@@ -101,3 +101,48 @@ fn ralph_gitignore_tracks_committed_artifacts_not_runtime_state() -> Result<()> 
 
     Ok(())
 }
+
+#[test]
+fn ralph_gitignore_ignores_run_artifacts_outside_root_ralph_dir() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let repo = temp_dir.path();
+
+    let init = Command::new("git").arg("init").current_dir(repo).output()?;
+    assert!(
+        init.status.success(),
+        "git init failed: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    fs::copy(
+        workspace_root()?.join(".gitignore"),
+        repo.join(".gitignore"),
+    )?;
+
+    // Test runs with a crate as cwd, hats writing scratch output at the root, and
+    // verification logs written inside a spec directory.
+    for ignored in [
+        "crates/ralph-core/.ralph/diagnostics/2026-11-12T21-00-00/agent-output.jsonl",
+        "crates/ralph-cli/.ralph/diagnostics/2026-11-12T21-00-00/orchestration.jsonl",
+        "crates/ralph-core/.ralph/agent/scratchpad.md",
+        "logs/report.txt",
+        ".ralph/specs/example/logs/step01-red.txt",
+    ] {
+        assert!(
+            git_check_ignore(repo, ignored)?,
+            "{ignored} is a run artifact and should be ignored"
+        );
+    }
+
+    // Source that merely contains a `logs` directory stays visible.
+    for visible in [
+        "crates/ralph-core/src/logs/mod.rs",
+        ".ralph/specs/example/design.md",
+    ] {
+        assert!(
+            !git_check_ignore(repo, visible)?,
+            "{visible} should be visible to git"
+        );
+    }
+
+    Ok(())
+}
