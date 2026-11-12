@@ -1,10 +1,12 @@
+mod common;
+
 #[cfg(unix)]
 mod web_integration {
+    use super::common;
     use std::fs;
     use std::net::TcpListener;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
-    use std::process::Command;
     use tempfile::TempDir;
 
     fn write_executable(dir: &Path, name: &str, body: &str) -> PathBuf {
@@ -71,7 +73,7 @@ exit 1",
             Err(_) => return,
         };
 
-        let output = Command::new(env!("CARGO_BIN_EXE_ralph"))
+        let output = common::ralph_command()
             .current_dir(workspace)
             .env("PATH", path)
             .args([

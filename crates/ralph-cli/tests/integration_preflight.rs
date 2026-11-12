@@ -1,11 +1,12 @@
 //! Integration tests for `ralph preflight` CLI command.
 
+mod common;
+
 use std::fs;
-use std::process::Command;
 use tempfile::TempDir;
 
 fn ralph_preflight(temp_path: &std::path::Path, args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_ralph"))
+    common::ralph_command()
         .args(args)
         .current_dir(temp_path)
         .output()

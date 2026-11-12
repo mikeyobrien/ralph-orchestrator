@@ -1,4 +1,4 @@
-use std::process::Command;
+mod common;
 
 #[test]
 fn version_reports_the_build_version_and_git_hash() {
@@ -12,7 +12,7 @@ fn version_reports_the_build_version_and_git_hash() {
 
     assert_eq!(env!("RALPH_VERSION"), expected_version);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_ralph"))
+    let output = common::ralph_command()
         .arg("--version")
         .output()
         .expect("run ralph --version");

@@ -1,13 +1,15 @@
 //! Integration tests for `ralph hooks validate` CLI command.
 
+mod common;
+
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Output;
 use tempfile::TempDir;
 
 fn ralph_hooks_validate(temp_path: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_ralph"))
+    common::ralph_command()
         .args(["--color", "never"])
         .args(args)
         .current_dir(temp_path)
@@ -17,7 +19,7 @@ fn ralph_hooks_validate(temp_path: &Path, args: &[&str]) -> Output {
 }
 
 fn ralph_hooks_validate_with_home(temp_path: &Path, home_path: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_ralph"))
+    common::ralph_command()
         .args(["--color", "never"])
         .args(args)
         .current_dir(temp_path)

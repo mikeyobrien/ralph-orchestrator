@@ -1,6 +1,7 @@
+mod common;
+
 use anyhow::Result;
 use std::fs;
-use std::process::Command;
 use tempfile::TempDir;
 
 /// Integration tests for clean command acceptance criteria.
@@ -32,7 +33,7 @@ core:
     assert!(agent_dir.join("scratchpad.md").exists());
 
     // Run ralph clean
-    let output = Command::new(env!("CARGO_BIN_EXE_ralph"))
+    let output = common::ralph_command()
         .arg("clean")
         .arg("--config")
         .arg(temp_path.join("ralph.yml"))
@@ -77,7 +78,7 @@ core:
     assert!(custom_dir.exists());
 
     // Run ralph clean with custom config
-    let output = Command::new(env!("CARGO_BIN_EXE_ralph"))
+    let output = common::ralph_command()
         .arg("clean")
         .arg("--config")
         .arg(temp_path.join("custom.yml"))
@@ -115,7 +116,7 @@ core:
     fs::write(agent_dir.join("events.jsonl"), "{}")?;
 
     // Run ralph clean with --dry-run
-    let output = Command::new(env!("CARGO_BIN_EXE_ralph"))
+    let output = common::ralph_command()
         .arg("clean")
         .arg("--config")
         .arg(temp_path.join("ralph.yml"))
@@ -160,7 +161,7 @@ core:
     assert!(!agent_dir.exists());
 
     // Run ralph clean
-    let output = Command::new(env!("CARGO_BIN_EXE_ralph"))
+    let output = common::ralph_command()
         .arg("clean")
         .arg("--config")
         .arg(temp_path.join("ralph.yml"))
@@ -202,7 +203,7 @@ core:
     fs::write(agent_dir.join("scratchpad.md"), "test")?;
 
     // Run ralph clean with --color never
-    let output = Command::new(env!("CARGO_BIN_EXE_ralph"))
+    let output = common::ralph_command()
         .arg("clean")
         .arg("--config")
         .arg(temp_path.join("ralph.yml"))
@@ -240,7 +241,7 @@ core:
     fs::write(agent_dir.join("scratchpad.md"), "test")?;
 
     // Run ralph clean with --color always
-    let output = Command::new(env!("CARGO_BIN_EXE_ralph"))
+    let output = common::ralph_command()
         .arg("clean")
         .arg("--config")
         .arg(temp_path.join("ralph.yml"))
@@ -288,7 +289,7 @@ core:
     fs::set_permissions(&agent_dir, perms)?;
 
     // Run ralph clean
-    let output = Command::new(env!("CARGO_BIN_EXE_ralph"))
+    let output = common::ralph_command()
         .arg("clean")
         .arg("--config")
         .arg(temp_path.join("ralph.yml"))

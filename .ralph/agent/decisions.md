@@ -92,3 +92,30 @@ Use this template for new entries:
 - Reasoning: Full `cargo test` is required verification gate; adapting tests to current CLI behavior is lower risk than reviving deprecated flags.
 - Reversibility: High
 - Timestamp: 2026-02-21T00:23:00Z
+
+## DEC-012 (2026-11-12T21:10Z)
+- Decision: Implement the three loop-hygiene defects in order 2 → 3 → 1 rather than the order the spec numbers them.
+- Chosen Option: Test-event isolation first, auto-commit artifact exclusion second, then the two Claude cost/context slices.
+- Confidence: 80
+- Alternatives Considered: (A) Spec order 1 → 2 → 3, landing the headline cost-accounting fix first. (B) Do defect 2 first and leave the rest in spec order.
+- Reasoning: Defect 2 is the only one that corrupts the loop doing the work — every step runs `cargo test -p ralph-cli`, which until fixed injects stray topics into this loop's live events file and can trigger spurious hat handoffs mid-step. Defect 3 then keeps the repo clean for the commits the later steps make. Fixing hygiene first makes the remaining steps verifiable; spec order makes each successive run noisier.
+- Reversibility: High; the four tasks are independent in substance and can be re-chained by the Planner on `plan.revise`.
+- Timestamp: 2026-11-12T21:10:00Z
+
+## DEC-013 (2026-11-12T21:10Z)
+- Decision: Treat `.ralph/agent/memories.md` and `.ralph/agent/decisions.md` as intentionally tracked, and require the defect-3 fix to keep committing them.
+- Chosen Option: Tracked (the spec left this open for the implementer to decide from the repository).
+- Confidence: 92
+- Alternatives Considered: (A) Treat them as run artifacts and exclude them from the auto-commit alongside diagnostics and logs.
+- Reasoning: Root `.gitignore` carries explicit negations `!.ralph/agent/decisions.md` and `!.ralph/agent/memories.md` against the `.ralph/*` ignore, and `git ls-files` confirms `decisions.md` is tracked. `CLAUDE.md` also calls memories "persistent learning across sessions". The repository already answers the question.
+- Reversibility: Medium; reversing it would mean untracking files that carry cross-session state, so it should be a deliberate separate change.
+- Timestamp: 2026-11-12T21:10:00Z
+
+## DEC-014 (2026-11-12T21:20Z)
+- Decision: How ralph-cli integration tests stop inheriting the caller's loop env, and how that stays enforced.
+- Chosen Option: One helper, `crates/ralph-cli/tests/common/mod.rs::ralph_command()`, that removes every inherited `RALPH_*` variable; all ~65 spawn sites migrated to it; `integration_env_isolation_guard.rs` fails on any direct `Command::new(env!("CARGO_BIN_EXE_ralph"))` / `Command::new(ralph_bin())` in `tests/*.rs`; `scripts/check-test-event-isolation.sh` is the end-to-end sentinel check.
+- Confidence: 80
+- Alternatives Considered: (A) Patch only the known offender at `integration_events_isolation.rs:149`. (B) Strip only `RALPH_EVENTS_FILE` and `RALPH_WORKSPACE_ROOT`. (C) Make the `ralph` binary refuse inherited env under `cfg(test)`.
+- Reasoning: (A) leaves the next new test free to reintroduce the leak, which is how this one happened. (B) misses wave/diagnostics/config vars (`RALPH_WAVE_ID`, `RALPH_DIAGNOSTICS`, `RALPH_CONFIG`) that also change a child's behavior; tests needing one set it explicitly after the helper. (C) is impossible: integration tests run the release-shaped binary, not a cfg(test) build. The source-scan guard is a lint, not a behavior test; the sentinel script and `ralph_command_does_not_pass_loop_env_to_the_child` carry the behavior.
+- Reversibility: High; test-only code.
+- Timestamp: 2026-11-12T21:20:00Z

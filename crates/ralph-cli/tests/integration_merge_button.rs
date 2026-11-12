@@ -6,6 +6,8 @@
 //! 3. Smart merge reads latest commits for execution summary
 //! 4. User steering request for unclear merges
 
+mod common;
+
 use anyhow::Result;
 use std::fs;
 use std::process::Command;
@@ -101,7 +103,7 @@ fn write_loop_lock(temp_path: &std::path::Path, pid: u32, prompt: &str) -> Resul
 
 /// Run ralph loops command with given args in the temp directory.
 fn ralph_loops(temp_path: &std::path::Path, args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_ralph"))
+    common::ralph_command()
         .arg("loops")
         .args(args)
         .current_dir(temp_path)

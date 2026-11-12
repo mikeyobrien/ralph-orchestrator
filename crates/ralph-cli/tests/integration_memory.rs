@@ -2,9 +2,10 @@
 //!
 //! Tests the memory subcommands per the ralph-tools skill specification.
 
+mod common;
+
 use anyhow::Result;
 use std::fs;
-use std::process::Command;
 use tempfile::TempDir;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -13,7 +14,7 @@ use tempfile::TempDir;
 
 /// Run ralph tools memory command with given args in the temp directory.
 fn ralph_memory(temp_path: &std::path::Path, args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_ralph"))
+    common::ralph_command()
         .arg("tools")
         .arg("memory")
         .args(args)
@@ -689,7 +690,7 @@ fn test_memory_list_color_never() -> Result<()> {
     ralph_memory_ok(temp_path, &["add", "color test"]);
 
     // Run with --color never via the main CLI
-    let output = Command::new(env!("CARGO_BIN_EXE_ralph"))
+    let output = common::ralph_command()
         .arg("--color")
         .arg("never")
         .arg("tools")

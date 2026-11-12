@@ -5,9 +5,10 @@
 //! - `-H <name>` where `<name>` resolves via cwd-local `presets/`.
 //! - Error messaging when a preset name fails to resolve.
 
+mod common;
+
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 use tempfile::TempDir;
 
 const MIN_AUTOLOOPS_TOML: &str = r#"
@@ -58,7 +59,7 @@ fn write_toml_preset(root: &Path, name: &str) -> std::path::PathBuf {
 }
 
 fn run_ralph(cwd: &Path, args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_ralph"))
+    common::ralph_command()
         .args(args)
         .current_dir(cwd)
         .output()

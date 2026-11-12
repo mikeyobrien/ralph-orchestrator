@@ -4,9 +4,11 @@
 
 #![cfg(unix)]
 
+mod common;
+
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
@@ -47,7 +49,7 @@ impl Workspace {
     }
 
     fn run(&self) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_ralph"))
+        common::ralph_command()
             .args([
                 "run",
                 "--no-tui",

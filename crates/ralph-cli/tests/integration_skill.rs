@@ -1,11 +1,12 @@
 //! Integration tests for `ralph tools skill` CLI commands.
 
-use std::process::Command;
+mod common;
+
 use std::{fs, path::Path};
 use tempfile::TempDir;
 
 fn ralph_skill(temp_path: &std::path::Path, args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_ralph"))
+    common::ralph_command()
         .arg("tools")
         .arg("skill")
         .args(args)
@@ -17,7 +18,7 @@ fn ralph_skill(temp_path: &std::path::Path, args: &[&str]) -> std::process::Outp
 }
 
 fn ralph_skill_no_root(current_path: &std::path::Path, args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_ralph"))
+    common::ralph_command()
         .arg("tools")
         .arg("skill")
         .args(args)

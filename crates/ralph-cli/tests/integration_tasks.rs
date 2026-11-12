@@ -1,11 +1,12 @@
 //! Integration tests for `ralph tools task` CLI commands.
 
+mod common;
+
 use ralph_core::{Task, TaskStatus};
-use std::process::Command;
 use tempfile::TempDir;
 
 fn ralph_task(temp_path: &std::path::Path, args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_ralph"))
+    common::ralph_command()
         .arg("tools")
         .arg("task")
         .args(args)
