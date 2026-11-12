@@ -42,7 +42,36 @@ New tests (all load YAML through `RalphConfig::parse_yaml` + `normalize` and ass
   now asserts each hat's `model` and its resolved `--model` (AC10, model half)
 - `config::tests::test_script_hat_ignored_fields_warn` covers `model`
 
+### Step 1 — hat model field (Critic)
+
+Logs: `logs/critic-step1-*.log`. Re-ran independently against `ba6e22b`:
+- fmt, clippy (`-D warnings`), `sync-embedded-files.sh check` → clean.
+- `cargo test -p ralph-core` (1019 lib) and `-p ralph-adapters` (335 lib) → all pass.
+- `cargo test -p ralph-cli --no-fail-fast -- --test-threads=1` → 25 binaries ok; only
+  `integration_gitignore` fails (pre-existing, task `fix:gitignore-memories-test`). Note: without
+  `--no-fail-fast` cargo stops at that binary and skips the rest.
+- Real binary (`ralph run --no-tui`, fake `claude`/`codex` on PATH, `/var/tmp/critic-model.*`):
+  Planner hat `model: claude-fable-5-2` + `backend_args: ["--model","X"]` → argv `--model X` only;
+  codex hat `model: gpt-x` → `exec --yolo -m gpt-x`; hatless with `cli.model` →
+  `--model claude-opus-5-5`; unknown hat backend still rejected at config validation.
+
 ## Completed Tasks
 
 _Builder and Critic append one entry per closed task: task key, what landed, and the
 verification that backed closing it._
+
+- `code-assist:model-specific-prompt-fragments:step-01:hat-model-field` (task-1794522125-9033) —
+  `model:` on hats and `cli`, `CliBackend::apply_model` (claude/kiro `--model`, codex `-m`,
+  explicit flag in args wins), shared `resolve_hat_backend` for iterations and wave workers,
+  preset migrated, docs updated. Closed by Critic after the verification above.
+
+## Follow-ups
+
+- **minor (error handling):** a wave whose hat backend is invalid now logs only
+  `Wave execution failed error=aborting wave (fail-closed)` — `handle_wave_events` logs with
+  `%e`, which prints the outermost anyhow context only, and the hat name moved into the inner
+  context (`Invalid backend for hat '…'`). Before this change the outer message named the hat.
+  Fix: log `{e:#}` in `handle_wave_events` (also surfaces the root cause), or keep the hat id in
+  the outer context. Outcome is still correct (fails closed, no worker spawned).
+- **minor:** `model: ""` is accepted and becomes `--model ""` on the command line. Consider a
+  `validate()` error/warning for an empty model string on hats and `cli`.
