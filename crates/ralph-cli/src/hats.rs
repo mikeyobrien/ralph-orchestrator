@@ -14,7 +14,9 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use indicatif::{ProgressBar, ProgressStyle};
 use ralph_adapters::{CliBackend, detect_backend_default};
-use ralph_core::{HatConfig, HatRegistry, RalphConfig, truncate_with_ellipsis};
+use ralph_core::{
+    COORDINATOR_FRAGMENT_TARGET, HatConfig, HatRegistry, RalphConfig, truncate_with_ellipsis,
+};
 use std::collections::{BTreeMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -454,22 +456,83 @@ fn validate_hats<W: Write>(
 
     if registry.is_empty() {
         writeln!(writer, "No hats configured (solo mode).")?;
-        return Ok(());
-    }
-
-    writeln!(writer, "Hats: {} configured", registry.len())?;
-    if let Some(start) = &config.event_loop.starting_event {
-        writeln!(writer, "Entry: task.start -> {}", start)?;
+        // The coordinator still runs, so its fragments are worth checking.
+        if config.fragments.is_empty() {
+            return Ok(());
+        }
+        writeln!(writer)?;
     } else {
-        writeln!(writer, "Entry: task.start (Ralph coordinates)")?;
+        writeln!(writer, "Hats: {} configured", registry.len())?;
+        if let Some(start) = &config.event_loop.starting_event {
+            writeln!(writer, "Entry: task.start -> {}", start)?;
+        } else {
+            writeln!(writer, "Entry: task.start (Ralph coordinates)")?;
+        }
+        writeln!(writer)?;
     }
-    writeln!(writer)?;
 
     writeln!(writer, "Checks:")?;
 
     let mut warnings = 0;
     let mut errors = 0;
 
+    // 0. The config rules `ralph run` enforces at load (for example a
+    //    fragment naming a script hat), so validate never passes a config
+    //    that run would reject.
+    if let Err(e) = config.validate() {
+        print_check(
+            writer,
+            CheckResult::Error,
+            &format!("Config is invalid: {e}"),
+            use_colors,
+        )?;
+        errors += 1;
+    }
+
+    if !registry.is_empty() {
+        let (topology_warnings, topology_errors) =
+            check_topology(writer, config, registry, use_colors)?;
+        warnings += topology_warnings;
+        errors += topology_errors;
+
+        // 4. Instruction sanity (opt-in via --instructions)
+        if let Some(dir) = instructions_dir {
+            warnings += check_instructions(writer, config, registry, use_colors, dir)?;
+        }
+    }
+
+    // 5. Model-specific fragments: which apply where, and any that apply nowhere
+    let fragment_targets = fragment_targets(config);
+    warnings += check_unmatched_fragments(writer, config, &fragment_targets, use_colors)?;
+    print_fragment_report(writer, &fragment_targets)?;
+
+    writeln!(writer)?;
+    if errors > 0 {
+        writeln!(
+            writer,
+            "Result: Invalid ({} errors, {} warnings)",
+            errors, warnings
+        )?;
+        // Return error to propagate failure to main
+        return Err(anyhow::anyhow!("Validation failed with {} errors", errors));
+    } else if warnings > 0 {
+        writeln!(writer, "Result: Valid ({} warnings)", warnings)?;
+    } else {
+        writeln!(writer, "Result: Valid")?;
+    }
+    Ok(())
+}
+
+/// Starting-event, orphan-event, and dead-end checks. Returns
+/// `(warnings, errors)`.
+fn check_topology<W: Write>(
+    writer: &mut W,
+    config: &RalphConfig,
+    registry: &HatRegistry,
+    use_colors: bool,
+) -> Result<(usize, usize)> {
+    let mut warnings = 0;
+    let mut errors = 0;
     // 1. Starting event validation
     if let Some(start) = &config.event_loop.starting_event {
         if registry.has_subscriber(start) {
@@ -531,24 +594,109 @@ fn validate_hats<W: Write>(
         print_check(writer, CheckResult::Ok, "No dead-end hats", use_colors)?;
     }
 
-    // 4. Instruction sanity (opt-in via --instructions)
-    if let Some(dir) = instructions_dir {
-        warnings += check_instructions(writer, config, registry, use_colors, dir)?;
-    }
+    Ok((warnings, errors))
+}
 
-    writeln!(writer)?;
-    if errors > 0 {
-        writeln!(
+/// A prompt that fragments can target: a hat, or the coordinator.
+struct FragmentTarget<'a> {
+    id: &'a str,
+    /// Effective model, as fragment matching sees it.
+    model: Option<&'a str>,
+    is_script: bool,
+    /// Indices into `config.fragments` that apply, in config order.
+    indices: Vec<usize>,
+}
+
+/// Every hat (sorted by ID) and then the coordinator, with the fragments
+/// that config load resolved for each. Empty when there are no fragments.
+fn fragment_targets(config: &RalphConfig) -> Vec<FragmentTarget<'_>> {
+    if config.fragments.is_empty() {
+        return Vec::new();
+    }
+    let mut hats: Vec<(&String, &HatConfig)> = config.hats.iter().collect();
+    hats.sort_by_key(|(id, _)| id.as_str());
+    hats.into_iter()
+        .map(|(id, hat)| FragmentTarget {
+            id,
+            model: config.hat_model(id),
+            is_script: hat.is_script(),
+            indices: config.fragment_indices_for_hat(id),
+        })
+        .chain(std::iter::once(FragmentTarget {
+            id: COORDINATOR_FRAGMENT_TARGET,
+            model: config.coordinator_model(),
+            is_script: false,
+            indices: config.coordinator_fragment_indices(),
+        }))
+        .collect()
+}
+
+/// Warns once per fragment that applies to no hat and not to the
+/// coordinator: usually a typo in a model glob or a hat ID. Returns the
+/// warning count.
+fn check_unmatched_fragments<W: Write>(
+    writer: &mut W,
+    config: &RalphConfig,
+    targets: &[FragmentTarget<'_>],
+    use_colors: bool,
+) -> Result<usize> {
+    let mut warnings = 0;
+    for (index, fragment) in config.fragments.iter().enumerate() {
+        if targets.iter().any(|t| t.indices.contains(&index)) {
+            continue;
+        }
+        let mut msg = format!(
+            "fragments[{index}] matches no hat or the coordinator (models: {:?}",
+            fragment.models
+        );
+        if let Some(hats) = &fragment.hats {
+            msg.push_str(&format!(", hats: {hats:?}"));
+        }
+        msg.push(')');
+        print_check(writer, CheckResult::Warn, &msg, use_colors)?;
+        warnings += 1;
+    }
+    if warnings == 0 && !config.fragments.is_empty() {
+        print_check(
             writer,
-            "Result: Invalid ({} errors, {} warnings)",
-            errors, warnings
+            CheckResult::Ok,
+            "Every fragment applies",
+            use_colors,
         )?;
-        // Return error to propagate failure to main
-        return Err(anyhow::anyhow!("Validation failed with {} errors", errors));
-    } else if warnings > 0 {
-        writeln!(writer, "Result: Valid ({} warnings)", warnings)?;
-    } else {
-        writeln!(writer, "Result: Valid")?;
+    }
+    Ok(warnings)
+}
+
+/// Prints which fragments apply to which prompt. Nothing when there are no
+/// fragments; a hat with no known model lists no fragments.
+fn print_fragment_report<W: Write>(writer: &mut W, targets: &[FragmentTarget<'_>]) -> Result<()> {
+    if targets.is_empty() {
+        return Ok(());
+    }
+    writeln!(writer)?;
+    writeln!(writer, "Fragments:")?;
+    for target in targets {
+        let model = match (target.is_script, target.model) {
+            (true, _) => "(script hat)".to_string(),
+            (false, Some(model)) => model.to_string(),
+            (false, None) => "(no model)".to_string(),
+        };
+        let applied = if target.indices.is_empty() {
+            "none".to_string()
+        } else {
+            target
+                .indices
+                .iter()
+                .map(|i| format!("fragments[{i}]"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let note = if target.id == COORDINATOR_FRAGMENT_TARGET {
+            "  (coordinator)"
+        } else {
+            ""
+        };
+        writeln!(writer, "  {:<20} {:<24} {applied}{note}", target.id, model)?;
     }
     Ok(())
 }
@@ -1821,5 +1969,189 @@ hats:
         );
 
         assert!(!presets.iter().any(|p| p.name == "random"));
+    }
+}
+
+#[cfg(test)]
+mod fragment_report_tests {
+    use super::*;
+
+    /// Loads YAML the way `ralph hats validate` does (parse, normalize,
+    /// validate) and returns the captured validate output.
+    fn validate_yaml(yaml: &str) -> String {
+        let mut config = RalphConfig::parse_yaml(yaml).expect("parse");
+        config.normalize();
+        config.validate().expect("valid config");
+        let registry = HatRegistry::from_config(&config);
+        let mut buf = Vec::new();
+        validate_hats(&mut buf, &config, &registry, false, None).expect("validate");
+        String::from_utf8(buf).unwrap()
+    }
+
+    /// The fragment report line for one target (`planner`, `ralph`, ...).
+    fn report_line<'a>(output: &'a str, target: &str) -> &'a str {
+        let section = output
+            .split_once("Fragments:\n")
+            .unwrap_or_else(|| panic!("no Fragments section:\n{output}"))
+            .1;
+        section
+            .lines()
+            .take_while(|l| !l.trim().is_empty())
+            .find(|l| l.split_whitespace().next() == Some(target))
+            .unwrap_or_else(|| panic!("no report line for {target}:\n{output}"))
+    }
+
+    const YAML: &str = r#"
+cli:
+  backend: claude
+hats:
+  planner:
+    name: Planner
+    description: Plans
+    triggers: ["plan.start"]
+    publishes: ["plan.ready"]
+    model: claude-fable-5-2
+  builder:
+    name: Builder
+    description: Builds
+    triggers: ["plan.ready"]
+    publishes: ["build.done"]
+    model: claude-opus-5-5
+  critic:
+    name: Critic
+    description: Reviews
+    triggers: ["build.done"]
+fragments:
+  - models: ["claude-fable-*"]
+    text: "FABLE"
+  - models: ["claude-opus-*"]
+    hats: [builder, ralph]
+    text: "OPUS"
+  - models: ["claude-fabel-*", "gpt-?"]
+    hats: [planner]
+    text: "TYPO"
+"#;
+
+    #[test]
+    fn matching_fragments_are_reported_against_the_right_hat() {
+        let output = validate_yaml(YAML);
+        let planner = report_line(&output, "planner");
+        assert!(planner.contains("claude-fable-5-2"), "{planner}");
+        assert!(planner.contains("fragments[0]"), "{planner}");
+        assert!(!planner.contains("fragments[1]") && !planner.contains("fragments[2]"));
+
+        let builder = report_line(&output, "builder");
+        assert!(builder.contains("claude-opus-5-5"), "{builder}");
+        assert!(builder.contains("fragments[1]"), "{builder}");
+        assert!(!builder.contains("fragments[0]"), "{builder}");
+
+        // No cli.model, so the coordinator (targeted by fragments[1]) has
+        // no model and matches nothing.
+        let coordinator = report_line(&output, "ralph");
+        assert!(coordinator.contains("(no model)"), "{coordinator}");
+        assert!(!coordinator.contains("fragments["), "{coordinator}");
+    }
+
+    #[test]
+    fn hat_with_no_model_has_nothing_reported_as_matched() {
+        // AC6: neither the critic nor `cli` sets a model.
+        let output = validate_yaml(YAML);
+        let critic = report_line(&output, "critic");
+        assert!(critic.contains("no model"), "{critic}");
+        assert!(!critic.contains("fragments["), "{critic}");
+    }
+
+    #[test]
+    fn unmatched_fragment_warns_with_its_index_and_patterns() {
+        // AC9
+        let output = validate_yaml(YAML);
+        let warning = output
+            .lines()
+            .find(|l| l.contains("[warn]") && l.contains("fragments[2]"))
+            .unwrap_or_else(|| panic!("no warning for fragments[2]:\n{output}"));
+        assert!(warning.contains("claude-fabel-*"), "{warning}");
+        assert!(warning.contains("gpt-?"), "{warning}");
+        assert!(
+            !output
+                .lines()
+                .any(|l| l.contains("[warn]") && l.contains("fragments[0]")),
+            "{output}"
+        );
+        assert!(output.contains("Result: Valid (1 warnings)"), "{output}");
+    }
+
+    #[test]
+    fn fragment_naming_an_unknown_hat_warns() {
+        let yaml = YAML
+            .replace("hats: [planner]", "hats: [plannr]")
+            .replace(r#"["claude-fabel-*", "gpt-?"]"#, r#"["claude-fable-*"]"#);
+        let output = validate_yaml(&yaml);
+        let warning = output
+            .lines()
+            .find(|l| l.contains("[warn]") && l.contains("fragments[2]"))
+            .unwrap_or_else(|| panic!("no warning for fragments[2]:\n{output}"));
+        assert!(warning.contains("plannr"), "{warning}");
+    }
+
+    #[test]
+    fn config_without_fragments_prints_no_fragment_report() {
+        let yaml = YAML.split("fragments:").next().unwrap();
+        let output = validate_yaml(yaml);
+        assert!(!output.contains("Fragments:"), "{output}");
+        assert!(output.contains("Result: Valid\n"), "{output}");
+    }
+
+    #[test]
+    fn config_that_run_rejects_fails_validate() {
+        // A fragment naming a script hat fails `ralph run` at load (AC8);
+        // validate must not call that config valid.
+        let advance = "  advance:\n    name: Advance\n    description: Script\n    triggers: [\"x\"]\n    run: \"true\"\nfragments:\n";
+        let yaml = YAML
+            .replacen("fragments:\n", advance, 1)
+            .replace("hats: [builder, ralph]", "hats: [advance]");
+        let mut config = RalphConfig::parse_yaml(&yaml).expect("parse");
+        config.normalize();
+        assert!(config.validate().is_err(), "fixture must be invalid");
+        let registry = HatRegistry::from_config(&config);
+        let mut buf = Vec::new();
+        let result = validate_hats(&mut buf, &config, &registry, false, None);
+        let output = String::from_utf8(buf).unwrap();
+        assert!(result.is_err(), "{output}");
+        let error = output
+            .lines()
+            .find(|l| l.contains("[err]"))
+            .unwrap_or_else(|| panic!("no [err] line:\n{output}"));
+        assert!(
+            error.contains("advance") && error.contains("fragments"),
+            "{error}"
+        );
+        assert!(output.contains("Result: Invalid (1 errors"), "{output}");
+    }
+
+    #[test]
+    fn solo_mode_still_reports_coordinator_fragments() {
+        let yaml = r#"
+cli:
+  backend: claude
+  model: claude-fable-5-2
+fragments:
+  - models: ["claude-fable-*"]
+    hats: [ralph]
+    text: "COORD"
+  - models: ["claude-opus-*"]
+    text: "NEVER"
+"#;
+        let output = validate_yaml(yaml);
+        assert!(output.contains("No hats configured"), "{output}");
+        assert!(
+            report_line(&output, "ralph").contains("fragments[0]"),
+            "{output}"
+        );
+        assert!(
+            output
+                .lines()
+                .any(|l| l.contains("[warn]") && l.contains("fragments[1]")),
+            "{output}"
+        );
     }
 }

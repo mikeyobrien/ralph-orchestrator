@@ -347,11 +347,7 @@ impl CliBackend {
     /// `--effort` already present in the args wins. Returns whether the level
     /// was applied, so callers can note when a backend ignores it.
     pub fn apply_effort(&mut self, effort: &str) -> bool {
-        let is_claude = std::path::Path::new(&self.command)
-            .file_name()
-            .and_then(|s| s.to_str())
-            == Some("claude");
-        if !is_claude {
+        if self.command_name() != Some("claude") {
             return false;
         }
         if self
@@ -364,6 +360,40 @@ impl CliBackend {
         self.args.push("--effort".to_string());
         self.args.push(effort.to_string());
         true
+    }
+
+    /// Applies a model ID using the backend's own flag.
+    ///
+    /// Claude and Kiro (`kiro`, `kiro-acp`) take `--model <id>`; Codex takes
+    /// `-m <id>`. An explicit model flag already present in the args wins.
+    /// Returns whether the backend has a model flag, so callers can note when
+    /// a backend ignores the model.
+    pub fn apply_model(&mut self, model: &str) -> bool {
+        let command = self.command_name();
+        let flag = match command {
+            Some("claude" | "kiro-cli") => "--model",
+            Some("codex") => "-m",
+            _ => return false,
+        };
+        let is_codex = command == Some("codex");
+        if self
+            .args
+            .iter()
+            .any(|a| a == "--model" || a.starts_with("--model=") || (is_codex && a == "-m"))
+        {
+            return true;
+        }
+        self.args.push(flag.to_string());
+        self.args.push(model.to_string());
+        true
+    }
+
+    /// The executable's file name, so a path override (`/opt/bin/claude`)
+    /// still identifies the backend.
+    fn command_name(&self) -> Option<&str> {
+        std::path::Path::new(&self.command)
+            .file_name()
+            .and_then(|s| s.to_str())
     }
 
     /// Creates the Gemini backend.
@@ -1506,6 +1536,7 @@ mod tests {
             prompt_mode: "arg".to_string(),
             prompt_flag: Some("-p".to_string()),
             effort: None,
+            model: None,
             ..Default::default()
         };
         let backend = CliBackend::from_config(&config).unwrap();
@@ -1524,6 +1555,7 @@ mod tests {
             prompt_mode: "arg".to_string(),
             prompt_flag: Some("--prompt".to_string()),
             effort: None,
+            model: None,
             ..Default::default()
         };
         let backend = CliBackend::from_config(&config).unwrap();
@@ -1542,6 +1574,7 @@ mod tests {
             prompt_mode: "arg".to_string(),
             prompt_flag: None,
             effort: None,
+            model: None,
             ..Default::default()
         };
         let backend = CliBackend::from_config(&config).unwrap();
@@ -2550,5 +2583,97 @@ mod tests {
             .read_to_string(&mut content)
             .unwrap();
         assert_eq!(content, prompt);
+    }
+
+    /// The value following `flag` in `args`, if present.
+    fn flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|i| args.get(i + 1))
+            .map(String::as_str)
+    }
+
+    #[test]
+    fn test_apply_model_uses_each_backends_flag() {
+        for (name, flag) in [
+            ("claude", "--model"),
+            ("codex", "-m"),
+            ("kiro", "--model"),
+            ("kiro-acp", "--model"),
+        ] {
+            let mut backend = CliBackend::from_name(name).unwrap();
+            assert!(backend.apply_model("claude-fable-5-2"), "{name}");
+            assert_eq!(
+                flag_value(&backend.args, flag),
+                Some("claude-fable-5-2"),
+                "{name}: {:?}",
+                backend.args
+            );
+            // The model is passed once, through that one flag.
+            assert_eq!(
+                backend
+                    .args
+                    .iter()
+                    .filter(|a| *a == "claude-fable-5-2")
+                    .count(),
+                1,
+                "{name}: {:?}",
+                backend.args
+            );
+            let (_, built, _, _) = backend.build_command("prompt", false);
+            assert_eq!(flag_value(&built, flag), Some("claude-fable-5-2"), "{name}");
+        }
+    }
+
+    #[test]
+    fn test_apply_model_honors_command_path_override() {
+        let config = CliConfig {
+            backend: "claude".to_string(),
+            command: Some("/opt/tools/claude".to_string()),
+            ..CliConfig::default()
+        };
+        let mut backend = CliBackend::from_config(&config).unwrap();
+        assert!(backend.apply_model("claude-opus-5-5"));
+        assert_eq!(
+            flag_value(&backend.args, "--model"),
+            Some("claude-opus-5-5")
+        );
+    }
+
+    #[test]
+    fn test_apply_model_explicit_flag_in_args_wins() {
+        for (name, explicit) in [
+            ("claude", vec!["--model", "X"]),
+            ("claude", vec!["--model=X"]),
+            ("codex", vec!["-m", "X"]),
+            ("codex", vec!["--model", "X"]),
+            ("kiro", vec!["--model", "X"]),
+        ] {
+            let explicit: Vec<String> = explicit.into_iter().map(String::from).collect();
+            let mut backend = CliBackend::from_name_with_args(name, &explicit).unwrap();
+            let before = backend.args.clone();
+            assert!(backend.apply_model("Y"), "{name} {explicit:?}");
+            assert_eq!(backend.args, before, "{name} {explicit:?}");
+            assert!(!backend.args.iter().any(|a| a.contains('Y')));
+        }
+    }
+
+    #[test]
+    fn test_apply_model_ignored_by_backends_without_model_flag() {
+        for name in [
+            "gemini", "amp", "copilot", "opencode", "pi", "roo", "omp", "forge",
+        ] {
+            let mut backend = CliBackend::from_name(name).unwrap();
+            let before = backend.args.clone();
+            assert!(!backend.apply_model("claude-fable-5-2"), "{name}");
+            assert_eq!(backend.args, before, "{name}");
+        }
+        let mut custom = CliBackend::from_hat_backend(&HatBackend::Custom {
+            command: "my-agent".to_string(),
+            args: vec!["--fast".to_string()],
+        })
+        .unwrap();
+        assert!(!custom.apply_model("claude-fable-5-2"));
+        assert_eq!(custom.args, vec!["--fast".to_string()]);
     }
 }

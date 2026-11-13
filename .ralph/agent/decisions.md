@@ -146,3 +146,57 @@ Use this template for new entries:
 - Reasoning: (A): the override's documented purpose is correcting a wrong backend default (e.g. 1M-window users); the stream reports the running model's actual window, so it can't be the wrong one, while a stale override can be. The task text also names `resolve_context_window_for_backend` (which includes the override) as the fallback for when the stream reports nothing. The window only drives display and performance.jsonl percentages, so the stakes of the choice are low. (B) is wrong when a helper/subagent model has the larger window than the session's model. (C) would leave PTY Claude runs reporting 200000 for the same stream.
 - Reversibility: High; swapping (A) in is a one-line change in `reported_or_configured_context_window`'s callers.
 - Timestamp: 2026-11-12T22:30:00Z
+
+## DEC-018 (2026-11-12T22:34Z)
+- Decision: Wave workers resolve their backend through the same `resolve_hat_backend` as the hat's own iteration (hat backend, then `backend_args`, then model, then effort; hat-level else `cli`).
+- Chosen Option: One shared resolver; `execute_wave` takes `&CliConfig`.
+- Confidence: 80
+- Alternatives Considered: (A) Add only `hat.model` to the wave path, leaving it applying effort before `backend_args` and ignoring `cli.effort`. (B) Pre-apply `cli.model` to the global backend (rejected: it would then count as an explicit flag and beat `hat.model`).
+- Reasoning: A wave worker should launch exactly what its hat launches. The old wave path applied effort before `backend_args` (so an explicit `--effort` there was duplicated) and never used `cli.effort`; sharing the resolver fixes both and keeps "explicit args win" true for model too.
+- Reversibility: High
+- Timestamp: 2026-11-12T22:34Z
+
+## DEC-019 (2026-11-12T22:34Z)
+- Decision: `model` on a script hat warns as ignored, exactly like `effort`.
+- Chosen Option: Add `("model", ...)` to the script-hat ignored-field warnings.
+- Confidence: 90
+- Alternatives Considered: Reject it as a config error.
+- Reasoning: Matches `effort`/`backend_args` handling (warn, not error); a script hat launches no backend.
+- Reversibility: High
+- Timestamp: 2026-11-12T22:34Z
+
+## DEC-020 (2026-11-12T22:52Z)
+- Decision: For fragment matching, a model flag already in the hat's resolved backend args wins over `hat.model`/`cli.model`.
+- Chosen Option: args flag (`--model`, `--model=`, `-m`) → `hat.model` → `cli.model`; a dangling flag means "unknown model" (no match).
+- Confidence: 80
+- Alternatives Considered: The plan's order (`hat.model` → `cli.model` → args → cli args), read literally from spec §1 "ralph uses `model:` when set, else a `--model` value in args".
+- Reasoning: Step 1 made an explicit flag in args win on the command line (AC2). With the plan's order, a hat pinning `--model claude-fable-5-2` in `backend_args` under a `cli.model: claude-opus-5-5` default would run Fable but get Opus fragments. Matching the model that actually runs keeps goal 3 ("swapping a hat's model swaps its fragments") true. All spec ACs hold under either order. Covered by `explicit_model_flag_in_args_decides_the_match_over_model_field`.
+- Reversibility: High; one match statement in `RalphConfig::hat_model`.
+- Timestamp: 2026-11-12T22:52Z
+
+## DEC-021 (2026-11-12T22:52Z)
+- Decision: Keep fragments idempotent across a serialize→reload with a serialized `_fragments_applied` marker; let hats files and builtin presets carry `fragments:`, appended after core fragments.
+- Chosen Option: Marker field skipped when false; `fragments` added to the hats-file allowlist, the preset overlay extraction, and `merge_hats_overlay` (append).
+- Confidence: 75
+- Alternatives Considered: (A) Drain `fragments` after resolution like `extra_instructions` — loses the data `validate()` (script-hat check), the coordinator prompt, and `hats validate` need. (B) No marker — the bot daemon's `write_temp_config_for_daemon` round-trip would append every fragment twice. (C) Hats-file fragments replace core fragments like `hats:` does — silently drops a user's core-config fragments (e.g. coordinator guidance).
+- Reasoning: Without the overlay change, a builtin preset used as `-H builtin:<name>` silently dropped its `fragments:` (spec goal 2 says an embedded preset must be able to carry them) and a user hats file with `fragments:` was rejected.
+- Reversibility: High.
+- Timestamp: 2026-11-12T22:52Z
+
+## DEC-022 (2026-11-12T23:20Z)
+- Decision: `ralph hats validate` runs `RalphConfig::validate()` and reports a load error as an `[err]` check (exit non-zero).
+- Chosen Option: Check 0 in `validate_hats`, before the topology checks; also runs in solo mode when fragments exist.
+- Confidence: 80
+- Alternatives Considered: (A) Leave it: `load_config_for_preflight` only normalizes, so a fragment naming a script hat (AC8) showed up merely as a "matches no hat" warning and `Result: Valid`, while `ralph run` rejects the same config. (B) Re-implement the script-hat check inside the fragment report — duplicates `validate_fragments`, and misses every other load error.
+- Reasoning: A validator that passes configs `run` rejects is worse than none; human guidance for this run is "focus on error handling". Config-level *warnings* from `validate()` are not printed here (`ralph run` already prints them), to keep the report about hats.
+- Reversibility: High; one `if let` in `validate_hats`.
+- Timestamp: 2026-11-12T23:20Z
+
+## DEC-023 (2026-11-12T23:15Z)
+- Decision: Resolve the open `fix:gitignore-memories-test` task by updating `integration_gitignore.rs` to expect `.ralph/agent/memories.md` ignored, rather than failing the task or reverting the gitignore.
+- Chosen Option: Route the task to the Builder (`tasks.ready`); move `memories.md` from the "visible to git" list to the ignored list in the test.
+- Confidence: 80
+- Alternatives Considered: (A) `task fail` it as out of scope and re-emit LOOP_COMPLETE — leaves a red `cargo test -p ralph-cli` on a branch whose own commit (df75a81) broke it, so the PR fails CI. (B) Revert df75a81 — undoes a deliberate human commit made 21s before this loop started.
+- Reasoning: The iteration-8 LOOP_COMPLETE was rejected because this task is open. df75a81 is not on `main`; it is a human commit on this branch, so the failure ships with this branch. The test is stale relative to an intentional change; fixing it is one list edit.
+- Reversibility: High; one test edit.
+- Timestamp: 2026-11-12T23:15Z

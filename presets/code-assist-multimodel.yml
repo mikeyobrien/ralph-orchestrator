@@ -23,7 +23,8 @@
 #   backend with:
 #     backend:
 #       type: "codex"
-#       args: ["-m", "<codex-model-id>", "-c", 'model_reasoning_effort="high"']
+#       args: ["-c", 'model_reasoning_effort="high"']
+#     model: "<codex-model-id>"
 #   and remove its `effort` line (Codex takes effort through -c).
 #
 # Requirements: the `claude` CLI with access to the model ids below. Edit them to match
@@ -59,9 +60,8 @@ hats:
     triggers: ["build.start", "plan.revise"]
     publishes: ["tasks.ready", "review.passed"]
     default_publishes: "tasks.ready"
-    backend:
-      type: "claude"
-      args: ["--model", "claude-fable-5-2"]
+    backend: "claude"
+    model: "claude-fable-5-2"
     effort: "high"
     instructions: |
       ## PLANNER MODE
@@ -89,9 +89,8 @@ hats:
     triggers: ["tasks.ready", "review.rejected", "finalization.failed"]
     publishes: ["review.ready", "build.blocked", "plan.revise"]
     default_publishes: "review.ready"
-    backend:
-      type: "claude"
-      args: ["--model", "claude-opus-5-5"]
+    backend: "claude"
+    model: "claude-opus-5-5"
     effort: "high"
     instructions: |
       ## BUILDER MODE
@@ -116,9 +115,8 @@ hats:
     triggers: ["review.ready"]
     publishes: ["review.rejected", "tasks.ready", "plan.revise", "review.passed"]
     default_publishes: "review.rejected"
-    backend:
-      type: "claude"
-      args: ["--model", "claude-opus-5-5"]
+    backend: "claude"
+    model: "claude-opus-5-5"
     effort: "high"
     instructions: |
       ## CRITIC MODE
@@ -149,9 +147,8 @@ hats:
     triggers: ["review.passed"]
     publishes: ["finalization.failed", "LOOP_COMPLETE"]
     default_publishes: "finalization.failed"
-    backend:
-      type: "claude"
-      args: ["--model", "claude-opus-5-5"]
+    backend: "claude"
+    model: "claude-opus-5-5"
     effort: "high"
     instructions: |
       ## FINALIZER MODE

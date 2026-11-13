@@ -324,7 +324,14 @@ impl EventLoop {
             config.event_loop.starting_event.clone(),
         )
         .with_memories_enabled(config.memories.enabled)
-        .with_skill_index(skill_index);
+        .with_skill_index(skill_index)
+        .with_coordinator_fragments(
+            config
+                .coordinator_fragments()
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+        );
 
         // Read timestamped events path from marker file, fall back to default
         // The marker file contains a relative path like ".ralph/events-20260127-123456.jsonl"
@@ -438,7 +445,14 @@ impl EventLoop {
             config.event_loop.starting_event.clone(),
         )
         .with_memories_enabled(config.memories.enabled)
-        .with_skill_index(skill_index);
+        .with_skill_index(skill_index)
+        .with_coordinator_fragments(
+            config
+                .coordinator_fragments()
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+        );
 
         // Read events path from marker file, fall back to default if not present
         // The marker file is written by run_loop_impl() at run startup
