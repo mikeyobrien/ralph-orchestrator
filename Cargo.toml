@@ -186,6 +186,8 @@ install-updater = false
 # aarch64-linux uses cross-compilation from x86_64 runner
 [workspace.metadata.dist.github-custom-runners]
 aarch64-unknown-linux-musl = "ubuntu-latest"
+# GitHub no longer serves macos-14, which dist 0.30.3 still picks by default
+aarch64-apple-darwin = "macos-15"
 
 # The profile that 'dist' will build with
 [profile.dist]
