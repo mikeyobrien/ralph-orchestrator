@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2.12.0] - 2026-11-13
+
 ### Added
 
 - Cite NVIDIA’s “You Don’t Need Long Context” (arXiv 2611.05306) in the README as measured prior-art validation of Ralph’s reset-per-iteration context pattern.
@@ -310,7 +312,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Modularized codebase and fixed TUI mode
 
-[Unreleased]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.11.0...HEAD
+[Unreleased]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.12.0...HEAD
+[2.12.0]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.11.0...v2.12.0
 [2.11.0]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.10.1...v2.11.0
 [2.10.1]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.10.0...v2.10.1
 [2.10.0]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.9.3...v2.10.0
