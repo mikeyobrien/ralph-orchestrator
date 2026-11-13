@@ -4,6 +4,35 @@ All notable changes to ralph-orchestrator are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.0] - 2026-11-12
+
+### Added
+
+- Script hats and event gates (#420).
+- Per-hat `effort` setting, with presets and the core prompt rewritten for current Claude models (#415).
+- OMP (oh-my-pi) backend (#358).
+- Native Ralph hats for dsh, with validated draft restoration.
+- `ralph clean --events` (#357).
+- Opt-in `ralph hats validate --instructions` checks (#356).
+- `ralph doctor` recognizes OrcaRouter as a named provider for models.dev backends (#364).
+- Dev CLI builds report their Git hash in the version string (#396).
+
+### Changed
+
+- The build/review preset drops per-task bookkeeping and replans on signal (#416).
+- Plugin and repo skills updated with lessons from live Ralph loops (#417).
+
+### Fixed
+
+- Headless runs report cost and token metrics; tests isolate event files; artifacts are auto-committed (#423).
+- Termination hook payloads report the hat that actually executed (#422).
+- A completion signal on the final iteration takes precedence over budget limits (#421).
+- Post-event handoff success is preserved (#371).
+- Spawned run stderr is drained continuously in the API (#373).
+- The Claude adapter waits for stream result events (#355).
+- MCP tool schema roots are inlined instead of emitted as bare `$ref` (#351).
+- Clippy lints new in recent stable Rust (#378, #419).
+
 ## [2.10.1] - 2026-06-22
 
 ### Fixed
@@ -266,7 +295,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Modularized codebase and fixed TUI mode
 
-[Unreleased]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.10.1...HEAD
+[Unreleased]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.11.0...HEAD
+[2.11.0]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.10.1...v2.11.0
 [2.10.1]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.10.0...v2.10.1
 [2.10.0]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.9.3...v2.10.0
 [2.9.3]: https://github.com/mikeyobrien/ralph-orchestrator/compare/v2.9.2...v2.9.3
