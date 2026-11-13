@@ -147,7 +147,7 @@ Use this template for new entries:
 - Reversibility: High; swapping (A) in is a one-line change in `reported_or_configured_context_window`'s callers.
 - Timestamp: 2026-11-12T22:30:00Z
 
-## DEC-012 (2026-11-12T22:34Z)
+## DEC-018 (2026-11-12T22:34Z)
 - Decision: Wave workers resolve their backend through the same `resolve_hat_backend` as the hat's own iteration (hat backend, then `backend_args`, then model, then effort; hat-level else `cli`).
 - Chosen Option: One shared resolver; `execute_wave` takes `&CliConfig`.
 - Confidence: 80
@@ -156,7 +156,7 @@ Use this template for new entries:
 - Reversibility: High
 - Timestamp: 2026-11-12T22:34Z
 
-## DEC-013 (2026-11-12T22:34Z)
+## DEC-019 (2026-11-12T22:34Z)
 - Decision: `model` on a script hat warns as ignored, exactly like `effort`.
 - Chosen Option: Add `("model", ...)` to the script-hat ignored-field warnings.
 - Confidence: 90
@@ -165,7 +165,7 @@ Use this template for new entries:
 - Reversibility: High
 - Timestamp: 2026-11-12T22:34Z
 
-## DEC-014 (2026-11-12T22:52Z)
+## DEC-020 (2026-11-12T22:52Z)
 - Decision: For fragment matching, a model flag already in the hat's resolved backend args wins over `hat.model`/`cli.model`.
 - Chosen Option: args flag (`--model`, `--model=`, `-m`) → `hat.model` → `cli.model`; a dangling flag means "unknown model" (no match).
 - Confidence: 80
@@ -174,7 +174,7 @@ Use this template for new entries:
 - Reversibility: High; one match statement in `RalphConfig::hat_model`.
 - Timestamp: 2026-11-12T22:52Z
 
-## DEC-015 (2026-11-12T22:52Z)
+## DEC-021 (2026-11-12T22:52Z)
 - Decision: Keep fragments idempotent across a serialize→reload with a serialized `_fragments_applied` marker; let hats files and builtin presets carry `fragments:`, appended after core fragments.
 - Chosen Option: Marker field skipped when false; `fragments` added to the hats-file allowlist, the preset overlay extraction, and `merge_hats_overlay` (append).
 - Confidence: 75
@@ -183,7 +183,7 @@ Use this template for new entries:
 - Reversibility: High.
 - Timestamp: 2026-11-12T22:52Z
 
-## DEC-016 (2026-11-12T23:20Z)
+## DEC-022 (2026-11-12T23:20Z)
 - Decision: `ralph hats validate` runs `RalphConfig::validate()` and reports a load error as an `[err]` check (exit non-zero).
 - Chosen Option: Check 0 in `validate_hats`, before the topology checks; also runs in solo mode when fragments exist.
 - Confidence: 80
@@ -192,7 +192,7 @@ Use this template for new entries:
 - Reversibility: High; one `if let` in `validate_hats`.
 - Timestamp: 2026-11-12T23:20Z
 
-## DEC-017 (2026-11-12T23:15Z)
+## DEC-023 (2026-11-12T23:15Z)
 - Decision: Resolve the open `fix:gitignore-memories-test` task by updating `integration_gitignore.rs` to expect `.ralph/agent/memories.md` ignored, rather than failing the task or reverting the gitignore.
 - Chosen Option: Route the task to the Builder (`tasks.ready`); move `memories.md` from the "visible to git" list to the ignored list in the test.
 - Confidence: 80

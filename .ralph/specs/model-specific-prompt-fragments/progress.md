@@ -83,7 +83,7 @@ What landed:
 - `preflight.rs`: hats files and builtin presets carry `fragments:` (appended after core fragments)
   instead of rejecting / silently dropping them.
 - Docs: `docs/guide/configuration.md` (## Fragments), `skills/ralph-hats/references/schema.md`.
-- Decisions DEC-014 (args flag wins for matching, mirroring the command line) and DEC-015
+- Decisions DEC-020 (args flag wins for matching, mirroring the command line) and DEC-021
   (round-trip marker; overlay append).
 
 For step 3: coordinator text is `config.coordinator_fragments()`; per-hat report is
@@ -104,7 +104,7 @@ Logs: `logs/critic-step2-*.log`, `logs/critic-step2-smoke-run.out`. Re-ran indep
   in that order, no `HATS-OPUS-FRAG` (AC5 + overlay append end to end). Adversarial: hats-file fragment naming
   a script hat → load fails naming `advance` and `fragments`; `fragments:` as a mapping in a hats file →
   `hats 'fragments' must be a list when provided`.
-- Reviewed DEC-014 (args flag wins for matching): consistent with `resolve_hat_backend`, all ACs hold. Accepted.
+- Reviewed DEC-020 (args flag wins for matching): consistent with `resolve_hat_backend`, all ACs hold. Accepted.
 - Checked double-`normalize()` paths (`start_loop`, bot daemon temp-config round trip): marker keeps it to
   one application; daemon reload passes no hats source, so the marker never suppresses fresh hats.
 
@@ -131,7 +131,7 @@ Logs: `logs/step03-*.log`.
 - Real binary, validate (`logs/step03-validate-smoke.log`): report lists each hat + `ralph (coordinator)` with model
   and `fragments[i]`, script hat shown as `(script hat) none`, typo glob warns with index, patterns, and hats.
   Adversarial: a fragment naming a script hat used to print `Result: Valid` (only a "matches no hat" warning) though
-  `ralph run` rejects it → now `[err] Config is invalid: fragments[1].hats names script hat 'advance'…`, exit 1 (DEC-016).
+  `ralph run` rejects it → now `[err] Config is invalid: fragments[1].hats names script hat 'advance'…`, exit 1 (DEC-022).
 
 New tests:
 - `tests/prompt_fragments.rs`: `coordinator_fragment_reaches_the_coordinator_prompt_on_a_matching_cli_model` (AC7, also
@@ -147,7 +147,7 @@ active), wired at both `EventLoop` constructors; `validate_hats` split (`check_t
 `check_unmatched_fragments`, `print_fragment_report`, and a `config.validate()` check. Docs: configuration.md
 ("The coordinator", "Checking what applies"), ralph-hats schema.md.
 
-### fix:gitignore-memories-test (task-1794522885-98f8, DEC-017)
+### fix:gitignore-memories-test (task-1794522885-98f8, DEC-023)
 
 `integration_gitignore.rs` moved `.ralph/agent/memories.md` from the "visible to git" list to the ignored list,
 matching df75a81 (human commit on this branch; `git ls-files .ralph/agent` now tracks only `decisions.md`).
@@ -176,7 +176,7 @@ verification that backed closing it._
 - `code-assist:model-specific-prompt-fragments:step-03:coordinator-and-validate` (task-1794522145-2453) —
   `HatlessRalph::with_coordinator_fragments` set at both `EventLoop` constructors, rendered only on coordinator
   iterations; `ralph hats validate` Fragments report, unmatched-fragment warnings, and a `config.validate()` error
-  check (DEC-016). Closed by Critic: fmt/clippy/core/adapters/sync pass; ralph-cli single-thread `--no-fail-fast`
+  check (DEC-022). Closed by Critic: fmt/clippy/core/adapters/sync pass; ralph-cli single-thread `--no-fail-fast`
   fails only the known `integration_gitignore` (logs `logs/critic3-*.log`). Real binary: `hats validate` on a mixed
   config reports per-hat/coordinator indices and warns `fragments[2] ... (models: ["claud-*"])`; a fragment naming a
   script hat prints `[err]` and exits 1, matching `ralph run`'s rejection.
