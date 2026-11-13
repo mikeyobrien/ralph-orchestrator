@@ -147,6 +147,17 @@ active), wired at both `EventLoop` constructors; `validate_hats` split (`check_t
 `check_unmatched_fragments`, `print_fragment_report`, and a `config.validate()` check. Docs: configuration.md
 ("The coordinator", "Checking what applies"), ralph-hats schema.md.
 
+### fix:gitignore-memories-test (task-1794522885-98f8, DEC-017)
+
+`integration_gitignore.rs` moved `.ralph/agent/memories.md` from the "visible to git" list to the ignored list,
+matching df75a81 (human commit on this branch; `git ls-files .ralph/agent` now tracks only `decisions.md`).
+- Before: `cargo test -p ralph-cli --test integration_gitignore` fails at `:82` "memories.md should be visible to git"
+  (`logs/gitignore-before.log`).
+- After: same test passes (`logs/gitignore-after.log`); `cargo fmt --all --check` clean; `cargo clippy -p ralph-cli
+  --all-targets --all-features -- -D warnings` clean (`logs/gitignore-clippy.log`).
+- `cargo test -p ralph-cli --no-fail-fast -- --test-threads=1`: exit 0, all 26 test binaries ok, no failures
+  (`logs/gitignore-cli-full.log`). The ralph-cli suite is fully green for the first time on this branch.
+
 ## Completed Tasks
 
 _Builder and Critic append one entry per closed task: task key, what landed, and the
@@ -161,6 +172,14 @@ verification that backed closing it._
   config-order append after `extra_instructions`, script hats skipped/rejected, malformed fragments rejected),
   coordinator fragments exposed for step 3, hats files/presets carry fragments, docs. Closed by Critic after
   the Step 2 verification above.
+
+- `code-assist:model-specific-prompt-fragments:step-03:coordinator-and-validate` (task-1794522145-2453) —
+  `HatlessRalph::with_coordinator_fragments` set at both `EventLoop` constructors, rendered only on coordinator
+  iterations; `ralph hats validate` Fragments report, unmatched-fragment warnings, and a `config.validate()` error
+  check (DEC-016). Closed by Critic: fmt/clippy/core/adapters/sync pass; ralph-cli single-thread `--no-fail-fast`
+  fails only the known `integration_gitignore` (logs `logs/critic3-*.log`). Real binary: `hats validate` on a mixed
+  config reports per-hat/coordinator indices and warns `fragments[2] ... (models: ["claud-*"])`; a fragment naming a
+  script hat prints `[err]` and exits 1, matching `ralph run`'s rejection.
 
 ## Follow-ups
 
@@ -185,3 +204,20 @@ verification that backed closing it._
   fragments match `claude-opus-5-5` for a gemini hat, while `apply_model` never passes it to gemini. Spec §1 says
   "hat.model, else cli.model" literally, so this follows the spec; consider only inheriting `cli.model` when the hat
   uses the global backend.
+- **minor (step 3, validate):** a fragment naming a script hat gets both the `[err]` load error and a redundant
+  `[warn] fragments[0] matches no hat` line. Harmless; could skip the warning when `config.validate()` failed.
+- **follow-up for the human (step 1 behavior, spec-literal):** the `cli.model` fallback above also reaches the
+  command line, not only matching: `resolve_hat_backend` passes `cli.model` to a hat with its own `backend:`, so
+  `cli: {backend: claude, model: claude-fable-5-2}` + a `backend: codex` hat with no `model:` spawns codex with
+  `-m claude-fable-5-2`. Seen via `hats validate` (critic hat reported as `claude-fable-5-2`). Fix if wanted: inherit
+  `cli.model` only when the hat uses the global backend, in both `resolve_hat_backend` and `RalphConfig::hat_model`.
+
+### Finalizer
+
+Logs: `logs/final-*.log`. Against `de2ce38`: fmt, clippy (`-D warnings`), sync check, `ralph-core`, `ralph-adapters` pass;
+`ralph-cli --no-fail-fast -- --test-threads=1` fails only the pre-existing `integration_gitignore`.
+Real binary, full loop (`/var/tmp/final-frag-run.sh`, fake `claude` that hands off planner → builder): fable Planner gets the
+anchored fragment, opus Builder does not, coordinator gets the `hats: [ralph]` fragment on fable `cli.model` (AC3, AC7, anchors);
+switching to opus removes every fragment (AC4); each argv has exactly one `--model`. `hats validate` reports per target and warns
+with index + patterns (AC9). Adversarial: fragment naming a script hat → `ralph run` exit 1 naming the hat and `fragments` (AC8);
+no-model hat with `models: ["*"]` → `(no model) none` (AC6). All ACs met; LOOP_COMPLETE.

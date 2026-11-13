@@ -191,3 +191,12 @@ Use this template for new entries:
 - Reasoning: A validator that passes configs `run` rejects is worse than none; human guidance for this run is "focus on error handling". Config-level *warnings* from `validate()` are not printed here (`ralph run` already prints them), to keep the report about hats.
 - Reversibility: High; one `if let` in `validate_hats`.
 - Timestamp: 2026-11-12T23:20Z
+
+## DEC-017 (2026-11-12T23:15Z)
+- Decision: Resolve the open `fix:gitignore-memories-test` task by updating `integration_gitignore.rs` to expect `.ralph/agent/memories.md` ignored, rather than failing the task or reverting the gitignore.
+- Chosen Option: Route the task to the Builder (`tasks.ready`); move `memories.md` from the "visible to git" list to the ignored list in the test.
+- Confidence: 80
+- Alternatives Considered: (A) `task fail` it as out of scope and re-emit LOOP_COMPLETE — leaves a red `cargo test -p ralph-cli` on a branch whose own commit (df75a81) broke it, so the PR fails CI. (B) Revert df75a81 — undoes a deliberate human commit made 21s before this loop started.
+- Reasoning: The iteration-8 LOOP_COMPLETE was rejected because this task is open. df75a81 is not on `main`; it is a human commit on this branch, so the failure ships with this branch. The test is stale relative to an intentional change; fixing it is one list edit.
+- Reversibility: High; one test edit.
+- Timestamp: 2026-11-12T23:15Z
