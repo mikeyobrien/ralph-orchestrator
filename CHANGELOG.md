@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Cite NVIDIA’s “You Don’t Need Long Context” (arXiv 2611.05306) in the README as measured prior-art validation of Ralph’s reset-per-iteration context pattern.
 
+### Fixed
+
+- Text backends such as Codex are no longer stopped a few seconds into an iteration when their output quotes the `Event emitted:` message, as Ralph's own prompt does. Only the line `ralph emit` prints now starts the post-event grace deadline.
+
 ## [2.11.0] - 2026-11-12
 
 ### Added
