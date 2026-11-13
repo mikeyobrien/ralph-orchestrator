@@ -40,6 +40,7 @@ mod task_cli;
 #[cfg(test)]
 mod test_support;
 mod tools;
+mod upgrade_notice;
 mod wave;
 mod web;
 mod web_robot_service;
@@ -1481,6 +1482,10 @@ async fn run_command(
 ) -> Result<()> {
     let mut config = preflight::load_config_for_preflight(config_sources, hats_source).await?;
 
+    // Checks in the background, at most once a day, for a later major version. The
+    // notice is printed after the run, and only when a person is watching.
+    let upgrade_notice = upgrade_notice::begin(args.rpc);
+
     // Handle --continue mode: check scratchpad exists before proceeding
     let resume = args.continue_mode;
     if resume {
@@ -1888,6 +1893,8 @@ async fn run_command(
             anyhow::bail!("Restart via single-command shell restart is only supported on Unix");
         }
     }
+
+    upgrade_notice.finish().await;
 
     let exit_code = reason.exit_code();
 

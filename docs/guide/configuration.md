@@ -777,6 +777,18 @@ core:
 | `RALPH_CONFIG` | Default config file path |
 | `RALPH_DIAGNOSTICS` | Enable diagnostics (`1`) |
 | `NO_COLOR` | Disable color output |
+| `RALPH_NO_UPDATE_CHECK` | Turn off the update check and the new-major notice (`1`) |
+
+## Update Check
+
+Ralph asks GitHub which releases exist and tells you about two different things:
+
+- **An update**: a newer release of the major version you run. The TUI header shows `[update 2.12.1]`.
+- **A later major version**: a release with breaking changes, which updating does not install. The TUI header shows `[3.0.0 is out: breaking changes]`, and after `ralph run` finishes Ralph prints a short notice with a link to that release's page.
+
+The notice after a run is for people. It is printed on stderr at most once a day, only when stderr is a terminal, and never with `--rpc`. `ralph emit` and `ralph tools`, which agents call inside a loop, never check and never print. Outside the TUI, Ralph asks GitHub at most once a day and keeps the answer in `~/.ralph/update-check.json`.
+
+Set `RALPH_NO_UPDATE_CHECK=1` to turn all of this off. It is also off when `CI` is set.
 
 ## Next Steps
 

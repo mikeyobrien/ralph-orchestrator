@@ -9,6 +9,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - Cite NVIDIA’s “You Don’t Need Long Context” (arXiv 2611.05306) in the README as measured prior-art validation of Ralph’s reset-per-iteration context pattern.
+- A notice when a later major version is out. It says the release has breaking changes and that updating does not install it, and links to the release's page. The TUI header shows it as its own badge; `ralph run` prints it after the run, at most once a day and only in a terminal. `RALPH_NO_UPDATE_CHECK=1` turns the update check off.
+
+### Changed
+
+- The TUI's update badge offers only releases of the major version you run. A later major version is no longer shown as an update.
 
 ## [2.11.0] - 2026-11-12
 
