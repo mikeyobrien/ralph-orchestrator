@@ -410,8 +410,19 @@ impl CliExecutor {
     }
 }
 
+/// Returns true when `line` is the success message `ralph emit` prints.
+///
+/// The message opens its line: `Event emitted: <topic>`, or `✓ Event emitted: <topic>`
+/// with colours. An agent may indent it or draw a border before it, so anything that is
+/// not a letter or digit may come first.
+///
+/// A line that only mentions the message does not count. Ralph's own prompt quotes it,
+/// and a text backend prints the prompt file when it reads it. Matching the phrase
+/// anywhere in a line started the grace deadline before such an agent had done any work.
 fn line_signals_event_emitted(line: &str) -> bool {
-    line.contains("Event emitted:")
+    strip_ansi_escapes::strip_str(line)
+        .split_once("Event emitted:")
+        .is_some_and(|(before, _)| !before.chars().any(char::is_alphanumeric))
 }
 
 async fn read_stream<R>(
@@ -753,6 +764,60 @@ mod tests {
             "Event-emitting backends should use the short post-event grace timeout instead of the full inactivity timeout"
         );
         assert!(result.output.contains("Event emitted: task.done"));
+    }
+
+    #[test]
+    fn test_line_signals_event_emitted_only_for_the_emit_message() {
+        // What `ralph emit` prints, plain and with colours.
+        assert!(line_signals_event_emitted("Event emitted: task.done"));
+        assert!(line_signals_event_emitted(
+            "\x1b[32m✓\x1b[0m Event emitted: task.done"
+        ));
+        // As an agent may show a command's output: indented, or inside a border.
+        assert!(line_signals_event_emitted("    Event emitted: task.done"));
+        assert!(line_signals_event_emitted("│ ✓ Event emitted: task.done"));
+
+        // Text that only mentions the message: the prompt's publishing guide, source
+        // code, and prose.
+        assert!(!line_signals_event_emitted(
+            "A successful `ralph emit` prints `Event emitted: <topic>`, so check for that line before you finish."
+        ));
+        assert!(!line_signals_event_emitted(
+            r#"println!("Event emitted: {}", args.topic);"#
+        ));
+        assert!(!line_signals_event_emitted("No event emitted yet"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_keeps_running_when_output_only_mentions_the_emit_message() {
+        // A text backend prints the prompt file when it reads it, and the prompt quotes
+        // the emit message. The agent has not published anything yet and must not be
+        // stopped by the post-event grace deadline.
+        let backend = CliBackend {
+            command: "sh".to_string(),
+            args: vec![
+                "-c".to_string(),
+                r"printf '%s\n' 'A successful `ralph emit` prints `Event emitted: <topic>`, so check for that line.'; sleep 6; printf 'still working\n'".to_string(),
+            ],
+            prompt_mode: PromptMode::Stdin,
+            prompt_flag: None,
+            output_format: OutputFormat::Text,
+            env_vars: vec![],
+        };
+
+        let executor = CliExecutor::new(backend);
+        let result = executor
+            .execute_capture_with_timeout("", Some(Duration::from_secs(10)))
+            .await
+            .unwrap();
+
+        assert!(
+            !result.timed_out,
+            "Quoting the emit message must not start the post-event grace deadline"
+        );
+        assert!(!result.post_event_grace_expired);
+        assert!(result.success);
+        assert!(result.output.contains("still working"));
     }
 
     #[tokio::test]

@@ -15,6 +15,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - The TUI's update badge offers only releases of the major version you run. A later major version is no longer shown as an update.
 
+### Fixed
+
+- Text backends such as Codex are no longer stopped a few seconds into an iteration when their output quotes the `Event emitted:` message, as Ralph's own prompt does. Only the line `ralph emit` prints now starts the post-event grace deadline.
+
 ## [2.11.0] - 2026-11-12
 
 ### Added
