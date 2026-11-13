@@ -142,8 +142,22 @@ pub enum UpdateStatus {
     Unknown,
     /// The running version matches the latest known release.
     UpToDate,
-    /// A newer release is available.
+    /// A newer release of the running major version is available.
     Available { latest: String },
+}
+
+/// A release of a later major version.
+///
+/// It is not an update: it has breaking changes, and the usual update commands stay on
+/// the running major version.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MajorRelease {
+    /// The version, such as `3.0.0`.
+    pub version: String,
+    /// The release's title, or `Version 3.0.0` when it has none.
+    pub title: String,
+    /// The release's page.
+    pub url: String,
 }
 
 // ============================================================================
@@ -229,6 +243,8 @@ pub struct TuiState {
     pub idle_timeout_remaining: Option<Duration>,
     /// Status of the asynchronous update check.
     pub update_status: UpdateStatus,
+    /// The newest release of a later major version, when the check found one.
+    pub new_major: Option<MajorRelease>,
     /// Git branch for the workspace the TUI was launched from.
     current_branch: Option<String>,
     /// Workspace root used for `.ralph/tui-exports`.
@@ -348,6 +364,7 @@ impl TuiState {
             max_iterations: None,
             idle_timeout_remaining: None,
             update_status: UpdateStatus::Unknown,
+            new_major: None,
             current_branch: None,
             export_workspace_root: default_export_workspace_root(),
             export_flash: None,
@@ -1096,6 +1113,11 @@ impl TuiState {
     /// Updates the cached result of the asynchronous version check.
     pub fn set_update_status(&mut self, status: UpdateStatus) {
         self.update_status = status;
+    }
+
+    /// Records the newest release of a later major version, or that there is none.
+    pub fn set_new_major(&mut self, new_major: Option<MajorRelease>) {
+        self.new_major = new_major;
     }
 
     // ========================================================================

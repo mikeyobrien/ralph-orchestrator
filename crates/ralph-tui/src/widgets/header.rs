@@ -212,21 +212,53 @@ fn update_badge_spans(
     width: u16,
     left_width: usize,
 ) -> Option<Vec<Span<'static>>> {
-    let UpdateStatus::Available { latest } = &state.update_status else {
-        return None;
+    let update = match &state.update_status {
+        UpdateStatus::Available { latest } => Some(latest),
+        _ => None,
+    };
+    // A later major version is flagged apart from an update: it has breaking changes,
+    // and updating does not install it.
+    let major = state.new_major.as_ref().map(|release| &release.version);
+
+    let tiers = [
+        (
+            width >= WIDTH_FULL,
+            update.map(|latest| format!("[update {latest}]")),
+            major.map(|version| format!("[{version} is out: breaking changes]")),
+        ),
+        (
+            width >= WIDTH_HIDE_HELP,
+            update.map(|latest| format!("[↑ {latest}]")),
+            major.map(|version| format!("[{version}: breaking]")),
+        ),
+        (width > WIDTH_MINIMAL, update.map(|_| "↑".to_string()), None),
+    ];
+    let badges = |update: &Option<String>, major: &Option<String>| {
+        let mut spans = Vec::new();
+        if let Some(label) = update {
+            spans.push(Span::styled(
+                label.clone(),
+                Style::default().fg(Color::Yellow),
+            ));
+        }
+        if let Some(label) = major {
+            if !spans.is_empty() {
+                spans.push(Span::raw(" "));
+            }
+            spans.push(Span::styled(
+                label.clone(),
+                Style::default().fg(Color::Magenta),
+            ));
+        }
+        spans
     };
 
-    let style = Style::default().fg(Color::Yellow);
-    let candidates = [
-        (width >= WIDTH_FULL, format!("[update {latest}]")),
-        (width >= WIDTH_HIDE_HELP, format!("[↑ {latest}]")),
-        (width > WIDTH_MINIMAL, "↑".to_string()),
-    ];
-
-    candidates
-        .into_iter()
-        .filter(|(allowed, _)| *allowed)
-        .map(|(_, label)| vec![Span::styled(label, style)])
+    // Both badges where they fit, then the update alone.
+    let allowed = || tiers.iter().filter(|(allowed, _, _)| *allowed);
+    allowed()
+        .map(|(_, update, major)| badges(update, major))
+        .chain(allowed().map(|(_, update, _)| badges(update, &None)))
+        .filter(|candidate| !candidate.is_empty())
         .find(|candidate| left_width + 1 + spans_width(candidate) <= width as usize)
 }
 
@@ -906,6 +938,65 @@ mod tests {
             text.contains("[update 2.8.0]"),
             "should show full update badge at wide widths, got: {}",
             text
+        );
+    }
+
+    fn later_major(version: &str) -> crate::state::MajorRelease {
+        crate::state::MajorRelease {
+            version: version.to_string(),
+            title: format!("Version {version}"),
+            url: format!("https://example.test/releases/v{version}"),
+        }
+    }
+
+    #[test]
+    fn header_flags_a_later_major_as_breaking_not_as_an_update() {
+        let mut state = TuiState::new();
+        state.start_new_iteration();
+        state.update_status = UpdateStatus::UpToDate;
+        state.new_major = Some(later_major("3.0.0"));
+
+        let wide = render_to_string_with_width(&state, 120);
+        assert!(
+            wide.contains("[3.0.0 is out: breaking changes]"),
+            "should name the later major and its breaking changes, got: {}",
+            wide
+        );
+        assert!(
+            !wide.contains("[update"),
+            "a later major is not an update, got: {}",
+            wide
+        );
+
+        let medium = render_to_string_with_width(&state, 70);
+        assert!(
+            medium.contains("[3.0.0: breaking]"),
+            "should keep the warning at medium widths, got: {}",
+            medium
+        );
+    }
+
+    #[test]
+    fn header_shows_an_update_beside_a_later_major_and_keeps_the_update_when_tight() {
+        let mut state = TuiState::new();
+        state.start_new_iteration();
+        state.update_status = UpdateStatus::Available {
+            latest: "2.12.1".to_string(),
+        };
+        state.new_major = Some(later_major("3.0.0"));
+
+        let wide = render_to_string_with_width(&state, 140);
+        assert!(
+            wide.contains("[update 2.12.1] [3.0.0 is out: breaking changes]"),
+            "should show both badges when there is room, got: {}",
+            wide
+        );
+
+        let narrow = render_to_string_with_width(&state, 50);
+        assert!(
+            narrow.contains('↑') && !narrow.contains("breaking"),
+            "should keep the update when only one fits, got: {}",
+            narrow
         );
     }
 

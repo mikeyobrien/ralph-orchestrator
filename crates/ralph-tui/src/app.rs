@@ -274,9 +274,12 @@ impl<W: AsyncWrite + Unpin + Send + 'static> App<W> {
 
         let update_state = Arc::clone(&self.state);
         tokio::spawn(async move {
-            let status = update_check::fetch_update_status().await;
+            let Some(check) = update_check::fetch_update_check().await else {
+                return;
+            };
             if let Ok(mut state) = update_state.lock() {
-                state.set_update_status(status);
+                state.set_update_status(check.status);
+                state.set_new_major(check.new_major);
             }
         });
 

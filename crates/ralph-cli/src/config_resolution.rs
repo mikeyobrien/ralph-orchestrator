@@ -104,7 +104,7 @@ fn user_config_path_from_home(home: Option<&Path>) -> Option<PathBuf> {
     Some(home?.join(".ralph").join("config.yml"))
 }
 
-fn home_dir_from_env() -> Option<PathBuf> {
+pub(crate) fn home_dir_from_env() -> Option<PathBuf> {
     std::env::var_os("HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
