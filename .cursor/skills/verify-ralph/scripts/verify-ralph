@@ -1,0 +1,528 @@
+#!/usr/bin/env bash
+# Launch, check, drive, and stop an isolated Ralph web dashboard.
+# Data never goes in the source checkout. Evidence never goes away with the processes.
+set -euo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+DEFAULT_REPO=$(cd "$SCRIPT_DIR/../../../.." && pwd)
+
+usage() {
+  cat <<'EOF'
+usage: verify-ralph <launch|doctor|browser|cleanup>
+
+  launch    Build ralph, seed a disposable workspace, start API + dashboard + browser.
+  doctor    Read-only check that this run is up, isolated, and showing Tasks.
+  browser   One Playwright action against the running dashboard. See SKILL.md.
+  cleanup   Stop the processes this run started and delete its scratch data.
+
+Source the run.env path printed by launch before doctor, browser, or cleanup
+when more than one run exists.
+EOF
+}
+
+require_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "missing required command: $1" >&2
+    exit 1
+  fi
+}
+
+load_state() {
+  local run_id="${VERIFY_RALPH_RUN_ID:-}"
+  shopt -s nullglob
+  local matches=(/tmp/verify-ralph/*/run.env)
+  shopt -u nullglob
+  if [[ -z "$run_id" ]]; then
+    if [[ ${#matches[@]} -eq 1 ]]; then
+      set -a
+      # shellcheck disable=SC1090
+      source "${matches[0]}"
+      set +a
+      return
+    fi
+    if [[ ${#matches[@]} -eq 0 ]]; then
+      echo "No verification run is active. Run: $0 launch" >&2
+      exit 1
+    fi
+    echo "Several verification runs exist. Source the run.env for the one you mean:" >&2
+    printf '  source %s\n' "${matches[@]}" >&2
+    exit 1
+  fi
+  local env_file="/tmp/verify-ralph/${run_id}/run.env"
+  if [[ ! -f "$env_file" ]]; then
+    echo "No run.env at $env_file" >&2
+    exit 1
+  fi
+  set -a
+  # shellcheck disable=SC1090
+  source "$env_file"
+  set +a
+}
+
+write_env() {
+  mkdir -p "$STATE_DIR" "$EVIDENCE_DIR"
+  {
+    printf 'export VERIFY_RALPH_RUN_ID=%q\n' "$RUN_ID"
+    printf 'export REPO_ROOT=%q\n' "$REPO_ROOT"
+    printf 'export STATE_DIR=%q\n' "$STATE_DIR"
+    printf 'export DATA_DIR=%q\n' "$DATA_DIR"
+    printf 'export EVIDENCE_DIR=%q\n' "$EVIDENCE_DIR"
+    printf 'export API_PORT=%q\n' "$API_PORT"
+    printf 'export WEB_PORT=%q\n' "$WEB_PORT"
+    printf 'export API_PID=%q\n' "$API_PID"
+    printf 'export WEB_PID=%q\n' "$WEB_PID"
+    printf 'export BROWSER_PID=%q\n' "${BROWSER_PID:-}"
+    printf 'export API_BIN=%q\n' "$API_BIN"
+    printf 'export RALPH_BIN=%q\n' "$RALPH_BIN"
+    printf 'export DASHBOARD_URL=%q\n' "$DASHBOARD_URL"
+    printf 'export API_URL=%q\n' "$API_URL"
+    printf 'export GIT_HEAD=%q\n' "$GIT_HEAD"
+  } >"$STATE_DIR/run.env"
+}
+
+free_port() {
+  python3 - <<'PY'
+import socket
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])
+s.close()
+PY
+}
+
+listener_belongs_to() {
+  local port="$1"
+  local ancestor="$2"
+  python3 - "$port" "$ancestor" <<'PY'
+import os, sys
+port = int(sys.argv[1])
+ancestor = int(sys.argv[2])
+port_hex = f"{port:04X}"
+inodes = set()
+for name in ("/proc/net/tcp", "/proc/net/tcp6"):
+    try:
+        lines = open(name).read().splitlines()[1:]
+    except FileNotFoundError:
+        continue
+    for line in lines:
+        parts = line.split()
+        local, state, inode = parts[1], parts[3], parts[9]
+        if state != "0A":
+            continue
+        if local.rsplit(":", 1)[-1].upper() != port_hex:
+            continue
+        inodes.add(inode)
+
+pids = set()
+for entry in os.listdir("/proc"):
+    if not entry.isdigit():
+        continue
+    fd_dir = f"/proc/{entry}/fd"
+    try:
+        fds = os.listdir(fd_dir)
+    except OSError:
+        continue
+    for fd in fds:
+        try:
+            target = os.readlink(f"{fd_dir}/{fd}")
+        except OSError:
+            continue
+        if target.startswith("socket:[") and target[8:-1] in inodes:
+            pids.add(int(entry))
+
+def is_under(pid, ancestor):
+    seen = set()
+    while pid and pid not in seen and pid > 1:
+        if pid == ancestor:
+            return True
+        seen.add(pid)
+        try:
+            status = open(f"/proc/{pid}/status").read().splitlines()
+        except OSError:
+            return False
+        ppid = 0
+        for line in status:
+            if line.startswith("PPid:"):
+                ppid = int(line.split()[1])
+                break
+        pid = ppid
+    return False
+
+sys.exit(0 if any(is_under(pid, ancestor) for pid in pids) else 1)
+PY
+}
+
+pid_alive() {
+  local pid="$1"
+  [[ -n "$pid" && -d "/proc/$pid" ]]
+}
+
+stop_pid() {
+  local pid="$1"
+  local label="$2"
+  if ! pid_alive "$pid"; then
+    return 0
+  fi
+  kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    if ! pid_alive "$pid"; then
+      echo "stopped $label ($pid)"
+      return 0
+    fi
+    sleep 0.5
+  done
+  kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+  echo "killed $label ($pid)"
+}
+
+ensure_playwright() {
+  local repo="$1"
+  if ! (cd "$repo" && node --input-type=module -e "import { createRequire } from 'node:module'; import fs from 'node:fs'; const req = createRequire(process.cwd() + '/package.json'); const { chromium } = req('playwright'); if (!fs.existsSync(chromium.executablePath())) process.exit(1);"); then
+    echo "Installing Playwright Chromium..."
+    (cd "$repo" && npx playwright install chromium)
+  fi
+}
+
+seed_workspace() {
+  local ralph="$1"
+  local data="$2"
+  mkdir -p "$data"
+  git -C "$data" init -b main
+  git -C "$data" config user.email verify-ralph@example.com
+  git -C "$data" config user.name verify-ralph
+  (
+    cd "$data"
+    "$ralph" init --backend claude
+  )
+  if [[ ! -f "$data/ralph.yml" ]]; then
+    echo "ralph init did not write $data/ralph.yml" >&2
+    exit 1
+  fi
+  git -C "$data" add ralph.yml
+  git -C "$data" commit -m "Initialize Ralph config for verification" >/dev/null
+}
+
+launch() {
+  require_cmd cargo
+  require_cmd node
+  require_cmd npm
+  require_cmd curl
+  require_cmd git
+  require_cmd python3
+  local repo="${VERIFY_RALPH_REPO:-$DEFAULT_REPO}"
+  local run_id="${VERIFY_RALPH_RUN_ID:-$(date +%Y%m%d%H%M%S)-$$-$RANDOM}"
+  local state="/tmp/verify-ralph/$run_id"
+  if [[ -e "$state" ]]; then
+    echo "Run state already exists: $state" >&2
+    exit 1
+  fi
+  mkdir -p "$state"
+  local data="$state/data"
+  local evidence="/tmp/verify-ralph-evidence/$run_id"
+  mkdir -p "$evidence"
+  local api_port web_port
+  api_port=$(free_port)
+  web_port=$(free_port)
+  echo "Building ralph-cli and ralph-api..."
+  if ! (cd "$repo" && cargo build -p ralph-cli -p ralph-api); then
+    rm -rf "$state"
+    exit 1
+  fi
+  local api_bin="$repo/target/debug/ralph-api"
+  local ralph_bin="$repo/target/debug/ralph"
+  if [[ ! -x "$api_bin" || ! -x "$ralph_bin" ]]; then
+    echo "Build finished without $api_bin and $ralph_bin" >&2
+    exit 1
+  fi
+  ensure_playwright "$repo"
+  echo "Seeding disposable workspace at $data"
+  seed_workspace "$ralph_bin" "$data"
+  local head
+  head=$(git -C "$repo" rev-parse HEAD)
+  RUN_ID="$run_id"
+  REPO_ROOT="$repo"
+  STATE_DIR="$state"
+  DATA_DIR="$data"
+  EVIDENCE_DIR="$evidence"
+  API_PORT="$api_port"
+  WEB_PORT="$web_port"
+  API_BIN="$api_bin"
+  RALPH_BIN="$ralph_bin"
+  DASHBOARD_URL="http://127.0.0.1:$web_port"
+  API_URL="http://127.0.0.1:$api_port"
+  GIT_HEAD="$head"
+  API_PID=""
+  WEB_PID=""
+  BROWSER_PID=""
+
+  echo "Starting ralph-api on $API_URL"
+  setsid env -u RALPH_API_TOKEN \
+    RALPH_API_HOST=127.0.0.1 \
+    RALPH_API_PORT="$API_PORT" \
+    RALPH_API_WORKSPACE_ROOT="$DATA_DIR" \
+    RALPH_API_AUTH_MODE=trusted_local \
+    "$API_BIN" >"$STATE_DIR/api.log" 2>&1 </dev/null &
+  API_PID=$!
+
+  echo "Starting dashboard on $DASHBOARD_URL"
+  (
+    cd "$repo/frontend/ralph-web"
+    setsid env RALPH_BACKEND_PORT="$API_PORT" \
+      npm run dev -- --port "$WEB_PORT" --strictPort \
+      >"$STATE_DIR/web.log" 2>&1 </dev/null &
+    echo $! >"$STATE_DIR/web.pid"
+  )
+  WEB_PID=$(cat "$STATE_DIR/web.pid")
+  write_env
+
+  if ! wait_for_log "$STATE_DIR/api.log" "ralph-api listening" 40; then
+    echo "ralph-api did not listen. Last log lines:" >&2
+    tail -n 40 "$STATE_DIR/api.log" >&2 || true
+    VERIFY_RALPH_RUN_ID="$RUN_ID" "$0" cleanup || true
+    exit 1
+  fi
+  if ! curl -sf "$API_URL/health" | grep -q '"status":"ok"'; then
+    echo "ralph-api health check failed" >&2
+    VERIFY_RALPH_RUN_ID="$RUN_ID" "$0" cleanup || true
+    exit 1
+  fi
+  if ! wait_for_log "$STATE_DIR/web.log" "Local:" 40; then
+    echo "Vite did not report ready. Last log lines:" >&2
+    tail -n 40 "$STATE_DIR/web.log" >&2 || true
+    VERIFY_RALPH_RUN_ID="$RUN_ID" "$0" cleanup || true
+    exit 1
+  fi
+  if ! curl -sf "$DASHBOARD_URL/health" | grep -q '"status":"ok"'; then
+    echo "Dashboard proxy to /health failed. The page is not usable yet." >&2
+    tail -n 40 "$STATE_DIR/web.log" >&2 || true
+    VERIFY_RALPH_RUN_ID="$RUN_ID" "$0" cleanup || true
+    exit 1
+  fi
+
+  echo "Starting headless Chromium"
+  setsid env \
+    REPO_ROOT="$REPO_ROOT" \
+    STATE_DIR="$STATE_DIR" \
+    DASHBOARD_URL="$DASHBOARD_URL" \
+    EVIDENCE_DIR="$EVIDENCE_DIR" \
+    VERIFY_RALPH_HEADED="${VERIFY_RALPH_HEADED:-0}" \
+    node "$SCRIPT_DIR/browser.mjs" serve >"$STATE_DIR/browser.log" 2>&1 </dev/null &
+  BROWSER_PID=$!
+  write_env
+  if ! wait_for_file "$STATE_DIR/browser.ready" 40; then
+    echo "Browser harness did not become ready. Last log lines:" >&2
+    tail -n 40 "$STATE_DIR/browser.log" >&2 || true
+    VERIFY_RALPH_RUN_ID="$RUN_ID" "$0" cleanup || true
+    exit 1
+  fi
+
+  cat <<EOF
+Ralph dashboard is ready.
+  run:       $RUN_ID
+  dashboard: $DASHBOARD_URL
+  api:       $API_URL
+  data:      $DATA_DIR
+  evidence:  $EVIDENCE_DIR
+  source:    source $STATE_DIR/run.env
+EOF
+}
+
+wait_for_log() {
+  local file="$1"
+  local pattern="$2"
+  local tries="$3"
+  local i
+  for ((i = 1; i <= tries; i++)); do
+    if [[ -f "$file" ]] && grep -q "$pattern" "$file"; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+wait_for_file() {
+  local file="$1"
+  local tries="$2"
+  local i
+  for ((i = 1; i <= tries; i++)); do
+    if [[ -f "$file" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+doctor() {
+  load_state
+  local fail=0
+  say() { printf '%s\n' "$1"; }
+  bad() { printf 'bad %s\n' "$1"; fail=1; }
+  good() { printf 'ok  %s\n' "$1"; }
+
+  say "run $VERIFY_RALPH_RUN_ID"
+  say "dashboard $DASHBOARD_URL"
+  say "api $API_URL"
+  say "data $DATA_DIR"
+  say "evidence $EVIDENCE_DIR"
+  say "git $GIT_HEAD"
+  say "api bin $API_BIN"
+
+  if pid_alive "$API_PID"; then good "api pid $API_PID"; else bad "api pid $API_PID is not running"; fi
+  if pid_alive "$WEB_PID"; then good "web pid $WEB_PID"; else bad "web pid $WEB_PID is not running"; fi
+  if pid_alive "${BROWSER_PID:-}"; then good "browser pid $BROWSER_PID"; else bad "browser pid ${BROWSER_PID:-missing} is not running"; fi
+
+  if listener_belongs_to "$API_PORT" "$API_PID"; then
+    good "api port $API_PORT is owned by pid $API_PID"
+  else
+    bad "api port $API_PORT is not owned by pid $API_PID"
+  fi
+  if listener_belongs_to "$WEB_PORT" "$WEB_PID"; then
+    good "web port $WEB_PORT is owned by pid $WEB_PID"
+  else
+    bad "web port $WEB_PORT is not owned by pid $WEB_PID"
+  fi
+
+  local api_exe=""
+  if pid_alive "$API_PID"; then
+    api_exe=$(readlink -f "/proc/$API_PID/exe" || true)
+  fi
+  if [[ "$api_exe" == "$API_BIN" ]]; then
+    good "api process is $API_BIN"
+  else
+    bad "api process exe is '${api_exe:-missing}', expected $API_BIN"
+  fi
+
+  case "$DATA_DIR" in
+    "$REPO_ROOT"|"$REPO_ROOT"/*)
+      bad "data dir is inside the source checkout ($DATA_DIR)"
+      ;;
+    *)
+      good "data dir is outside the source checkout"
+      ;;
+  esac
+  if [[ -f "$DATA_DIR/ralph.yml" ]]; then
+    good "seeded ralph.yml exists"
+  else
+    bad "seeded ralph.yml is missing"
+  fi
+  if grep -q '"status":"ok"' <<<"$(curl -sf "$API_URL/health" || true)"; then
+    good "api /health status ok"
+  else
+    bad "api /health is not ok"
+  fi
+  if grep -q '"status":"ok"' <<<"$(curl -sf "$DASHBOARD_URL/health" || true)"; then
+    good "dashboard proxies /health"
+  else
+    bad "dashboard /health proxy failed"
+  fi
+  if [[ -f "$STATE_DIR/api.log" ]] && grep -q "ralph-api listening" "$STATE_DIR/api.log"; then
+    good "api log contains ralph-api listening"
+  else
+    bad "api log is missing the listen line"
+  fi
+  local workspace_env=""
+  if pid_alive "$API_PID"; then
+    workspace_env=$(tr '\0' '\n' <"/proc/$API_PID/environ" | grep '^RALPH_API_WORKSPACE_ROOT=' || true)
+  fi
+  if [[ "$workspace_env" == "RALPH_API_WORKSPACE_ROOT=$DATA_DIR" ]]; then
+    good "api workspace is the disposable data dir"
+  else
+    bad "api workspace env is '${workspace_env:-missing}'"
+  fi
+
+  if "$0" browser goto /tasks >/dev/null && "$0" browser text --contains "Tasks" --timeout 15000 >/dev/null; then
+    good "Tasks heading is visible"
+  else
+    bad "Tasks heading is not visible"
+  fi
+  if "$0" browser text --contains "Create Task" --timeout 5000 >/dev/null; then
+    good "Create Task button is visible"
+  else
+    bad "Create Task button is not visible"
+  fi
+  if "$0" browser text --contains "RO" --timeout 5000 >/dev/null; then
+    good "dashboard brand RO is visible"
+  else
+    bad "dashboard brand RO is not visible"
+  fi
+  if "$0" browser absent --contains "Error loading tasks" --timeout 1500 >/dev/null; then
+    good "task list is not in an error state"
+  else
+    bad "task list is showing Error loading tasks"
+  fi
+
+  if [[ "$fail" -ne 0 ]]; then
+    echo "doctor failed" >&2
+    if [[ -f "$STATE_DIR/api.log" ]]; then
+      echo "--- api.log ---" >&2
+      tail -n 30 "$STATE_DIR/api.log" >&2 || true
+    fi
+    if [[ -f "$STATE_DIR/web.log" ]]; then
+      echo "--- web.log ---" >&2
+      tail -n 30 "$STATE_DIR/web.log" >&2 || true
+    fi
+    if [[ -f "$STATE_DIR/browser.log" ]]; then
+      echo "--- browser.log ---" >&2
+      tail -n 30 "$STATE_DIR/browser.log" >&2 || true
+    fi
+    exit 1
+  fi
+  echo "doctor passed"
+}
+
+cleanup() {
+  load_state
+  stop_pid "${BROWSER_PID:-}" "browser"
+  stop_pid "${WEB_PID:-}" "dashboard"
+  stop_pid "${API_PID:-}" "api"
+  mkdir -p "$EVIDENCE_DIR"
+  local video=""
+  if [[ -f "$STATE_DIR/video.path" ]]; then
+    video=$(tr -d '\n' <"$STATE_DIR/video.path")
+  fi
+  if [[ -z "$video" || ! -f "$video" ]]; then
+    local found
+    found=$(find "$STATE_DIR/video" -name '*.webm' -type f 2>/dev/null | head -n 1 || true)
+    video="$found"
+  fi
+  if [[ -n "$video" && -f "$video" ]]; then
+    cp -a "$video" "$EVIDENCE_DIR/session.webm"
+    echo "saved $EVIDENCE_DIR/session.webm"
+  elif [[ -f "$STATE_DIR/video.error" ]]; then
+    echo "video was not saved: $(cat "$STATE_DIR/video.error")" >&2
+  fi
+  if [[ -d "$STATE_DIR" ]]; then
+    rm -rf "$STATE_DIR"
+  fi
+  if [[ ! -d "$EVIDENCE_DIR" ]]; then
+    echo "cleanup removed evidence at $EVIDENCE_DIR" >&2
+    exit 1
+  fi
+  echo "cleaned run $VERIFY_RALPH_RUN_ID"
+  echo "evidence remains at $EVIDENCE_DIR"
+}
+
+cmd="${1:-}"
+case "$cmd" in
+  launch) launch ;;
+  doctor) doctor ;;
+  browser)
+    load_state
+    shift
+    exec env \
+      REPO_ROOT="$REPO_ROOT" \
+      STATE_DIR="$STATE_DIR" \
+      DASHBOARD_URL="$DASHBOARD_URL" \
+      EVIDENCE_DIR="$EVIDENCE_DIR" \
+      node "$SCRIPT_DIR/browser.mjs" client "$@"
+    ;;
+  cleanup) cleanup ;;
+  -h|--help|help|"") usage ;;
+  *)
+    echo "unknown command: $cmd" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
