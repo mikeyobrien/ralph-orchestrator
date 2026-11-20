@@ -296,3 +296,11 @@ ralph clean --diagnostics
 - When I ask you to view something that means to use playwright/chrome tools to go view it.
 - When adding or changing `ralph tools` subcommands, update the appropriate file in `crates/ralph-core/data/`: `ralph-tools.md` (shared commands), `ralph-tools-tasks.md` (task commands), or `ralph-tools-memories.md` (memory commands). `.claude/skills/ralph-tools/SKILL.md` is a symlink to the base `ralph-tools.md`
 - Design docs and specs go in `.ralph/specs` and one-off code tasks and bug fixes go in `.ralph/tasks`
+
+## Cursor Cloud specific instructions
+
+- The root `Dockerfile` and `docker-compose.yml` are a legacy Python orchestrator. Current development is the Rust workspace plus the npm dashboard workspaces.
+- The crates use Rust edition 2024, so rustc must be 1.85 or newer. Compiling the `keyring` crate also needs `libdbus-1-dev` and `pkg-config`.
+- `npm run dev` starts only the Vite frontend on port 5173. The RPC API is `npm run dev:api` (`cargo run -p ralph-api`) on `127.0.0.1:3000`. Vite proxies `/rpc` and `/health` to that API.
+- `cargo test` is the primary check. On stable rustc 1.99, `cargo clippy --all-targets --all-features -- -D warnings` reports `clippy::double_must_use` in `crates/ralph-proto/src/daemon.rs`.
+- Newly created tasks are stored with status `pending`. The tasks list can show them. Opening a task detail page throws in `TaskDetailHeader` because that status is outside the header's status map.
