@@ -177,6 +177,26 @@ impl TerminationReason {
     }
 }
 
+/// Whether `max_cost_usd` leaves room for one more model iteration.
+///
+/// Books the spend so far on an [`llm_budget::budget::AtomicBudget`] capped at
+/// `max_cost`, then asks it to admit the next iteration at the cost of the most
+/// expensive one seen so far. Checking only `cumulative >= max` lets the
+/// iteration that starts just under the cap spend without bound; this refuses
+/// that iteration up front. Before any iteration has reported a cost, only the
+/// plain `cumulative >= max` rule applies.
+fn cost_budget_admits_next_iteration(max_cost: f64, cumulative: f64, next_estimate: f64) -> bool {
+    if cumulative >= max_cost {
+        return false;
+    }
+    // A zero, negative or NaN cap cannot back a ledger; fall back to the rule above.
+    let Ok(budget) = llm_budget::budget::AtomicBudget::new(max_cost) else {
+        return true;
+    };
+    budget.charge_force(cumulative);
+    budget.charge(next_estimate.max(0.0)).is_ok()
+}
+
 /// The main event loop orchestrator.
 pub struct EventLoop {
     config: RalphConfig,
@@ -716,7 +736,11 @@ impl EventLoop {
         }
 
         if let Some(max_cost) = cfg.max_cost_usd
-            && self.state.cumulative_cost >= max_cost
+            && !cost_budget_admits_next_iteration(
+                max_cost,
+                self.state.cumulative_cost,
+                self.state.peak_iteration_cost,
+            )
         {
             return Some(TerminationReason::MaxCost);
         }
@@ -2252,8 +2276,16 @@ impl EventLoop {
     }
 
     /// Adds cost to the cumulative total.
+    ///
+    /// Also tracks the most expensive single iteration, which
+    /// [`check_termination`](Self::check_termination) uses as the estimate for
+    /// the next one so `max_cost_usd` stops the loop before an iteration that
+    /// would cross the cap, not after it.
     pub fn add_cost(&mut self, cost: f64) {
         self.state.cumulative_cost += cost;
+        if cost.is_finite() && cost > self.state.peak_iteration_cost {
+            self.state.peak_iteration_cost = cost;
+        }
     }
 
     /// Verifies all tasks in scratchpad are complete or cancelled.

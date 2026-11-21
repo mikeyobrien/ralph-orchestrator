@@ -102,6 +102,8 @@ clap_complete = "4"
 regex = "1"
 
 # HTTP client for remote presets
+# Hard USD cap ledger for max_cost_usd
+llm-budget = { version = "0.10.0", default-features = false }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 tungstenite = "0.24"

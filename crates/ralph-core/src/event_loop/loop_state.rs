@@ -26,6 +26,9 @@ pub struct LoopState {
     pub consecutive_failures: u32,
     /// Cumulative cost in USD (if tracked).
     pub cumulative_cost: f64,
+    /// Most expensive single model iteration seen so far, in USD. Used as the
+    /// estimate for the next iteration when checking `max_cost_usd` headroom.
+    pub peak_iteration_cost: f64,
     /// When the loop started.
     pub started_at: Instant,
     /// The last hat that executed.
@@ -97,6 +100,7 @@ impl Default for LoopState {
             iteration: 0,
             consecutive_failures: 0,
             cumulative_cost: 0.0,
+            peak_iteration_cost: 0.0,
             started_at: Instant::now(),
             last_hat: None,
             consecutive_blocked: 0,
