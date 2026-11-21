@@ -2775,7 +2775,9 @@ event_loop:
     let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
     let mut event_loop = EventLoop::new(config);
 
-    event_loop.add_cost(9.99);
+    for _ in 0..999 {
+        event_loop.add_cost(0.01);
+    }
     assert_eq!(
         event_loop.check_termination(),
         None,
@@ -2787,6 +2789,53 @@ event_loop:
         event_loop.check_termination(),
         Some(TerminationReason::MaxCost),
         "Should terminate at exactly max cost"
+    );
+}
+
+#[test]
+fn test_cost_termination_refuses_iteration_that_would_cross_cap() {
+    // With only `cumulative >= max`, a loop at $7.00 of a $10.00 cap whose
+    // iterations cost $4.00 starts another one and ends at $11.00.
+    let yaml = r"
+event_loop:
+  max_cost_usd: 10.0
+";
+    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut event_loop = EventLoop::new(config);
+
+    event_loop.add_cost(4.0);
+    assert_eq!(
+        event_loop.check_termination(),
+        None,
+        "$6.00 of headroom admits another $4.00 iteration"
+    );
+
+    event_loop.add_cost(3.0);
+    assert!((event_loop.state.peak_iteration_cost - 4.0).abs() < f64::EPSILON);
+    assert_eq!(
+        event_loop.check_termination(),
+        Some(TerminationReason::MaxCost),
+        "$3.00 of headroom must not admit an iteration estimated at $4.00"
+    );
+}
+
+#[test]
+fn test_cost_termination_without_cost_history_uses_cumulative_only() {
+    let yaml = r"
+event_loop:
+  max_cost_usd: 10.0
+";
+    let config: RalphConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut event_loop = EventLoop::new(config);
+
+    // Resumed with --continue: spend is restored, per-iteration peak is not.
+    event_loop.state.cumulative_cost = 9.5;
+    assert_eq!(event_loop.check_termination(), None);
+
+    event_loop.state.cumulative_cost = 10.0;
+    assert_eq!(
+        event_loop.check_termination(),
+        Some(TerminationReason::MaxCost)
     );
 }
 

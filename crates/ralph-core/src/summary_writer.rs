@@ -311,6 +311,7 @@ mod tests {
             iteration: 12,
             consecutive_failures: 0,
             cumulative_cost: 1.50,
+            peak_iteration_cost: 0.0,
             started_at: Instant::now(),
             last_hat: None,
             consecutive_blocked: 0,
