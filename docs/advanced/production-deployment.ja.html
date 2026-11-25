@@ -1,0 +1,999 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>本番デプロイガイド — Ralph Orchestrator 日本語ドキュメント</title>
+<style>
+
+:root{
+  --bg:#ffffff; --fg:#1f2328; --muted:#57606a; --border:#d0d7de;
+  --link:#6f42c1; --accent:#8250df; --code-bg:#f6f8fa; --topbar:#faf8ff;
+  --sidebar:#fbfaff; --mark:#fff3bf;
+}
+:root[data-theme="dark"]{
+  --bg:#0d1117; --fg:#e6edf3; --muted:#9198a1; --border:#30363d;
+  --link:#d2a8ff; --accent:#bc8cff; --code-bg:#161b22; --topbar:#161b22;
+  --sidebar:#0f141b; --mark:#5c4a00;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0d1117; --fg:#e6edf3; --muted:#9198a1; --border:#30363d;
+    --link:#d2a8ff; --accent:#bc8cff; --code-bg:#161b22; --topbar:#161b22;
+    --sidebar:#0f141b; --mark:#5c4a00;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Kaku Gothic ProN","Noto Sans JP",Meiryo,sans-serif;
+  line-height:1.75; font-size:16px;
+}
+.topbar{
+  position:sticky; top:0; z-index:30; display:flex; align-items:center; gap:.6rem;
+  padding:.5rem .9rem; background:var(--topbar); border-bottom:1px solid var(--border);
+  backdrop-filter:saturate(1.2) blur(4px);
+}
+.brand{font-weight:700} .brand small{color:var(--muted); font-weight:500; font-size:.75em}
+.spacer{flex:1}
+.icon-btn{
+  border:1px solid var(--border); background:transparent; color:var(--fg);
+  border-radius:8px; padding:.35rem .55rem; cursor:pointer; font-size:1rem; line-height:1;
+}
+.icon-btn:hover{border-color:var(--accent)}
+.search{
+  border:1px solid var(--border); background:var(--bg); color:var(--fg);
+  border-radius:8px; padding:.4rem .6rem; min-width:8rem; max-width:16rem;
+}
+.layout{display:flex; align-items:flex-start; max-width:1200px; margin:0 auto}
+.toc{
+  position:sticky; top:56px; align-self:flex-start; width:270px; flex:0 0 270px;
+  max-height:calc(100vh - 56px); overflow:auto; padding:1rem .75rem;
+  background:var(--sidebar); border-right:1px solid var(--border);
+}
+.toc-title{font-size:.8rem; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin-bottom:.5rem}
+.toc ul{list-style:none; margin:0; padding:0}
+.toc li{margin:.05rem 0}
+.toc a{display:block; text-decoration:none; color:var(--muted); padding:.2rem .5rem; border-radius:6px; font-size:.9rem}
+.toc a:hover{background:rgba(130,80,223,.1); color:var(--fg)}
+.toc a.active{color:var(--accent); background:rgba(130,80,223,.14); font-weight:600}
+.toc .lvl-3{padding-left:1rem} .toc .lvl-4{padding-left:1.75rem; font-size:.85rem}
+.content{flex:1 1 auto; min-width:0; padding:1.5rem 2rem 6rem; max-width:820px}
+.content h1{font-size:1.9rem; border-bottom:2px solid var(--border); padding-bottom:.3rem; margin-top:0}
+.content h2{font-size:1.45rem; border-bottom:1px solid var(--border); padding-bottom:.25rem; margin-top:2rem}
+.content h3{font-size:1.2rem; margin-top:1.6rem}
+.content a{color:var(--link)}
+.content code{background:var(--code-bg); padding:.15em .4em; border-radius:6px; font-size:.88em;
+  font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.content pre{background:var(--code-bg); border:1px solid var(--border); border-radius:10px;
+  padding:1rem; overflow-x:auto; position:relative}
+.content pre code{background:none; padding:0}
+.content blockquote{border-left:4px solid var(--accent); margin:1rem 0; padding:.2rem 1rem; color:var(--muted)}
+.content table{border-collapse:collapse; width:100%; display:block; overflow-x:auto}
+.content th,.content td{border:1px solid var(--border); padding:.5rem .75rem}
+.content th{background:var(--code-bg)}
+.content img{max-width:100%; height:auto}
+.content .headerlink{opacity:0; text-decoration:none; margin-left:.35rem; color:var(--muted)}
+.content h1:hover .headerlink,.content h2:hover .headerlink,
+.content h3:hover .headerlink,.content h4:hover .headerlink{opacity:1}
+mark{background:var(--mark); color:inherit; border-radius:3px}
+.copy-btn{
+  position:absolute; top:.5rem; right:.5rem; font-size:.72rem; padding:.2rem .5rem;
+  border:1px solid var(--border); background:var(--bg); color:var(--muted);
+  border-radius:6px; cursor:pointer; opacity:0; transition:opacity .15s;
+}
+pre:hover .copy-btn{opacity:1}
+.copy-btn.copied{color:var(--accent); border-color:var(--accent)}
+.backdrop{display:none; position:fixed; inset:56px 0 0 0; background:rgba(0,0,0,.4); z-index:20}
+@media (max-width:820px){
+  .toc{position:fixed; top:56px; left:0; bottom:0; transform:translateX(-100%);
+       transition:transform .2s ease; z-index:25; width:80%; max-width:320px}
+  .toc.open{transform:translateX(0)}
+  .backdrop.show{display:block}
+  .content{padding:1.25rem 1.1rem 5rem}
+  .search{min-width:5rem}
+}
+@media (min-width:821px){ #menuBtn{display:none} }
+
+/* --- Pygments (light) --- */
+pre { line-height: 125%; }
+td.linenos .normal { color: inherit; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+span.linenos { color: inherit; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+td.linenos .special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+.codehilite .hll { background-color: #ffffcc }
+.codehilite { background: #f8f8f8; }
+.codehilite .c { color: #3D7B7B; font-style: italic } /* Comment */
+.codehilite .err { border: 1px solid #F00 } /* Error */
+.codehilite .k { color: #008000; font-weight: bold } /* Keyword */
+.codehilite .o { color: #666 } /* Operator */
+.codehilite .ch { color: #3D7B7B; font-style: italic } /* Comment.Hashbang */
+.codehilite .cm { color: #3D7B7B; font-style: italic } /* Comment.Multiline */
+.codehilite .cp { color: #9C6500 } /* Comment.Preproc */
+.codehilite .cpf { color: #3D7B7B; font-style: italic } /* Comment.PreprocFile */
+.codehilite .c1 { color: #3D7B7B; font-style: italic } /* Comment.Single */
+.codehilite .cs { color: #3D7B7B; font-style: italic } /* Comment.Special */
+.codehilite .gd { color: #A00000 } /* Generic.Deleted */
+.codehilite .ge { font-style: italic } /* Generic.Emph */
+.codehilite .ges { font-weight: bold; font-style: italic } /* Generic.EmphStrong */
+.codehilite .gr { color: #E40000 } /* Generic.Error */
+.codehilite .gh { color: #000080; font-weight: bold } /* Generic.Heading */
+.codehilite .gi { color: #008400 } /* Generic.Inserted */
+.codehilite .go { color: #717171 } /* Generic.Output */
+.codehilite .gp { color: #000080; font-weight: bold } /* Generic.Prompt */
+.codehilite .gs { font-weight: bold } /* Generic.Strong */
+.codehilite .gu { color: #800080; font-weight: bold } /* Generic.Subheading */
+.codehilite .gt { color: #04D } /* Generic.Traceback */
+.codehilite .kc { color: #008000; font-weight: bold } /* Keyword.Constant */
+.codehilite .kd { color: #008000; font-weight: bold } /* Keyword.Declaration */
+.codehilite .kn { color: #008000; font-weight: bold } /* Keyword.Namespace */
+.codehilite .kp { color: #008000 } /* Keyword.Pseudo */
+.codehilite .kr { color: #008000; font-weight: bold } /* Keyword.Reserved */
+.codehilite .kt { color: #B00040 } /* Keyword.Type */
+.codehilite .m { color: #666 } /* Literal.Number */
+.codehilite .s { color: #BA2121 } /* Literal.String */
+.codehilite .na { color: #687822 } /* Name.Attribute */
+.codehilite .nb { color: #008000 } /* Name.Builtin */
+.codehilite .nc { color: #00F; font-weight: bold } /* Name.Class */
+.codehilite .no { color: #800 } /* Name.Constant */
+.codehilite .nd { color: #A2F } /* Name.Decorator */
+.codehilite .ni { color: #717171; font-weight: bold } /* Name.Entity */
+.codehilite .ne { color: #CB3F38; font-weight: bold } /* Name.Exception */
+.codehilite .nf { color: #00F } /* Name.Function */
+.codehilite .nl { color: #767600 } /* Name.Label */
+.codehilite .nn { color: #00F; font-weight: bold } /* Name.Namespace */
+.codehilite .nt { color: #008000; font-weight: bold } /* Name.Tag */
+.codehilite .nv { color: #19177C } /* Name.Variable */
+.codehilite .ow { color: #A2F; font-weight: bold } /* Operator.Word */
+.codehilite .w { color: #BBB } /* Text.Whitespace */
+.codehilite .mb { color: #666 } /* Literal.Number.Bin */
+.codehilite .mf { color: #666 } /* Literal.Number.Float */
+.codehilite .mh { color: #666 } /* Literal.Number.Hex */
+.codehilite .mi { color: #666 } /* Literal.Number.Integer */
+.codehilite .mo { color: #666 } /* Literal.Number.Oct */
+.codehilite .sa { color: #BA2121 } /* Literal.String.Affix */
+.codehilite .sb { color: #BA2121 } /* Literal.String.Backtick */
+.codehilite .sc { color: #BA2121 } /* Literal.String.Char */
+.codehilite .dl { color: #BA2121 } /* Literal.String.Delimiter */
+.codehilite .sd { color: #BA2121; font-style: italic } /* Literal.String.Doc */
+.codehilite .s2 { color: #BA2121 } /* Literal.String.Double */
+.codehilite .se { color: #AA5D1F; font-weight: bold } /* Literal.String.Escape */
+.codehilite .sh { color: #BA2121 } /* Literal.String.Heredoc */
+.codehilite .si { color: #A45A77; font-weight: bold } /* Literal.String.Interpol */
+.codehilite .sx { color: #008000 } /* Literal.String.Other */
+.codehilite .sr { color: #A45A77 } /* Literal.String.Regex */
+.codehilite .s1 { color: #BA2121 } /* Literal.String.Single */
+.codehilite .ss { color: #19177C } /* Literal.String.Symbol */
+.codehilite .bp { color: #008000 } /* Name.Builtin.Pseudo */
+.codehilite .fm { color: #00F } /* Name.Function.Magic */
+.codehilite .vc { color: #19177C } /* Name.Variable.Class */
+.codehilite .vg { color: #19177C } /* Name.Variable.Global */
+.codehilite .vi { color: #19177C } /* Name.Variable.Instance */
+.codehilite .vm { color: #19177C } /* Name.Variable.Magic */
+.codehilite .il { color: #666 } /* Literal.Number.Integer.Long */
+/* --- Pygments (dark) --- */
+:root[data-theme="dark"] .codehilite,
+@media (prefers-color-scheme: dark) {}
+</style>
+<style id="pygments-dark" media="not all">
+pre { line-height: 125%; }
+td.linenos .normal { color: inherit; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+span.linenos { color: inherit; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+td.linenos .special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+.codehilite .hll { background-color: #49483e }
+.codehilite { background: #272822; color: #F8F8F2 }
+.codehilite .c { color: #959077 } /* Comment */
+.codehilite .err { color: #ED007E; background-color: #1E0010 } /* Error */
+.codehilite .esc { color: #F8F8F2 } /* Escape */
+.codehilite .g { color: #F8F8F2 } /* Generic */
+.codehilite .k { color: #66D9EF } /* Keyword */
+.codehilite .l { color: #AE81FF } /* Literal */
+.codehilite .n { color: #F8F8F2 } /* Name */
+.codehilite .o { color: #FF4689 } /* Operator */
+.codehilite .x { color: #F8F8F2 } /* Other */
+.codehilite .p { color: #F8F8F2 } /* Punctuation */
+.codehilite .ch { color: #959077 } /* Comment.Hashbang */
+.codehilite .cm { color: #959077 } /* Comment.Multiline */
+.codehilite .cp { color: #959077 } /* Comment.Preproc */
+.codehilite .cpf { color: #959077 } /* Comment.PreprocFile */
+.codehilite .c1 { color: #959077 } /* Comment.Single */
+.codehilite .cs { color: #959077 } /* Comment.Special */
+.codehilite .gd { color: #FF4689 } /* Generic.Deleted */
+.codehilite .ge { color: #F8F8F2; font-style: italic } /* Generic.Emph */
+.codehilite .ges { color: #F8F8F2; font-weight: bold; font-style: italic } /* Generic.EmphStrong */
+.codehilite .gr { color: #F8F8F2 } /* Generic.Error */
+.codehilite .gh { color: #F8F8F2 } /* Generic.Heading */
+.codehilite .gi { color: #A6E22E } /* Generic.Inserted */
+.codehilite .go { color: #66D9EF } /* Generic.Output */
+.codehilite .gp { color: #FF4689; font-weight: bold } /* Generic.Prompt */
+.codehilite .gs { color: #F8F8F2; font-weight: bold } /* Generic.Strong */
+.codehilite .gu { color: #959077 } /* Generic.Subheading */
+.codehilite .gt { color: #F8F8F2 } /* Generic.Traceback */
+.codehilite .kc { color: #66D9EF } /* Keyword.Constant */
+.codehilite .kd { color: #66D9EF } /* Keyword.Declaration */
+.codehilite .kn { color: #FF4689 } /* Keyword.Namespace */
+.codehilite .kp { color: #66D9EF } /* Keyword.Pseudo */
+.codehilite .kr { color: #66D9EF } /* Keyword.Reserved */
+.codehilite .kt { color: #66D9EF } /* Keyword.Type */
+.codehilite .ld { color: #E6DB74 } /* Literal.Date */
+.codehilite .m { color: #AE81FF } /* Literal.Number */
+.codehilite .s { color: #E6DB74 } /* Literal.String */
+.codehilite .na { color: #A6E22E } /* Name.Attribute */
+.codehilite .nb { color: #F8F8F2 } /* Name.Builtin */
+.codehilite .nc { color: #A6E22E } /* Name.Class */
+.codehilite .no { color: #66D9EF } /* Name.Constant */
+.codehilite .nd { color: #A6E22E } /* Name.Decorator */
+.codehilite .ni { color: #F8F8F2 } /* Name.Entity */
+.codehilite .ne { color: #A6E22E } /* Name.Exception */
+.codehilite .nf { color: #A6E22E } /* Name.Function */
+.codehilite .nl { color: #F8F8F2 } /* Name.Label */
+.codehilite .nn { color: #F8F8F2 } /* Name.Namespace */
+.codehilite .nx { color: #A6E22E } /* Name.Other */
+.codehilite .py { color: #F8F8F2 } /* Name.Property */
+.codehilite .nt { color: #FF4689 } /* Name.Tag */
+.codehilite .nv { color: #F8F8F2 } /* Name.Variable */
+.codehilite .ow { color: #FF4689 } /* Operator.Word */
+.codehilite .pm { color: #F8F8F2 } /* Punctuation.Marker */
+.codehilite .w { color: #F8F8F2 } /* Text.Whitespace */
+.codehilite .mb { color: #AE81FF } /* Literal.Number.Bin */
+.codehilite .mf { color: #AE81FF } /* Literal.Number.Float */
+.codehilite .mh { color: #AE81FF } /* Literal.Number.Hex */
+.codehilite .mi { color: #AE81FF } /* Literal.Number.Integer */
+.codehilite .mo { color: #AE81FF } /* Literal.Number.Oct */
+.codehilite .sa { color: #E6DB74 } /* Literal.String.Affix */
+.codehilite .sb { color: #E6DB74 } /* Literal.String.Backtick */
+.codehilite .sc { color: #E6DB74 } /* Literal.String.Char */
+.codehilite .dl { color: #E6DB74 } /* Literal.String.Delimiter */
+.codehilite .sd { color: #E6DB74 } /* Literal.String.Doc */
+.codehilite .s2 { color: #E6DB74 } /* Literal.String.Double */
+.codehilite .se { color: #AE81FF } /* Literal.String.Escape */
+.codehilite .sh { color: #E6DB74 } /* Literal.String.Heredoc */
+.codehilite .si { color: #E6DB74 } /* Literal.String.Interpol */
+.codehilite .sx { color: #E6DB74 } /* Literal.String.Other */
+.codehilite .sr { color: #E6DB74 } /* Literal.String.Regex */
+.codehilite .s1 { color: #E6DB74 } /* Literal.String.Single */
+.codehilite .ss { color: #E6DB74 } /* Literal.String.Symbol */
+.codehilite .bp { color: #F8F8F2 } /* Name.Builtin.Pseudo */
+.codehilite .fm { color: #A6E22E } /* Name.Function.Magic */
+.codehilite .vc { color: #F8F8F2 } /* Name.Variable.Class */
+.codehilite .vg { color: #F8F8F2 } /* Name.Variable.Global */
+.codehilite .vi { color: #F8F8F2 } /* Name.Variable.Instance */
+.codehilite .vm { color: #F8F8F2 } /* Name.Variable.Magic */
+.codehilite .il { color: #AE81FF } /* Literal.Number.Integer.Long */
+</style>
+</head>
+<body>
+<header class="topbar">
+  <button id="menuBtn" class="icon-btn" aria-label="目次を開閉">☰</button>
+  <span class="brand">Ralph Orchestrator <small>日本語ドキュメント</small></span>
+  <div class="spacer"></div>
+  <input id="search" class="search" type="search" placeholder="ページ内を検索…" aria-label="ページ内検索">
+  <button id="themeBtn" class="icon-btn" aria-label="テーマ切替">🌓</button>
+</header>
+<div class="layout">
+  <nav id="toc" class="toc" aria-label="目次"><div class="toc-title">目次</div><ul id="tocList"></ul></nav>
+  <main id="content" class="content">
+<h1 id="_1"><a class="toclink" href="#_1">本番デプロイガイド</a></h1>
+<h2 id="_2"><a class="toclink" href="#_2">概要</a></h2>
+<p>このガイドでは、サーバーセットアップ、自動化、監視、スケーリングの考慮事項を含め、本番環境に
+Ralph Orchestrator をデプロイする方法を解説します。</p>
+<h2 id="_3"><a class="toclink" href="#_3">デプロイオプション</a></h2>
+<h3 id="1"><a class="toclink" href="#1">1. ローカルサーバーデプロイ</a></h3>
+<h4 id="_4"><a class="toclink" href="#_4">システム要件</a></h4>
+<ul>
+<li><strong>OS</strong>: Linux（Ubuntu 20.04+、RHEL 8+、Debian 11+）</li>
+<li><strong>Python</strong>: 3.9+</li>
+<li><strong>Git</strong>: 2.25+</li>
+<li><strong>メモリ</strong>: 最小 4GB、推奨 8GB</li>
+<li><strong>ストレージ</strong>: 20GB の空き容量</li>
+<li><strong>ネットワーク</strong>: AI エージェント API への安定したインターネット接続</li>
+</ul>
+<h4 id="_5"><a class="toclink" href="#_5">インストールスクリプト</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="ch">#!/bin/bash</span>
+<span class="c1"># ralph-install.sh</span>
+
+<span class="c1"># システムを更新する</span>
+sudo<span class="w"> </span>apt-get<span class="w"> </span>update<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>sudo<span class="w"> </span>apt-get<span class="w"> </span>upgrade<span class="w"> </span>-y
+
+<span class="c1"># 依存をインストールする</span>
+sudo<span class="w"> </span>apt-get<span class="w"> </span>install<span class="w"> </span>-y<span class="w"> </span>python3<span class="w"> </span>python3-pip<span class="w"> </span>git<span class="w"> </span>nodejs<span class="w"> </span>npm
+
+<span class="c1"># AI エージェントをインストールする</span>
+npm<span class="w"> </span>install<span class="w"> </span>-g<span class="w"> </span>@anthropic-ai/claude-code
+npm<span class="w"> </span>install<span class="w"> </span>-g<span class="w"> </span>@google/gemini-cli
+<span class="c1"># Q はドキュメントに従ってインストールする</span>
+
+<span class="c1"># Ralph をクローンする</span>
+git<span class="w"> </span>clone<span class="w"> </span>https://github.com/yourusername/ralph-orchestrator.git
+<span class="nb">cd</span><span class="w"> </span>ralph-orchestrator
+
+<span class="c1"># 権限を設定する</span>
+chmod<span class="w"> </span>+x<span class="w"> </span>ralph_orchestrator.py<span class="w"> </span>ralph
+
+<span class="c1"># systemd サービスを作成する</span>
+sudo<span class="w"> </span>cp<span class="w"> </span>ralph.service<span class="w"> </span>/etc/systemd/system/
+sudo<span class="w"> </span>systemctl<span class="w"> </span>daemon-reload
+sudo<span class="w"> </span>systemctl<span class="w"> </span><span class="nb">enable</span><span class="w"> </span>ralph
+</code></pre></div>
+
+<h3 id="2-docker"><a class="toclink" href="#2-docker">2. Docker デプロイ</a></h3>
+<h4 id="dockerfile"><a class="toclink" href="#dockerfile">Dockerfile</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="k">FROM</span><span class="w"> </span><span class="s">python:3.11-slim</span>
+
+<span class="c"># システム依存をインストールする</span>
+<span class="k">RUN</span><span class="w"> </span>apt-get<span class="w"> </span>update<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>apt-get<span class="w"> </span>install<span class="w"> </span>-y<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>git<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>nodejs<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>npm<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span><span class="o">&amp;&amp;</span><span class="w"> </span>rm<span class="w"> </span>-rf<span class="w"> </span>/var/lib/apt/lists/*
+
+<span class="c"># AI CLI ツールをインストールする</span>
+<span class="k">RUN</span><span class="w"> </span>npm<span class="w"> </span>install<span class="w"> </span>-g<span class="w"> </span>@anthropic-ai/claude-code<span class="w"> </span>@google/gemini-cli
+
+<span class="c"># ralph ユーザーを作成する</span>
+<span class="k">RUN</span><span class="w"> </span>useradd<span class="w"> </span>-m<span class="w"> </span>-s<span class="w"> </span>/bin/bash<span class="w"> </span>ralph
+<span class="k">WORKDIR</span><span class="w"> </span><span class="s">/home/ralph</span>
+
+<span class="c"># アプリケーションをコピーする</span>
+<span class="k">COPY</span><span class="w"> </span>--chown<span class="o">=</span>ralph:ralph<span class="w"> </span>.<span class="w"> </span>/home/ralph/ralph-orchestrator/
+<span class="k">WORKDIR</span><span class="w"> </span><span class="s">/home/ralph/ralph-orchestrator</span>
+
+<span class="c"># 権限を設定する</span>
+<span class="k">RUN</span><span class="w"> </span>chmod<span class="w"> </span>+x<span class="w"> </span>ralph_orchestrator.py<span class="w"> </span>ralph
+
+<span class="c"># ralph ユーザーに切り替える</span>
+<span class="k">USER</span><span class="w"> </span><span class="s">ralph</span>
+
+<span class="c"># 既定のコマンド</span>
+<span class="k">CMD</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;./ralph&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;run&quot;</span><span class="p">]</span>
+</code></pre></div>
+
+<h4 id="docker-compose"><a class="toclink" href="#docker-compose">Docker Compose</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="c1"># docker-compose.yml</span>
+<span class="nt">version</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;3.8&#39;</span>
+
+<span class="nt">services</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">ralph</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">build</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">.</span>
+<span class="w">    </span><span class="nt">container_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ralph-orchestrator</span>
+<span class="w">    </span><span class="nt">restart</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">unless-stopped</span>
+<span class="w">    </span><span class="nt">volumes</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">./workspace:/home/ralph/workspace</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">./prompts:/home/ralph/prompts</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ralph-agent:/home/ralph/ralph-orchestrator/.agent</span>
+<span class="w">    </span><span class="nt">environment</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">RALPH_MAX_ITERATIONS=100</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">RALPH_AGENT=auto</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">RALPH_CHECKPOINT_INTERVAL=5</span>
+<span class="w">    </span><span class="nt">logging</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">driver</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;json-file&quot;</span>
+<span class="w">      </span><span class="nt">options</span><span class="p">:</span>
+<span class="w">        </span><span class="nt">max-size</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;10m&quot;</span>
+<span class="w">        </span><span class="nt">max-file</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;3&quot;</span>
+
+<span class="nt">volumes</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">ralph-agent</span><span class="p">:</span>
+</code></pre></div>
+
+<h3 id="3"><a class="toclink" href="#3">3. クラウドデプロイ</a></h3>
+<h4 id="aws-ec2"><a class="toclink" href="#aws-ec2">AWS EC2</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="c1"># EC2 インスタンス用のユーザーデータスクリプト</span>
+<span class="c1">#!/bin/bash</span>
+yum<span class="w"> </span>update<span class="w"> </span>-y
+yum<span class="w"> </span>install<span class="w"> </span>-y<span class="w"> </span>python3<span class="w"> </span>git<span class="w"> </span>nodejs
+
+<span class="c1"># Ralph をインストールする</span>
+<span class="nb">cd</span><span class="w"> </span>/opt
+git<span class="w"> </span>clone<span class="w"> </span>https://github.com/yourusername/ralph-orchestrator.git
+<span class="nb">cd</span><span class="w"> </span>ralph-orchestrator
+chmod<span class="w"> </span>+x<span class="w"> </span>ralph_orchestrator.py<span class="w"> </span>ralph
+
+<span class="c1"># サービスとして構成する</span>
+cat<span class="w"> </span>&gt;<span class="w"> </span>/etc/systemd/system/ralph.service<span class="w"> </span><span class="s">&lt;&lt; EOF</span>
+<span class="s">[Unit]</span>
+<span class="s">Description=Ralph Orchestrator</span>
+<span class="s">After=network.target</span>
+
+<span class="s">[Service]</span>
+<span class="s">Type=simple</span>
+<span class="s">User=ec2-user</span>
+<span class="s">WorkingDirectory=/opt/ralph-orchestrator</span>
+<span class="s">ExecStart=/opt/ralph-orchestrator/ralph run</span>
+<span class="s">Restart=on-failure</span>
+<span class="s">RestartSec=10</span>
+
+<span class="s">[Install]</span>
+<span class="s">WantedBy=multi-user.target</span>
+<span class="s">EOF</span>
+
+systemctl<span class="w"> </span><span class="nb">enable</span><span class="w"> </span>ralph
+systemctl<span class="w"> </span>start<span class="w"> </span>ralph
+</code></pre></div>
+
+<h4 id="kubernetes"><a class="toclink" href="#kubernetes">Kubernetes デプロイ</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="c1"># ralph-deployment.yaml</span>
+<span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">apps/v1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Deployment</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ralph-orchestrator</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">replicas</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span>
+<span class="w">  </span><span class="nt">selector</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">matchLabels</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">app</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ralph</span>
+<span class="w">  </span><span class="nt">template</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">metadata</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">labels</span><span class="p">:</span>
+<span class="w">        </span><span class="nt">app</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ralph</span>
+<span class="w">    </span><span class="nt">spec</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">containers</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ralph</span>
+<span class="w">        </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ralph-orchestrator:latest</span>
+<span class="w">        </span><span class="nt">resources</span><span class="p">:</span>
+<span class="w">          </span><span class="nt">requests</span><span class="p">:</span>
+<span class="w">            </span><span class="nt">memory</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;2Gi&quot;</span>
+<span class="w">            </span><span class="nt">cpu</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;1&quot;</span>
+<span class="w">          </span><span class="nt">limits</span><span class="p">:</span>
+<span class="w">            </span><span class="nt">memory</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;4Gi&quot;</span>
+<span class="w">            </span><span class="nt">cpu</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;2&quot;</span>
+<span class="w">        </span><span class="nt">volumeMounts</span><span class="p">:</span>
+<span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">workspace</span>
+<span class="w">          </span><span class="nt">mountPath</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/workspace</span>
+<span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">config</span>
+<span class="w">          </span><span class="nt">mountPath</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/config</span>
+<span class="w">      </span><span class="nt">volumes</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">workspace</span>
+<span class="w">        </span><span class="nt">persistentVolumeClaim</span><span class="p">:</span>
+<span class="w">          </span><span class="nt">claimName</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ralph-workspace</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">config</span>
+<span class="w">        </span><span class="nt">configMap</span><span class="p">:</span>
+<span class="w">          </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ralph-config</span>
+</code></pre></div>
+
+<h2 id="_6"><a class="toclink" href="#_6">構成管理</a></h2>
+<h3 id="_7"><a class="toclink" href="#_7">環境変数</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># /etc/environment または .env ファイル</span>
+<span class="nv">RALPH_HOME</span><span class="o">=</span>/opt/ralph-orchestrator
+<span class="nv">RALPH_WORKSPACE</span><span class="o">=</span>/var/ralph/workspace
+<span class="nv">RALPH_LOG_LEVEL</span><span class="o">=</span>INFO
+<span class="nv">RALPH_MAX_ITERATIONS</span><span class="o">=</span><span class="m">100</span>
+<span class="nv">RALPH_MAX_RUNTIME</span><span class="o">=</span><span class="m">14400</span>
+<span class="nv">RALPH_AGENT</span><span class="o">=</span>claude
+<span class="nv">RALPH_CHECKPOINT_INTERVAL</span><span class="o">=</span><span class="m">5</span>
+<span class="nv">RALPH_RETRY_DELAY</span><span class="o">=</span><span class="m">2</span>
+<span class="nv">RALPH_GIT_ENABLED</span><span class="o">=</span><span class="nb">true</span>
+<span class="nv">RALPH_ARCHIVE_ENABLED</span><span class="o">=</span><span class="nb">true</span>
+</code></pre></div>
+
+<h3 id="_8"><a class="toclink" href="#_8">設定ファイル</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;production&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;agent&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;claude&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;max_iterations&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">100</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;max_runtime&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">14400</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;checkpoint_interval&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;retry_delay&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;retry_max&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;timeout_per_iteration&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">300</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;git_enabled&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;archive_enabled&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;monitoring&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">&quot;enabled&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;metrics_endpoint&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;http://metrics.example.com&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;log_level&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;INFO&quot;</span>
+<span class="w">    </span><span class="p">},</span>
+<span class="w">    </span><span class="nt">&quot;security&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">&quot;sandbox_enabled&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;allowed_directories&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;/workspace&quot;</span><span class="p">],</span>
+<span class="w">      </span><span class="nt">&quot;forbidden_commands&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;rm -rf&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;sudo&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;su&quot;</span><span class="p">],</span>
+<span class="w">      </span><span class="nt">&quot;max_file_size&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">10485760</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h2 id="_9"><a class="toclink" href="#_9">自動化</a></h2>
+<h3 id="systemd"><a class="toclink" href="#systemd">Systemd サービス</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># /etc/systemd/system/ralph.service</span>
+<span class="k">[Unit]</span>
+<span class="na">Description</span><span class="o">=</span><span class="s">Ralph Orchestrator Service</span>
+<span class="na">Documentation</span><span class="o">=</span><span class="s">https://github.com/yourusername/ralph-orchestrator</span>
+<span class="na">After</span><span class="o">=</span><span class="s">network.target</span>
+
+<span class="k">[Service]</span>
+<span class="na">Type</span><span class="o">=</span><span class="s">simple</span>
+<span class="na">User</span><span class="o">=</span><span class="s">ralph</span>
+<span class="na">Group</span><span class="o">=</span><span class="s">ralph</span>
+<span class="na">WorkingDirectory</span><span class="o">=</span><span class="s">/opt/ralph-orchestrator</span>
+<span class="na">ExecStart</span><span class="o">=</span><span class="s">/opt/ralph-orchestrator/ralph run --config production.json</span>
+<span class="na">ExecReload</span><span class="o">=</span><span class="s">/bin/kill -HUP $MAINPID</span>
+<span class="na">Restart</span><span class="o">=</span><span class="s">on-failure</span>
+<span class="na">RestartSec</span><span class="o">=</span><span class="s">30</span>
+<span class="na">StandardOutput</span><span class="o">=</span><span class="s">journal</span>
+<span class="na">StandardError</span><span class="o">=</span><span class="s">journal</span>
+<span class="na">SyslogIdentifier</span><span class="o">=</span><span class="s">ralph</span>
+<span class="na">Environment</span><span class="o">=</span><span class="s">&quot;PYTHONUNBUFFERED=1&quot;</span>
+
+<span class="c1"># セキュリティ</span>
+<span class="na">NoNewPrivileges</span><span class="o">=</span><span class="s">true</span>
+<span class="na">PrivateTmp</span><span class="o">=</span><span class="s">true</span>
+<span class="na">ProtectSystem</span><span class="o">=</span><span class="s">strict</span>
+<span class="na">ProtectHome</span><span class="o">=</span><span class="s">true</span>
+<span class="na">ReadWritePaths</span><span class="o">=</span><span class="s">/opt/ralph-orchestrator /var/ralph</span>
+
+<span class="k">[Install]</span>
+<span class="na">WantedBy</span><span class="o">=</span><span class="s">multi-user.target</span>
+</code></pre></div>
+
+<h3 id="cron"><a class="toclink" href="#cron">Cron ジョブ</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># /etc/cron.d/ralph</span>
+<span class="c1"># 古いログを毎週削除する</span>
+<span class="m">0</span><span class="w"> </span><span class="m">2</span><span class="w"> </span>*<span class="w"> </span>*<span class="w"> </span><span class="m">0</span><span class="w"> </span>ralph<span class="w"> </span>/opt/ralph-orchestrator/scripts/cleanup.sh
+
+<span class="c1"># 状態を毎日バックアップする</span>
+<span class="m">0</span><span class="w"> </span><span class="m">3</span><span class="w"> </span>*<span class="w"> </span>*<span class="w"> </span>*<span class="w"> </span>ralph<span class="w"> </span>tar<span class="w"> </span>-czf<span class="w"> </span>/backup/ralph-<span class="k">$(</span>date<span class="w"> </span>+<span class="se">\%</span>Y<span class="se">\%</span>m<span class="se">\%</span>d<span class="k">)</span>.tar.gz<span class="w"> </span>/opt/ralph-orchestrator/.agent
+
+<span class="c1"># 5分ごとにヘルスチェックする</span>
+*/5<span class="w"> </span>*<span class="w"> </span>*<span class="w"> </span>*<span class="w"> </span>*<span class="w"> </span>ralph<span class="w"> </span>/opt/ralph-orchestrator/scripts/health-check.sh<span class="w"> </span><span class="o">||</span><span class="w"> </span>systemctl<span class="w"> </span>restart<span class="w"> </span>ralph
+</code></pre></div>
+
+<h3 id="cicd"><a class="toclink" href="#cicd">CI/CD パイプライン</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># .github/workflows/deploy.yml</span>
+<span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Deploy Ralph</span>
+
+<span class="nt">on</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">push</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">branches</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">main</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">paths</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&#39;ralph_orchestrator.py&#39;</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&#39;ralph&#39;</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&#39;requirements.txt&#39;</span>
+
+<span class="nt">jobs</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">deploy</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">runs-on</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ubuntu-latest</span>
+<span class="w">    </span><span class="nt">steps</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">actions/checkout@v3</span>
+
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Run tests</span>
+<span class="w">        </span><span class="nt">run</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">python test_comprehensive.py</span>
+
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Build Docker image</span>
+<span class="w">        </span><span class="nt">run</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">docker build -t ralph-orchestrator:${{ github.sha }} .</span>
+
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Push to registry</span>
+<span class="w">        </span><span class="nt">run</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<span class="w">          </span><span class="no">docker tag ralph-orchestrator:${{ github.sha }} ${{ secrets.REGISTRY }}/ralph:latest</span>
+<span class="w">          </span><span class="no">docker push ${{ secrets.REGISTRY }}/ralph:latest</span>
+
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Deploy to server</span>
+<span class="w">        </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">appleboy/ssh-action@v0.1.5</span>
+<span class="w">        </span><span class="nt">with</span><span class="p">:</span>
+<span class="w">          </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${{ secrets.HOST }}</span>
+<span class="w">          </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${{ secrets.USERNAME }}</span>
+<span class="w">          </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${{ secrets.SSH_KEY }}</span>
+<span class="w">          </span><span class="nt">script</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<span class="w">            </span><span class="no">cd /opt/ralph-orchestrator</span>
+<span class="w">            </span><span class="no">git pull</span>
+<span class="w">            </span><span class="no">systemctl restart ralph</span>
+</code></pre></div>
+
+<h2 id="_10"><a class="toclink" href="#_10">本番環境での監視</a></h2>
+<h3 id="prometheus"><a class="toclink" href="#prometheus">Prometheus メトリクス</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># metrics_exporter.py</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">prometheus_client</span><span class="w"> </span><span class="kn">import</span> <span class="n">Counter</span><span class="p">,</span> <span class="n">Histogram</span><span class="p">,</span> <span class="n">Gauge</span><span class="p">,</span> <span class="n">start_http_server</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">glob</span>
+
+<span class="c1"># メトリクスを定義する</span>
+<span class="n">iteration_counter</span> <span class="o">=</span> <span class="n">Counter</span><span class="p">(</span><span class="s1">&#39;ralph_iterations_total&#39;</span><span class="p">,</span> <span class="s1">&#39;Total iterations&#39;</span><span class="p">)</span>
+<span class="n">error_counter</span> <span class="o">=</span> <span class="n">Counter</span><span class="p">(</span><span class="s1">&#39;ralph_errors_total&#39;</span><span class="p">,</span> <span class="s1">&#39;Total errors&#39;</span><span class="p">)</span>
+<span class="n">runtime_gauge</span> <span class="o">=</span> <span class="n">Gauge</span><span class="p">(</span><span class="s1">&#39;ralph_runtime_seconds&#39;</span><span class="p">,</span> <span class="s1">&#39;Current runtime&#39;</span><span class="p">)</span>
+<span class="n">iteration_duration</span> <span class="o">=</span> <span class="n">Histogram</span><span class="p">(</span><span class="s1">&#39;ralph_iteration_duration_seconds&#39;</span><span class="p">,</span> <span class="s1">&#39;Iteration duration&#39;</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">collect_metrics</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Ralph の状態ファイルからメトリクスを収集する&quot;&quot;&quot;</span>
+    <span class="n">state_files</span> <span class="o">=</span> <span class="n">glob</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s1">&#39;.agent/metrics/state_*.json&#39;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">state_files</span><span class="p">:</span>
+        <span class="n">latest</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">state_files</span><span class="p">)</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">latest</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="n">state</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+
+        <span class="n">iteration_counter</span><span class="o">.</span><span class="n">inc</span><span class="p">(</span><span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;iteration_count&#39;</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>
+        <span class="n">runtime_gauge</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;runtime&#39;</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>
+
+        <span class="k">if</span> <span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;errors&#39;</span><span class="p">):</span>
+            <span class="n">error_counter</span><span class="o">.</span><span class="n">inc</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">state</span><span class="p">[</span><span class="s1">&#39;errors&#39;</span><span class="p">]))</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s1">&#39;__main__&#39;</span><span class="p">:</span>
+    <span class="c1"># メトリクスサーバーを起動する</span>
+    <span class="n">start_http_server</span><span class="p">(</span><span class="mi">8000</span><span class="p">)</span>
+
+    <span class="c1"># 定期的にメトリクスを収集する</span>
+    <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+        <span class="n">collect_metrics</span><span class="p">()</span>
+        <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">30</span><span class="p">)</span>
+</code></pre></div>
+
+<h3 id="_11"><a class="toclink" href="#_11">ロギングのセットアップ</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># logging_config.py</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging.handlers</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">setup_production_logging</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;本番ロギングを構成する&quot;&quot;&quot;</span>
+
+    <span class="c1"># 構造化ロギング用の JSON フォーマッタ</span>
+    <span class="k">class</span><span class="w"> </span><span class="nc">JSONFormatter</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">Formatter</span><span class="p">):</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">format</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">record</span><span class="p">):</span>
+            <span class="n">log_obj</span> <span class="o">=</span> <span class="p">{</span>
+                <span class="s1">&#39;timestamp&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">formatTime</span><span class="p">(</span><span class="n">record</span><span class="p">),</span>
+                <span class="s1">&#39;level&#39;</span><span class="p">:</span> <span class="n">record</span><span class="o">.</span><span class="n">levelname</span><span class="p">,</span>
+                <span class="s1">&#39;logger&#39;</span><span class="p">:</span> <span class="n">record</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
+                <span class="s1">&#39;message&#39;</span><span class="p">:</span> <span class="n">record</span><span class="o">.</span><span class="n">getMessage</span><span class="p">(),</span>
+                <span class="s1">&#39;module&#39;</span><span class="p">:</span> <span class="n">record</span><span class="o">.</span><span class="n">module</span><span class="p">,</span>
+                <span class="s1">&#39;function&#39;</span><span class="p">:</span> <span class="n">record</span><span class="o">.</span><span class="n">funcName</span><span class="p">,</span>
+                <span class="s1">&#39;line&#39;</span><span class="p">:</span> <span class="n">record</span><span class="o">.</span><span class="n">lineno</span>
+            <span class="p">}</span>
+            <span class="k">if</span> <span class="n">record</span><span class="o">.</span><span class="n">exc_info</span><span class="p">:</span>
+                <span class="n">log_obj</span><span class="p">[</span><span class="s1">&#39;exception&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">formatException</span><span class="p">(</span><span class="n">record</span><span class="o">.</span><span class="n">exc_info</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">log_obj</span><span class="p">)</span>
+
+    <span class="c1"># ルートロガーを構成する</span>
+    <span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">()</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">INFO</span><span class="p">)</span>
+
+    <span class="c1"># ローテーション付きのファイルハンドラ</span>
+    <span class="n">file_handler</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">handlers</span><span class="o">.</span><span class="n">RotatingFileHandler</span><span class="p">(</span>
+        <span class="s1">&#39;/var/log/ralph/ralph.log&#39;</span><span class="p">,</span>
+        <span class="n">maxBytes</span><span class="o">=</span><span class="mi">100</span><span class="o">*</span><span class="mi">1024</span><span class="o">*</span><span class="mi">1024</span><span class="p">,</span>  <span class="c1"># 100MB</span>
+        <span class="n">backupCount</span><span class="o">=</span><span class="mi">10</span>
+    <span class="p">)</span>
+    <span class="n">file_handler</span><span class="o">.</span><span class="n">setFormatter</span><span class="p">(</span><span class="n">JSONFormatter</span><span class="p">())</span>
+
+    <span class="c1"># Syslog ハンドラ</span>
+    <span class="n">syslog_handler</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">handlers</span><span class="o">.</span><span class="n">SysLogHandler</span><span class="p">(</span><span class="n">address</span><span class="o">=</span><span class="s1">&#39;/dev/log&#39;</span><span class="p">)</span>
+    <span class="n">syslog_handler</span><span class="o">.</span><span class="n">setFormatter</span><span class="p">(</span><span class="n">JSONFormatter</span><span class="p">())</span>
+
+    <span class="n">logger</span><span class="o">.</span><span class="n">addHandler</span><span class="p">(</span><span class="n">file_handler</span><span class="p">)</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">addHandler</span><span class="p">(</span><span class="n">syslog_handler</span><span class="p">)</span>
+</code></pre></div>
+
+<h2 id="_12"><a class="toclink" href="#_12">セキュリティ強化</a></h2>
+<h3 id="_13"><a class="toclink" href="#_13">ユーザーの分離</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># 専用ユーザーを作成する</span>
+sudo<span class="w"> </span>useradd<span class="w"> </span>-r<span class="w"> </span>-s<span class="w"> </span>/bin/bash<span class="w"> </span>-m<span class="w"> </span>-d<span class="w"> </span>/opt/ralph<span class="w"> </span>ralph
+sudo<span class="w"> </span>chown<span class="w"> </span>-R<span class="w"> </span>ralph:ralph<span class="w"> </span>/opt/ralph-orchestrator
+
+<span class="c1"># 制限的な権限を設定する</span>
+chmod<span class="w"> </span><span class="m">750</span><span class="w"> </span>/opt/ralph-orchestrator
+chmod<span class="w"> </span><span class="m">640</span><span class="w"> </span>/opt/ralph-orchestrator/*.py
+chmod<span class="w"> </span><span class="m">750</span><span class="w"> </span>/opt/ralph-orchestrator/ralph
+</code></pre></div>
+
+<h3 id="_14"><a class="toclink" href="#_14">ネットワークセキュリティ</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># ファイアウォールルール（iptables）</span>
+iptables<span class="w"> </span>-A<span class="w"> </span>OUTPUT<span class="w"> </span>-p<span class="w"> </span>tcp<span class="w"> </span>--dport<span class="w"> </span><span class="m">443</span><span class="w"> </span>-j<span class="w"> </span>ACCEPT<span class="w">  </span><span class="c1"># AI エージェント用の HTTPS</span>
+iptables<span class="w"> </span>-A<span class="w"> </span>OUTPUT<span class="w"> </span>-p<span class="w"> </span>tcp<span class="w"> </span>--dport<span class="w"> </span><span class="m">22</span><span class="w"> </span>-j<span class="w"> </span>ACCEPT<span class="w">   </span><span class="c1"># Git SSH</span>
+iptables<span class="w"> </span>-A<span class="w"> </span>OUTPUT<span class="w"> </span>-j<span class="w"> </span>DROP<span class="w">                       </span><span class="c1"># その他のアウトバウンドをブロック</span>
+
+<span class="c1"># または ufw を使う</span>
+ufw<span class="w"> </span>allow<span class="w"> </span>out<span class="w"> </span><span class="m">443</span>/tcp
+ufw<span class="w"> </span>allow<span class="w"> </span>out<span class="w"> </span><span class="m">22</span>/tcp
+ufw<span class="w"> </span>default<span class="w"> </span>deny<span class="w"> </span>outgoing
+</code></pre></div>
+
+<h3 id="api"><a class="toclink" href="#api">API キー管理</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># システムキーリングを使う</span>
+pip<span class="w"> </span>install<span class="w"> </span>keyring
+
+<span class="c1"># API キーを安全に保管する</span>
+python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import keyring; keyring.set_password(&#39;ralph&#39;, &#39;claude_api_key&#39;, &#39;your-key&#39;)&quot;</span>
+
+<span class="c1"># または安全なストアからの環境変数を使う</span>
+<span class="nb">source</span><span class="w"> </span>/etc/ralph/secrets.env
+</code></pre></div>
+
+<h2 id="_15"><a class="toclink" href="#_15">スケーリングの考慮事項</a></h2>
+<h3 id="_16"><a class="toclink" href="#_16">水平スケーリング</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># job_queue.py</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">redis</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">RalphJobQueue</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">redis</span> <span class="o">=</span> <span class="n">redis</span><span class="o">.</span><span class="n">Redis</span><span class="p">(</span><span class="n">host</span><span class="o">=</span><span class="s1">&#39;localhost&#39;</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">6379</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">add_job</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">prompt_file</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;ジョブをキューに追加する&quot;&quot;&quot;</span>
+        <span class="n">job</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s1">&#39;id&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">uuid</span><span class="o">.</span><span class="n">uuid4</span><span class="p">()),</span>
+            <span class="s1">&#39;prompt_file&#39;</span><span class="p">:</span> <span class="n">prompt_file</span><span class="p">,</span>
+            <span class="s1">&#39;config&#39;</span><span class="p">:</span> <span class="n">config</span><span class="p">,</span>
+            <span class="s1">&#39;status&#39;</span><span class="p">:</span> <span class="s1">&#39;pending&#39;</span><span class="p">,</span>
+            <span class="s1">&#39;created&#39;</span><span class="p">:</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+        <span class="p">}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">redis</span><span class="o">.</span><span class="n">lpush</span><span class="p">(</span><span class="s1">&#39;ralph:jobs&#39;</span><span class="p">,</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">job</span><span class="p">))</span>
+        <span class="k">return</span> <span class="n">job</span><span class="p">[</span><span class="s1">&#39;id&#39;</span><span class="p">]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_job</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;キューから次のジョブを取得する&quot;&quot;&quot;</span>
+        <span class="n">job_data</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">redis</span><span class="o">.</span><span class="n">rpop</span><span class="p">(</span><span class="s1">&#39;ralph:jobs&#39;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">job_data</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">job_data</span><span class="p">)</span>
+        <span class="k">return</span> <span class="kc">None</span>
+</code></pre></div>
+
+<h3 id="_17"><a class="toclink" href="#_17">リソース上限</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># resource_limits.py</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">resource</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">set_production_limits</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;本番用のリソース上限を設定する&quot;&quot;&quot;</span>
+
+    <span class="c1"># メモリ上限（4GB）</span>
+    <span class="n">resource</span><span class="o">.</span><span class="n">setrlimit</span><span class="p">(</span>
+        <span class="n">resource</span><span class="o">.</span><span class="n">RLIMIT_AS</span><span class="p">,</span>
+        <span class="p">(</span><span class="mi">4</span> <span class="o">*</span> <span class="mi">1024</span> <span class="o">*</span> <span class="mi">1024</span> <span class="o">*</span> <span class="mi">1024</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="p">)</span>
+
+    <span class="c1"># CPU 時間上限（1時間）</span>
+    <span class="n">resource</span><span class="o">.</span><span class="n">setrlimit</span><span class="p">(</span>
+        <span class="n">resource</span><span class="o">.</span><span class="n">RLIMIT_CPU</span><span class="p">,</span>
+        <span class="p">(</span><span class="mi">3600</span><span class="p">,</span> <span class="mi">3600</span><span class="p">)</span>
+    <span class="p">)</span>
+
+    <span class="c1"># ファイルサイズ上限（100MB）</span>
+    <span class="n">resource</span><span class="o">.</span><span class="n">setrlimit</span><span class="p">(</span>
+        <span class="n">resource</span><span class="o">.</span><span class="n">RLIMIT_FSIZE</span><span class="p">,</span>
+        <span class="p">(</span><span class="mi">100</span> <span class="o">*</span> <span class="mi">1024</span> <span class="o">*</span> <span class="mi">1024</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="p">)</span>
+
+    <span class="c1"># プロセス数上限</span>
+    <span class="n">resource</span><span class="o">.</span><span class="n">setrlimit</span><span class="p">(</span>
+        <span class="n">resource</span><span class="o">.</span><span class="n">RLIMIT_NPROC</span><span class="p">,</span>
+        <span class="p">(</span><span class="mi">100</span><span class="p">,</span> <span class="mi">100</span><span class="p">)</span>
+    <span class="p">)</span>
+</code></pre></div>
+
+<h2 id="_18"><a class="toclink" href="#_18">バックアップと復旧</a></h2>
+<h3 id="_19"><a class="toclink" href="#_19">自動バックアップ</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="ch">#!/bin/bash</span>
+<span class="c1"># backup.sh</span>
+
+<span class="nv">BACKUP_DIR</span><span class="o">=</span><span class="s2">&quot;/backup/ralph&quot;</span>
+<span class="nv">TIMESTAMP</span><span class="o">=</span><span class="k">$(</span>date<span class="w"> </span>+%Y%m%d_%H%M%S<span class="k">)</span>
+
+<span class="c1"># バックアップを作成する</span>
+tar<span class="w"> </span>-czf<span class="w"> </span><span class="nv">$BACKUP_DIR</span>/ralph_<span class="nv">$TIMESTAMP</span>.tar.gz<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>/opt/ralph-orchestrator/.agent<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>/opt/ralph-orchestrator/*.json<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>/opt/ralph-orchestrator/PROMPT.md
+
+<span class="c1"># 直近30日分のみ保持する</span>
+find<span class="w"> </span><span class="nv">$BACKUP_DIR</span><span class="w"> </span>-name<span class="w"> </span><span class="s2">&quot;ralph_*.tar.gz&quot;</span><span class="w"> </span>-mtime<span class="w"> </span>+30<span class="w"> </span>-delete
+
+<span class="c1"># S3 に同期する（任意）</span>
+aws<span class="w"> </span>s3<span class="w"> </span>sync<span class="w"> </span><span class="nv">$BACKUP_DIR</span><span class="w"> </span>s3://my-bucket/ralph-backups/
+</code></pre></div>
+
+<h3 id="_20"><a class="toclink" href="#_20">災害復旧</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="ch">#!/bin/bash</span>
+<span class="c1"># restore.sh</span>
+
+<span class="nv">BACKUP_FILE</span><span class="o">=</span><span class="nv">$1</span>
+<span class="nv">RESTORE_DIR</span><span class="o">=</span><span class="s2">&quot;/opt/ralph-orchestrator&quot;</span>
+
+<span class="c1"># サービスを停止する</span>
+systemctl<span class="w"> </span>stop<span class="w"> </span>ralph
+
+<span class="c1"># バックアップを復元する</span>
+tar<span class="w"> </span>-xzf<span class="w"> </span><span class="nv">$BACKUP_FILE</span><span class="w"> </span>-C<span class="w"> </span>/
+
+<span class="c1"># Git リポジトリをリセットする</span>
+<span class="nb">cd</span><span class="w"> </span><span class="nv">$RESTORE_DIR</span>
+git<span class="w"> </span>reset<span class="w"> </span>--hard<span class="w"> </span>HEAD
+
+<span class="c1"># サービスを再起動する</span>
+systemctl<span class="w"> </span>start<span class="w"> </span>ralph
+</code></pre></div>
+
+<h2 id="_21"><a class="toclink" href="#_21">ヘルスチェック</a></h2>
+<h3 id="http"><a class="toclink" href="#http">HTTP ヘルスエンドポイント</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># health_server.py</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">flask</span><span class="w"> </span><span class="kn">import</span> <span class="n">Flask</span><span class="p">,</span> <span class="n">jsonify</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+
+<span class="n">app</span> <span class="o">=</span> <span class="n">Flask</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+<span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s1">&#39;/health&#39;</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">health</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;ヘルスチェックエンドポイント&quot;&quot;&quot;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="c1"># Ralph プロセスを確認する</span>
+        <span class="n">pid_file</span> <span class="o">=</span> <span class="s1">&#39;/var/run/ralph.pid&#39;</span>
+        <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">pid_file</span><span class="p">):</span>
+            <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">pid_file</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+                <span class="n">pid</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">read</span><span class="p">())</span>
+            <span class="n">os</span><span class="o">.</span><span class="n">kill</span><span class="p">(</span><span class="n">pid</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>  <span class="c1"># プロセスが存在するか確認する</span>
+            <span class="n">status</span> <span class="o">=</span> <span class="s1">&#39;healthy&#39;</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">status</span> <span class="o">=</span> <span class="s1">&#39;unhealthy&#39;</span>
+
+        <span class="c1"># 最後の状態を確認する</span>
+        <span class="n">state_files</span> <span class="o">=</span> <span class="n">glob</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s1">&#39;.agent/metrics/state_*.json&#39;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">state_files</span><span class="p">:</span>
+            <span class="n">latest</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">state_files</span><span class="p">)</span>
+            <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">latest</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+                <span class="n">state</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">state</span> <span class="o">=</span> <span class="p">{}</span>
+
+        <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span>
+            <span class="s1">&#39;status&#39;</span><span class="p">:</span> <span class="n">status</span><span class="p">,</span>
+            <span class="s1">&#39;iteration&#39;</span><span class="p">:</span> <span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;iteration_count&#39;</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span>
+            <span class="s1">&#39;runtime&#39;</span><span class="p">:</span> <span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;runtime&#39;</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span>
+            <span class="s1">&#39;errors&#39;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;errors&#39;</span><span class="p">,</span> <span class="p">[]))</span>
+        <span class="p">})</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;status&#39;</span><span class="p">:</span> <span class="s1">&#39;error&#39;</span><span class="p">,</span> <span class="s1">&#39;message&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">)}),</span> <span class="mi">500</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s1">&#39;__main__&#39;</span><span class="p">:</span>
+    <span class="n">app</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">host</span><span class="o">=</span><span class="s1">&#39;0.0.0.0&#39;</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">8080</span><span class="p">)</span>
+</code></pre></div>
+
+<h2 id="_22"><a class="toclink" href="#_22">本番チェックリスト</a></h2>
+<h3 id="_23"><a class="toclink" href="#_23">デプロイ前</a></h3>
+<ul>
+<li>[ ] すべてのテストが通過している</li>
+<li>[ ] 構成をレビュー済み</li>
+<li>[ ] API キーが保護されている</li>
+<li>[ ] バックアップ戦略が整っている</li>
+<li>[ ] 監視が構成されている</li>
+<li>[ ] リソース上限が設定されている</li>
+<li>[ ] セキュリティ強化を適用済み</li>
+</ul>
+<h3 id="_24"><a class="toclink" href="#_24">デプロイ</a></h3>
+<ul>
+<li>[ ] サービスがインストールされている</li>
+<li>[ ] 権限が正しく設定されている</li>
+<li>[ ] ロギングが構成されている</li>
+<li>[ ] ヘルスチェックが機能している</li>
+<li>[ ] メトリクス収集が有効になっている</li>
+<li>[ ] バックアップジョブがスケジュールされている</li>
+</ul>
+<h3 id="_25"><a class="toclink" href="#_25">デプロイ後</a></h3>
+<ul>
+<li>[ ] サービスが実行中である</li>
+<li>[ ] ログが生成されている</li>
+<li>[ ] メトリクスが可視化されている</li>
+<li>[ ] テストジョブが成功している</li>
+<li>[ ] アラートが構成されている</li>
+<li>[ ] ドキュメントが更新されている</li>
+</ul>
+  </main>
+</div>
+<div id="backdrop" class="backdrop"></div>
+<script>
+
+(function(){
+  var root=document.documentElement;
+  // --- テーマ ---
+  var darkStyle=document.getElementById('pygments-dark');
+  function applyTheme(t){
+    if(t==='dark'||t==='light'){root.setAttribute('data-theme',t);}
+    else{root.removeAttribute('data-theme');}
+    var isDark = t==='dark' || (t!=='light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    if(darkStyle){ darkStyle.media = isDark ? 'all' : 'not all'; }
+  }
+  var saved=localStorage.getItem('ralph-ja-theme')||'auto';
+  applyTheme(saved);
+  document.getElementById('themeBtn').addEventListener('click',function(){
+    var cur=localStorage.getItem('ralph-ja-theme')||'auto';
+    var next=cur==='auto'?'light':cur==='light'?'dark':'auto';
+    localStorage.setItem('ralph-ja-theme',next); applyTheme(next);
+  });
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',function(){
+    if((localStorage.getItem('ralph-ja-theme')||'auto')==='auto')applyTheme('auto');
+  });
+
+  var content=document.getElementById('content');
+
+  // --- 目次生成 ---
+  var tocList=document.getElementById('tocList');
+  var heads=content.querySelectorAll('h2, h3, h4');
+  var items=[];
+  heads.forEach(function(h){
+    if(!h.id){h.id=(h.textContent||'').trim().replace(/\s+/g,'-');}
+    var li=document.createElement('li');
+    var a=document.createElement('a');
+    a.href='#'+h.id; a.textContent=h.textContent.replace('¶','').trim();
+    a.className='lvl-'+h.tagName.substring(1);
+    li.appendChild(a); tocList.appendChild(li);
+    items.push({a:a,h:h});
+  });
+
+  // --- スクロール連動ハイライト ---
+  if('IntersectionObserver' in window && items.length){
+    var byId={}; items.forEach(function(it){byId[it.h.id]=it.a;});
+    var obs=new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if(e.isIntersecting){
+          items.forEach(function(it){it.a.classList.remove('active');});
+          var a=byId[e.target.id]; if(a){a.classList.add('active');
+            a.scrollIntoView({block:'nearest'});}
+        }
+      });
+    },{rootMargin:'0px 0px -75% 0px'});
+    heads.forEach(function(h){obs.observe(h);});
+  }
+
+  // --- コードコピー ---
+  content.querySelectorAll('pre').forEach(function(pre){
+    var btn=document.createElement('button');
+    btn.className='copy-btn'; btn.type='button'; btn.textContent='コピー';
+    btn.addEventListener('click',function(){
+      var code=pre.querySelector('code'); var text=code?code.innerText:pre.innerText;
+      navigator.clipboard.writeText(text).then(function(){
+        btn.textContent='コピー済み'; btn.classList.add('copied');
+        setTimeout(function(){btn.textContent='コピー'; btn.classList.remove('copied');},1500);
+      });
+    });
+    pre.appendChild(btn);
+  });
+
+  // --- モバイル目次開閉 ---
+  var toc=document.getElementById('toc'), backdrop=document.getElementById('backdrop');
+  function closeToc(){toc.classList.remove('open'); backdrop.classList.remove('show');}
+  document.getElementById('menuBtn').addEventListener('click',function(){
+    toc.classList.toggle('open'); backdrop.classList.toggle('show');
+  });
+  backdrop.addEventListener('click',closeToc);
+  tocList.addEventListener('click',function(e){ if(e.target.tagName==='A') closeToc(); });
+
+  // --- ページ内検索（ハイライト） ---
+  var search=document.getElementById('search');
+  function clearMarks(){
+    content.querySelectorAll('mark[data-s]').forEach(function(m){
+      var t=document.createTextNode(m.textContent); m.parentNode.replaceChild(t,m);
+    });
+    content.normalize();
+  }
+  var timer;
+  search.addEventListener('input',function(){
+    clearTimeout(timer);
+    timer=setTimeout(function(){
+      clearMarks();
+      var q=search.value.trim(); if(q.length<2)return;
+      var rx=new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'gi');
+      var walker=document.createTreeWalker(content,NodeFilter.SHOW_TEXT,{
+        acceptNode:function(n){
+          if(!n.nodeValue.trim())return NodeFilter.FILTER_REJECT;
+          var p=n.parentNode.nodeName;
+          if(p==='SCRIPT'||p==='STYLE'||p==='MARK')return NodeFilter.FILTER_REJECT;
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      });
+      var nodes=[],n; while(n=walker.nextNode())nodes.push(n);
+      var first=null;
+      nodes.forEach(function(node){
+        if(!rx.test(node.nodeValue))return; rx.lastIndex=0;
+        var span=document.createElement('span');
+        span.innerHTML=node.nodeValue.replace(rx,function(m){return '<mark data-s="1">'+m+'</mark>';});
+        node.parentNode.replaceChild(span,node);
+        while(span.firstChild)span.parentNode.insertBefore(span.firstChild,span);
+        span.parentNode.removeChild(span);
+      });
+      first=content.querySelector('mark[data-s]');
+      if(first)first.scrollIntoView({block:'center',behavior:'smooth'});
+    },200);
+  });
+})();
+
+</script>
+</body>
+</html>

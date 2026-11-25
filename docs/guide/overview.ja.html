@@ -1,0 +1,725 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>概要 — Ralph Orchestrator 日本語ドキュメント</title>
+<style>
+
+:root{
+  --bg:#ffffff; --fg:#1f2328; --muted:#57606a; --border:#d0d7de;
+  --link:#6f42c1; --accent:#8250df; --code-bg:#f6f8fa; --topbar:#faf8ff;
+  --sidebar:#fbfaff; --mark:#fff3bf;
+}
+:root[data-theme="dark"]{
+  --bg:#0d1117; --fg:#e6edf3; --muted:#9198a1; --border:#30363d;
+  --link:#d2a8ff; --accent:#bc8cff; --code-bg:#161b22; --topbar:#161b22;
+  --sidebar:#0f141b; --mark:#5c4a00;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0d1117; --fg:#e6edf3; --muted:#9198a1; --border:#30363d;
+    --link:#d2a8ff; --accent:#bc8cff; --code-bg:#161b22; --topbar:#161b22;
+    --sidebar:#0f141b; --mark:#5c4a00;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Kaku Gothic ProN","Noto Sans JP",Meiryo,sans-serif;
+  line-height:1.75; font-size:16px;
+}
+.topbar{
+  position:sticky; top:0; z-index:30; display:flex; align-items:center; gap:.6rem;
+  padding:.5rem .9rem; background:var(--topbar); border-bottom:1px solid var(--border);
+  backdrop-filter:saturate(1.2) blur(4px);
+}
+.brand{font-weight:700} .brand small{color:var(--muted); font-weight:500; font-size:.75em}
+.spacer{flex:1}
+.icon-btn{
+  border:1px solid var(--border); background:transparent; color:var(--fg);
+  border-radius:8px; padding:.35rem .55rem; cursor:pointer; font-size:1rem; line-height:1;
+}
+.icon-btn:hover{border-color:var(--accent)}
+.search{
+  border:1px solid var(--border); background:var(--bg); color:var(--fg);
+  border-radius:8px; padding:.4rem .6rem; min-width:8rem; max-width:16rem;
+}
+.layout{display:flex; align-items:flex-start; max-width:1200px; margin:0 auto}
+.toc{
+  position:sticky; top:56px; align-self:flex-start; width:270px; flex:0 0 270px;
+  max-height:calc(100vh - 56px); overflow:auto; padding:1rem .75rem;
+  background:var(--sidebar); border-right:1px solid var(--border);
+}
+.toc-title{font-size:.8rem; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin-bottom:.5rem}
+.toc ul{list-style:none; margin:0; padding:0}
+.toc li{margin:.05rem 0}
+.toc a{display:block; text-decoration:none; color:var(--muted); padding:.2rem .5rem; border-radius:6px; font-size:.9rem}
+.toc a:hover{background:rgba(130,80,223,.1); color:var(--fg)}
+.toc a.active{color:var(--accent); background:rgba(130,80,223,.14); font-weight:600}
+.toc .lvl-3{padding-left:1rem} .toc .lvl-4{padding-left:1.75rem; font-size:.85rem}
+.content{flex:1 1 auto; min-width:0; padding:1.5rem 2rem 6rem; max-width:820px}
+.content h1{font-size:1.9rem; border-bottom:2px solid var(--border); padding-bottom:.3rem; margin-top:0}
+.content h2{font-size:1.45rem; border-bottom:1px solid var(--border); padding-bottom:.25rem; margin-top:2rem}
+.content h3{font-size:1.2rem; margin-top:1.6rem}
+.content a{color:var(--link)}
+.content code{background:var(--code-bg); padding:.15em .4em; border-radius:6px; font-size:.88em;
+  font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.content pre{background:var(--code-bg); border:1px solid var(--border); border-radius:10px;
+  padding:1rem; overflow-x:auto; position:relative}
+.content pre code{background:none; padding:0}
+.content blockquote{border-left:4px solid var(--accent); margin:1rem 0; padding:.2rem 1rem; color:var(--muted)}
+.content table{border-collapse:collapse; width:100%; display:block; overflow-x:auto}
+.content th,.content td{border:1px solid var(--border); padding:.5rem .75rem}
+.content th{background:var(--code-bg)}
+.content img{max-width:100%; height:auto}
+.content .headerlink{opacity:0; text-decoration:none; margin-left:.35rem; color:var(--muted)}
+.content h1:hover .headerlink,.content h2:hover .headerlink,
+.content h3:hover .headerlink,.content h4:hover .headerlink{opacity:1}
+mark{background:var(--mark); color:inherit; border-radius:3px}
+.copy-btn{
+  position:absolute; top:.5rem; right:.5rem; font-size:.72rem; padding:.2rem .5rem;
+  border:1px solid var(--border); background:var(--bg); color:var(--muted);
+  border-radius:6px; cursor:pointer; opacity:0; transition:opacity .15s;
+}
+pre:hover .copy-btn{opacity:1}
+.copy-btn.copied{color:var(--accent); border-color:var(--accent)}
+.backdrop{display:none; position:fixed; inset:56px 0 0 0; background:rgba(0,0,0,.4); z-index:20}
+@media (max-width:820px){
+  .toc{position:fixed; top:56px; left:0; bottom:0; transform:translateX(-100%);
+       transition:transform .2s ease; z-index:25; width:80%; max-width:320px}
+  .toc.open{transform:translateX(0)}
+  .backdrop.show{display:block}
+  .content{padding:1.25rem 1.1rem 5rem}
+  .search{min-width:5rem}
+}
+@media (min-width:821px){ #menuBtn{display:none} }
+
+/* --- Pygments (light) --- */
+pre { line-height: 125%; }
+td.linenos .normal { color: inherit; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+span.linenos { color: inherit; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+td.linenos .special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+.codehilite .hll { background-color: #ffffcc }
+.codehilite { background: #f8f8f8; }
+.codehilite .c { color: #3D7B7B; font-style: italic } /* Comment */
+.codehilite .err { border: 1px solid #F00 } /* Error */
+.codehilite .k { color: #008000; font-weight: bold } /* Keyword */
+.codehilite .o { color: #666 } /* Operator */
+.codehilite .ch { color: #3D7B7B; font-style: italic } /* Comment.Hashbang */
+.codehilite .cm { color: #3D7B7B; font-style: italic } /* Comment.Multiline */
+.codehilite .cp { color: #9C6500 } /* Comment.Preproc */
+.codehilite .cpf { color: #3D7B7B; font-style: italic } /* Comment.PreprocFile */
+.codehilite .c1 { color: #3D7B7B; font-style: italic } /* Comment.Single */
+.codehilite .cs { color: #3D7B7B; font-style: italic } /* Comment.Special */
+.codehilite .gd { color: #A00000 } /* Generic.Deleted */
+.codehilite .ge { font-style: italic } /* Generic.Emph */
+.codehilite .ges { font-weight: bold; font-style: italic } /* Generic.EmphStrong */
+.codehilite .gr { color: #E40000 } /* Generic.Error */
+.codehilite .gh { color: #000080; font-weight: bold } /* Generic.Heading */
+.codehilite .gi { color: #008400 } /* Generic.Inserted */
+.codehilite .go { color: #717171 } /* Generic.Output */
+.codehilite .gp { color: #000080; font-weight: bold } /* Generic.Prompt */
+.codehilite .gs { font-weight: bold } /* Generic.Strong */
+.codehilite .gu { color: #800080; font-weight: bold } /* Generic.Subheading */
+.codehilite .gt { color: #04D } /* Generic.Traceback */
+.codehilite .kc { color: #008000; font-weight: bold } /* Keyword.Constant */
+.codehilite .kd { color: #008000; font-weight: bold } /* Keyword.Declaration */
+.codehilite .kn { color: #008000; font-weight: bold } /* Keyword.Namespace */
+.codehilite .kp { color: #008000 } /* Keyword.Pseudo */
+.codehilite .kr { color: #008000; font-weight: bold } /* Keyword.Reserved */
+.codehilite .kt { color: #B00040 } /* Keyword.Type */
+.codehilite .m { color: #666 } /* Literal.Number */
+.codehilite .s { color: #BA2121 } /* Literal.String */
+.codehilite .na { color: #687822 } /* Name.Attribute */
+.codehilite .nb { color: #008000 } /* Name.Builtin */
+.codehilite .nc { color: #00F; font-weight: bold } /* Name.Class */
+.codehilite .no { color: #800 } /* Name.Constant */
+.codehilite .nd { color: #A2F } /* Name.Decorator */
+.codehilite .ni { color: #717171; font-weight: bold } /* Name.Entity */
+.codehilite .ne { color: #CB3F38; font-weight: bold } /* Name.Exception */
+.codehilite .nf { color: #00F } /* Name.Function */
+.codehilite .nl { color: #767600 } /* Name.Label */
+.codehilite .nn { color: #00F; font-weight: bold } /* Name.Namespace */
+.codehilite .nt { color: #008000; font-weight: bold } /* Name.Tag */
+.codehilite .nv { color: #19177C } /* Name.Variable */
+.codehilite .ow { color: #A2F; font-weight: bold } /* Operator.Word */
+.codehilite .w { color: #BBB } /* Text.Whitespace */
+.codehilite .mb { color: #666 } /* Literal.Number.Bin */
+.codehilite .mf { color: #666 } /* Literal.Number.Float */
+.codehilite .mh { color: #666 } /* Literal.Number.Hex */
+.codehilite .mi { color: #666 } /* Literal.Number.Integer */
+.codehilite .mo { color: #666 } /* Literal.Number.Oct */
+.codehilite .sa { color: #BA2121 } /* Literal.String.Affix */
+.codehilite .sb { color: #BA2121 } /* Literal.String.Backtick */
+.codehilite .sc { color: #BA2121 } /* Literal.String.Char */
+.codehilite .dl { color: #BA2121 } /* Literal.String.Delimiter */
+.codehilite .sd { color: #BA2121; font-style: italic } /* Literal.String.Doc */
+.codehilite .s2 { color: #BA2121 } /* Literal.String.Double */
+.codehilite .se { color: #AA5D1F; font-weight: bold } /* Literal.String.Escape */
+.codehilite .sh { color: #BA2121 } /* Literal.String.Heredoc */
+.codehilite .si { color: #A45A77; font-weight: bold } /* Literal.String.Interpol */
+.codehilite .sx { color: #008000 } /* Literal.String.Other */
+.codehilite .sr { color: #A45A77 } /* Literal.String.Regex */
+.codehilite .s1 { color: #BA2121 } /* Literal.String.Single */
+.codehilite .ss { color: #19177C } /* Literal.String.Symbol */
+.codehilite .bp { color: #008000 } /* Name.Builtin.Pseudo */
+.codehilite .fm { color: #00F } /* Name.Function.Magic */
+.codehilite .vc { color: #19177C } /* Name.Variable.Class */
+.codehilite .vg { color: #19177C } /* Name.Variable.Global */
+.codehilite .vi { color: #19177C } /* Name.Variable.Instance */
+.codehilite .vm { color: #19177C } /* Name.Variable.Magic */
+.codehilite .il { color: #666 } /* Literal.Number.Integer.Long */
+/* --- Pygments (dark) --- */
+:root[data-theme="dark"] .codehilite,
+@media (prefers-color-scheme: dark) {}
+</style>
+<style id="pygments-dark" media="not all">
+pre { line-height: 125%; }
+td.linenos .normal { color: inherit; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+span.linenos { color: inherit; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+td.linenos .special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+.codehilite .hll { background-color: #49483e }
+.codehilite { background: #272822; color: #F8F8F2 }
+.codehilite .c { color: #959077 } /* Comment */
+.codehilite .err { color: #ED007E; background-color: #1E0010 } /* Error */
+.codehilite .esc { color: #F8F8F2 } /* Escape */
+.codehilite .g { color: #F8F8F2 } /* Generic */
+.codehilite .k { color: #66D9EF } /* Keyword */
+.codehilite .l { color: #AE81FF } /* Literal */
+.codehilite .n { color: #F8F8F2 } /* Name */
+.codehilite .o { color: #FF4689 } /* Operator */
+.codehilite .x { color: #F8F8F2 } /* Other */
+.codehilite .p { color: #F8F8F2 } /* Punctuation */
+.codehilite .ch { color: #959077 } /* Comment.Hashbang */
+.codehilite .cm { color: #959077 } /* Comment.Multiline */
+.codehilite .cp { color: #959077 } /* Comment.Preproc */
+.codehilite .cpf { color: #959077 } /* Comment.PreprocFile */
+.codehilite .c1 { color: #959077 } /* Comment.Single */
+.codehilite .cs { color: #959077 } /* Comment.Special */
+.codehilite .gd { color: #FF4689 } /* Generic.Deleted */
+.codehilite .ge { color: #F8F8F2; font-style: italic } /* Generic.Emph */
+.codehilite .ges { color: #F8F8F2; font-weight: bold; font-style: italic } /* Generic.EmphStrong */
+.codehilite .gr { color: #F8F8F2 } /* Generic.Error */
+.codehilite .gh { color: #F8F8F2 } /* Generic.Heading */
+.codehilite .gi { color: #A6E22E } /* Generic.Inserted */
+.codehilite .go { color: #66D9EF } /* Generic.Output */
+.codehilite .gp { color: #FF4689; font-weight: bold } /* Generic.Prompt */
+.codehilite .gs { color: #F8F8F2; font-weight: bold } /* Generic.Strong */
+.codehilite .gu { color: #959077 } /* Generic.Subheading */
+.codehilite .gt { color: #F8F8F2 } /* Generic.Traceback */
+.codehilite .kc { color: #66D9EF } /* Keyword.Constant */
+.codehilite .kd { color: #66D9EF } /* Keyword.Declaration */
+.codehilite .kn { color: #FF4689 } /* Keyword.Namespace */
+.codehilite .kp { color: #66D9EF } /* Keyword.Pseudo */
+.codehilite .kr { color: #66D9EF } /* Keyword.Reserved */
+.codehilite .kt { color: #66D9EF } /* Keyword.Type */
+.codehilite .ld { color: #E6DB74 } /* Literal.Date */
+.codehilite .m { color: #AE81FF } /* Literal.Number */
+.codehilite .s { color: #E6DB74 } /* Literal.String */
+.codehilite .na { color: #A6E22E } /* Name.Attribute */
+.codehilite .nb { color: #F8F8F2 } /* Name.Builtin */
+.codehilite .nc { color: #A6E22E } /* Name.Class */
+.codehilite .no { color: #66D9EF } /* Name.Constant */
+.codehilite .nd { color: #A6E22E } /* Name.Decorator */
+.codehilite .ni { color: #F8F8F2 } /* Name.Entity */
+.codehilite .ne { color: #A6E22E } /* Name.Exception */
+.codehilite .nf { color: #A6E22E } /* Name.Function */
+.codehilite .nl { color: #F8F8F2 } /* Name.Label */
+.codehilite .nn { color: #F8F8F2 } /* Name.Namespace */
+.codehilite .nx { color: #A6E22E } /* Name.Other */
+.codehilite .py { color: #F8F8F2 } /* Name.Property */
+.codehilite .nt { color: #FF4689 } /* Name.Tag */
+.codehilite .nv { color: #F8F8F2 } /* Name.Variable */
+.codehilite .ow { color: #FF4689 } /* Operator.Word */
+.codehilite .pm { color: #F8F8F2 } /* Punctuation.Marker */
+.codehilite .w { color: #F8F8F2 } /* Text.Whitespace */
+.codehilite .mb { color: #AE81FF } /* Literal.Number.Bin */
+.codehilite .mf { color: #AE81FF } /* Literal.Number.Float */
+.codehilite .mh { color: #AE81FF } /* Literal.Number.Hex */
+.codehilite .mi { color: #AE81FF } /* Literal.Number.Integer */
+.codehilite .mo { color: #AE81FF } /* Literal.Number.Oct */
+.codehilite .sa { color: #E6DB74 } /* Literal.String.Affix */
+.codehilite .sb { color: #E6DB74 } /* Literal.String.Backtick */
+.codehilite .sc { color: #E6DB74 } /* Literal.String.Char */
+.codehilite .dl { color: #E6DB74 } /* Literal.String.Delimiter */
+.codehilite .sd { color: #E6DB74 } /* Literal.String.Doc */
+.codehilite .s2 { color: #E6DB74 } /* Literal.String.Double */
+.codehilite .se { color: #AE81FF } /* Literal.String.Escape */
+.codehilite .sh { color: #E6DB74 } /* Literal.String.Heredoc */
+.codehilite .si { color: #E6DB74 } /* Literal.String.Interpol */
+.codehilite .sx { color: #E6DB74 } /* Literal.String.Other */
+.codehilite .sr { color: #E6DB74 } /* Literal.String.Regex */
+.codehilite .s1 { color: #E6DB74 } /* Literal.String.Single */
+.codehilite .ss { color: #E6DB74 } /* Literal.String.Symbol */
+.codehilite .bp { color: #F8F8F2 } /* Name.Builtin.Pseudo */
+.codehilite .fm { color: #A6E22E } /* Name.Function.Magic */
+.codehilite .vc { color: #F8F8F2 } /* Name.Variable.Class */
+.codehilite .vg { color: #F8F8F2 } /* Name.Variable.Global */
+.codehilite .vi { color: #F8F8F2 } /* Name.Variable.Instance */
+.codehilite .vm { color: #F8F8F2 } /* Name.Variable.Magic */
+.codehilite .il { color: #AE81FF } /* Literal.Number.Integer.Long */
+</style>
+</head>
+<body>
+<header class="topbar">
+  <button id="menuBtn" class="icon-btn" aria-label="目次を開閉">☰</button>
+  <span class="brand">Ralph Orchestrator <small>日本語ドキュメント</small></span>
+  <div class="spacer"></div>
+  <input id="search" class="search" type="search" placeholder="ページ内を検索…" aria-label="ページ内検索">
+  <button id="themeBtn" class="icon-btn" aria-label="テーマ切替">🌓</button>
+</header>
+<div class="layout">
+  <nav id="toc" class="toc" aria-label="目次"><div class="toc-title">目次</div><ul id="tocList"></ul></nav>
+  <main id="content" class="content">
+<h1 id="_1"><a class="toclink" href="#_1">概要</a></h1>
+<h2 id="ralph-orchestrator"><a class="toclink" href="#ralph-orchestrator">Ralph Orchestrator とは？</a></h2>
+<p>Ralph Orchestrator は、AI エージェント向けの Ralph Wiggum オーケストレーションテクニックの、
+実用的で初期段階（アルファ版）の実装です。タスクが完了するまで AI エージェントを継続的な
+ループで実行するための堅牢なフレームワークを、実用的な安全性・監視・コスト制御とともに
+提供します。今日でも動作しますが、ときどき粗い部分があり、リリース間で API/設定に破壊的
+変更があることを想定してください。</p>
+<p>このシステムは、ザ・シンプソンズの Ralph Wiggum にちなんで名付けられ、粘り強い反復の哲学を
+体現しています。「僕が英語で失敗する？そんなの不可能だい！」 - 成功するまでただ挑み続ける
+のです。</p>
+<h2 id="_2"><a class="toclink" href="#_2">主要概念</a></h2>
+<h3 id="ralph-wiggum"><a class="toclink" href="#ralph-wiggum">Ralph Wiggum テクニック</a></h3>
+<p>その核心は、<a href="https://ghuntley.com/ralph/">Geoffrey Huntley</a> が当初定義したとおり、
+<strong>「Ralph は Bash ループである」</strong> というものです。</p>
+<div class="codehilite"><pre><span></span><code><span class="k">while</span><span class="w"> </span>:<span class="p">;</span><span class="w"> </span><span class="k">do</span><span class="w"> </span>cat<span class="w"> </span>PROMPT.md<span class="w"> </span><span class="p">|</span><span class="w"> </span>claude<span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="k">done</span>
+</code></pre></div>
+
+<p>この AI オーケストレーションへの単純でありながら強力なアプローチは、「非決定的な世界において
+決定的にダメ」です。予測可能な形で失敗しますが、その失敗は対処できる形です。このテクニックは
+「結果整合性への信頼と信念」を必要とし、反復的なチューニングを通じて改善します。</p>
+<p>ワークフローは単純明快です。</p>
+<ol>
+<li>プロンプトファイル（PROMPT.md）を通じて <strong>AI にタスクを与える</strong></li>
+<li>問題に対して継続的に <strong>反復させる</strong></li>
+<li>チェックポイントとメトリクスを通じて <strong>進捗を監視する</strong></li>
+<li>完了したとき、または上限に達したときに <strong>停止する</strong></li>
+</ol>
+<p>このアプローチは、複数のイテレーションを通じて自己修正し改善する AI の能力を活かします。
+逐次的に指示するのではなく成功基準を最初に定義することで、典型的な AI ワークフローを
+反転させます。</p>
+<h3 id="claude-code"><a class="toclink" href="#claude-code">強化された実装: Claude Code プラグイン</a></h3>
+<p>Claude Code 向けの公式
+<a href="https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum">ralph-wiggum プラグイン</a>
+は、基本的なテクニックを次のように拡張します。</p>
+<ul>
+<li><strong>Stop フックの仕組み</strong>: 終了コード 2 を横取りしてプロンプトを再注入し、反復を継続する</li>
+<li><strong>イテレーション上限</strong>: 暴走ループを防ぐ主要な安全機構</li>
+<li><strong>完了の約束</strong>: タスク完了を検出するための任意の文字列マッチ</li>
+<li><strong>完全なコンテキスト保持</strong>: 各サイクルは、以前の実行からの変更済みファイルと git 履歴に
+  アクセスできる</li>
+</ul>
+<p><strong>利用可能なコマンド:</strong></p>
+<table>
+<thead>
+<tr>
+<th>コマンド</th>
+<th>説明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/ralph-loop "&lt;prompt&gt;"</code></td>
+<td>任意の <code>--max-iterations</code> 付きで自律ループを開始する</td>
+</tr>
+<tr>
+<td><code>/cancel-ralph</code></td>
+<td>アクティブな Ralph ループを停止する</td>
+</tr>
+<tr>
+<td><code>/help</code></td>
+<td>プラグインのヘルプとドキュメントを表示する</td>
+</tr>
+</tbody>
+</table>
+<p>Claude Code との詳細な統合については、
+<a href="https://paddo.dev/blog/ralph-wiggum-autonomous-loops/">paddo.dev/blog/ralph-wiggum-autonomous-loops</a>
+を参照してください。</p>
+<h3 id="_3"><a class="toclink" href="#_3">コアコンポーネント</a></h3>
+<div class="codehilite"><pre><span></span><code>graph TB
+    A[Prompt File] --&gt; B[Ralph Orchestrator]
+    B --&gt; C{AI Agent}
+    C --&gt; D[Claude]
+    C --&gt; E[Q Chat]
+    C --&gt; F[Gemini]
+    D --&gt; G[Execute Task]
+    E --&gt; G
+    F --&gt; G
+    G --&gt; H{Task Complete?}
+    H --&gt;|No| B
+    H --&gt;|Yes| I[End]
+    B --&gt; J[Checkpointing]
+    B --&gt; K[Metrics]
+    B --&gt; L[Cost Control]
+</code></pre></div>
+
+<p>!!! warning "コストへの注意"
+自律ループは大量のトークンを消費します。<strong>大きなコードベースでの 50 イテレーションの
+サイクルは、API クレジットで 50〜100 ドル以上かかることがあり</strong>、サブスクリプションの上限を
+すぐに使い切ります。常にイテレーション上限を設定し、コストを注意深く監視してください。
+戦略については <a href="cost-management.ja.html">コスト管理</a> を参照してください。</p>
+<h2 id="_4"><a class="toclink" href="#_4">仕組み</a></h2>
+<h3 id="1"><a class="toclink" href="#1">1. 初期化フェーズ</a></h3>
+<p>Ralph Orchestrator を起動すると、次を行います。</p>
+<ul>
+<li>セキュリティのためにプロンプトファイルを検証する</li>
+<li>利用可能な AI エージェントを検出する</li>
+<li>監視とメトリクス収集をセットアップする</li>
+<li>チェックポイント用の作業ディレクトリを作成する</li>
+<li>コストとトークンの追跡を初期化する</li>
+</ul>
+<h3 id="2"><a class="toclink" href="#2">2. イテレーションループ</a></h3>
+<p>メインのオーケストレーションループ:</p>
+<ol>
+<li><strong>事前確認</strong>: トークン/コストの上限を超えていないか検証する</li>
+<li><strong>コンテキスト管理</strong>: コンテキストウィンドウの要約が必要か確認する</li>
+<li><strong>エージェント実行</strong>: 選択した AI エージェントをプロンプトとともに実行する</li>
+<li><strong>応答処理</strong>: エージェントの出力を取り込み分析する</li>
+<li><strong>メトリクス収集</strong>: トークン、コスト、パフォーマンスを追跡する</li>
+<li><strong>進捗評価</strong>: 目標に向けた進捗を監視する</li>
+<li><strong>チェックポイント</strong>: 設定された間隔で状態を保存する</li>
+<li><strong>繰り返し</strong>: タスクが完了するか上限に達するまで継続する</li>
+</ol>
+<h3 id="3"><a class="toclink" href="#3">3. 安全機構</a></h3>
+<p>複数の保護レイヤーが安全な運用を保証します。</p>
+<div class="codehilite"><pre><span></span><code>                                 🛡️ Five Safety Mechanisms
+
+  ┌───────────────────┐     ┌───────────────────┐     ┌───────────────────┐
+  │  Iteration Limit  │     │   Runtime Limit   │     │    Cost Limit     │
+  │ (default: 100)    │     │   (default: 4h)   │     │   (default: $10)  │
+  └───────────────────┘     └───────────────────┘     └───────────────────┘
+            │                         │                         │
+            │                         │                         │
+            ∨                         ∨                         ∨
+          ╔═══════════════════════════════════════════════════════╗
+          ║                    SafetyGuard.check()                ║
+          ╚═══════════════════════════════════════════════════════╝
+            ∧                         ∧                         ∧
+            │                         │                         │
+            │                         │                         │
+  ┌───────────────────┐     ┌───────────────────┐     ┌───────────────────┐
+  │ Consecutive Fails │     │   Loop Detection  │     │ Completion Marker │
+  │   (default: 5)    │     │   (90% similar)   │     │ [x] TASK_COMPLETE │
+  └───────────────────┘     └───────────────────┘     └───────────────────┘
+</code></pre></div>
+
+<details>
+<summary>graph-easy のソース</summary>
+
+
+<div class="codehilite"><pre><span></span><code>graph { label: &quot;🛡️ Five Safety Mechanisms&quot;; flow: south; }
+[ Iteration Limit (default: 100) ] -&gt; [ SafetyGuard.check() ] { border: double; }
+[ Runtime Limit (default: 4h) ] -&gt; [ SafetyGuard.check() ]
+[ Cost Limit (default: $10) ] -&gt; [ SafetyGuard.check() ]
+[ Consecutive Fails (default: 5) ] -&gt; [ SafetyGuard.check() ]
+[ Loop Detection (90% similar) ] -&gt; [ SafetyGuard.check() ]
+[ Completion Marker [x] TASK_COMPLETE ] -&gt; [ SafetyGuard.check() ]
+</code></pre></div>
+
+
+
+</details>
+
+<ul>
+<li><strong>入力検証</strong>: インジェクション攻撃を防ぐためにプロンプトをサニタイズする</li>
+<li><strong>リソース上限</strong>: イテレーション、実行時間、コストの境界を強制する</li>
+<li><strong>完了マーカー</strong>: プロンプトファイルで <code>- [x] TASK_COMPLETE</code> を検出すると早期終了する</li>
+<li><strong>完了の約束</strong>: エージェントの出力に設定された文字列（既定: <code>LOOP_COMPLETE</code>）が含まれると
+  早期終了する</li>
+<li><strong>ループ検出</strong>: エージェントの出力が最近の履歴と 90% 以上類似すると停止する</li>
+<li><strong>連続失敗の上限</strong>: 繰り返しの失敗の後に停止する（既定: 5）</li>
+<li><strong>コンテキストのオーバーフロー</strong>: 上限に近づくと自動的に要約する</li>
+<li><strong>グレースフルシャットダウン</strong>: 割り込みを処理し状態を保存する</li>
+<li><strong>エラー回復</strong>: 指数バックオフでリトライする</li>
+</ul>
+<p>出力の類似度検出に関する詳細なドキュメントは <a href="../advanced/loop-detection.ja.html">ループ検出</a>
+を参照してください。</p>
+<h3 id="4"><a class="toclink" href="#4">4. 完了</a></h3>
+<p>タスクが完了するか上限に達すると、次を行います。</p>
+<ul>
+<li>最終的なメトリクスが保存される</li>
+<li>分析のために状態が永続化される</li>
+<li>使用統計が報告される</li>
+<li>詳細なログがエクスポートされる</li>
+</ul>
+<h2 id="_5"><a class="toclink" href="#_5">ユースケース</a></h2>
+<p>Ralph Orchestrator が得意とすること:</p>
+<h3 id="_6"><a class="toclink" href="#_6">最適なユースケース</a></h3>
+<ul>
+<li><strong>大規模なリファクタリング</strong>: フレームワークの移行、依存関係のアップグレード</li>
+<li><strong>バッチ操作</strong>: ドキュメント生成、コードの標準化</li>
+<li><strong>テストカバレッジの拡大</strong>: 包括的なテストスイートの生成</li>
+<li><strong>グリーンフィールドプロジェクトの足場作り</strong>: 新規プロジェクトのセットアップと定型コード</li>
+</ul>
+<h3 id="_7"><a class="toclink" href="#_7">推奨されないもの</a></h3>
+<ul>
+<li>明確な完了基準を欠く曖昧な要件</li>
+<li>人間の推論を要するアーキテクチャの判断</li>
+<li>セキュリティに敏感なコード（認証、決済）</li>
+<li>人間の好奇心を要する探索的な作業</li>
+</ul>
+<p>!!! info "実世界の成果（2024〜2025）"
+このテクニックはスケールでの有効性が実証されています。</p>
+<div class="codehilite"><pre><span></span><code>- **Y Combinator ハッカソン**: チームが Ralph ループを使って一晩で 6 つのリポジトリを
+  出荷
+- **契約 MVP**: 1 人のエンジニアが、わずか **297 ドル** の API 費用で 5 万ドルの契約を
+  完了
+- **言語開発**: Geoffrey Huntley の 3 か月のループが、完全な難解プログラミング言語
+  （CURSED）を生み出した — AI は、どの学習データにも存在しない、自ら発明した言語で
+  うまくプログラミングした
+
+これらの成果は、明確なプロンプトと忍耐があれば、Ralph が新規プロジェクトのかなりの
+外注作業を置き換えられることを示しています。
+</code></pre></div>
+
+<h3 id="_8"><a class="toclink" href="#_8">ソフトウェア開発</a></h3>
+<ul>
+<li>仕様から完全なアプリケーションを書く</li>
+<li>大規模なコードベースをリファクタリングする</li>
+<li>複雑な機能を反復的に実装する</li>
+<li>難しい問題をデバッグする</li>
+</ul>
+<h3 id="_9"><a class="toclink" href="#_9">コンテンツ作成</a></h3>
+<ul>
+<li>包括的なドキュメントを書く</li>
+<li>テストスイートを生成する</li>
+<li>API 仕様を作成する</li>
+<li>研修資料を作成する</li>
+</ul>
+<h3 id="_10"><a class="toclink" href="#_10">データ処理</a></h3>
+<ul>
+<li>大規模なデータセットを分析する</li>
+<li>レポートを生成する</li>
+<li>データ変換パイプライン</li>
+<li>ETL 操作</li>
+</ul>
+<h3 id="_11"><a class="toclink" href="#_11">調査と分析</a></h3>
+<ul>
+<li>文献レビュー</li>
+<li>市場調査</li>
+<li>競合分析</li>
+<li>技術調査</li>
+</ul>
+<h2 id="_12"><a class="toclink" href="#_12">メリット</a></h2>
+<h3 id="_13"><a class="toclink" href="#_13">🚀 生産性</a></h3>
+<ul>
+<li>複雑な多段階タスクを自動化する</li>
+<li>人間の介入を減らす</li>
+<li>複数のエージェントで作業を並列化する</li>
+<li>24 時間 365 日の運用能力</li>
+</ul>
+<h3 id="_14"><a class="toclink" href="#_14">💰 コスト管理</a></h3>
+<ul>
+<li>リアルタイムのコスト追跡</li>
+<li>設定可能な支出上限</li>
+<li>エージェントごとの価格モデル</li>
+<li>トークン使用の最適化</li>
+</ul>
+<h3 id="_15"><a class="toclink" href="#_15">🔒 セキュリティ</a></h3>
+<ul>
+<li>入力のサニタイズ</li>
+<li>コマンドインジェクションの防止</li>
+<li>パストラバーサルの保護</li>
+<li>監査証跡</li>
+</ul>
+<h3 id="_16"><a class="toclink" href="#_16">📊 可観測性</a></h3>
+<ul>
+<li>詳細なメトリクス収集</li>
+<li>パフォーマンス監視</li>
+<li>成功/失敗の追跡</li>
+<li>リソース使用率</li>
+</ul>
+<h3 id="_17"><a class="toclink" href="#_17">🔄 信頼性</a></h3>
+<ul>
+<li>自動リトライ</li>
+<li>状態の永続化</li>
+<li>チェックポイントからの回復</li>
+<li>グレースフルな縮退</li>
+</ul>
+<h2 id="_18"><a class="toclink" href="#_18">アーキテクチャの概要</a></h2>
+<div class="codehilite"><pre><span></span><code>graph LR
+    subgraph &quot;Input Layer&quot;
+        A[CLI Arguments]
+        B[Prompt File]
+        C[Configuration]
+    end
+
+    subgraph &quot;Orchestration Core&quot;
+        D[Ralph Orchestrator]
+        E[Agent Manager]
+        F[Context Manager]
+        G[Metrics Collector]
+    end
+
+    subgraph &quot;AI Agents&quot;
+        H[Claude]
+        I[Q Chat]
+        J[Gemini]
+    end
+
+    subgraph &quot;Persistence&quot;
+        K[Git Checkpoints]
+        L[Prompt Archives]
+        M[Metrics Store]
+    end
+
+    A --&gt; D
+    B --&gt; D
+    C --&gt; D
+    D --&gt; E
+    E --&gt; H
+    E --&gt; I
+    E --&gt; J
+    D --&gt; F
+    D --&gt; G
+    D --&gt; K
+    D --&gt; L
+    G --&gt; M
+</code></pre></div>
+
+<h2 id="_19"><a class="toclink" href="#_19">はじめに</a></h2>
+<p>Ralph Orchestrator を使い始めるには:</p>
+<ol>
+<li><strong>ツール</strong>と少なくとも 1 つの AI エージェントを<strong>インストールする</strong></li>
+<li>タスクを記した<strong>プロンプトファイルを作成する</strong></li>
+<li>適切な上限を設定して<strong>オーケストレーターを実行する</strong></li>
+<li>ログとメトリクスを通じて<strong>進捗を監視する</strong></li>
+<li>完了したら<strong>結果を取得する</strong></li>
+</ol>
+<p>詳しい手順は <a href="../quick-start.ja.html">クイックスタート</a> ガイドを参照してください。</p>
+<h2 id="_20"><a class="toclink" href="#_20">次のステップ</a></h2>
+<ul>
+<li><a href="configuration.ja.html">設定</a> オプションについて学ぶ</li>
+<li><a href="agents.ja.html">エージェント</a> の選択と機能を理解する</li>
+<li>最良の結果のために <a href="prompts.ja.html">プロンプト</a> エンジニアリングを習得する</li>
+<li><a href="cost-management.ja.html">コスト管理</a> の戦略を探る</li>
+</ul>
+  </main>
+</div>
+<div id="backdrop" class="backdrop"></div>
+<script>
+
+(function(){
+  var root=document.documentElement;
+  // --- テーマ ---
+  var darkStyle=document.getElementById('pygments-dark');
+  function applyTheme(t){
+    if(t==='dark'||t==='light'){root.setAttribute('data-theme',t);}
+    else{root.removeAttribute('data-theme');}
+    var isDark = t==='dark' || (t!=='light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    if(darkStyle){ darkStyle.media = isDark ? 'all' : 'not all'; }
+  }
+  var saved=localStorage.getItem('ralph-ja-theme')||'auto';
+  applyTheme(saved);
+  document.getElementById('themeBtn').addEventListener('click',function(){
+    var cur=localStorage.getItem('ralph-ja-theme')||'auto';
+    var next=cur==='auto'?'light':cur==='light'?'dark':'auto';
+    localStorage.setItem('ralph-ja-theme',next); applyTheme(next);
+  });
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',function(){
+    if((localStorage.getItem('ralph-ja-theme')||'auto')==='auto')applyTheme('auto');
+  });
+
+  var content=document.getElementById('content');
+
+  // --- 目次生成 ---
+  var tocList=document.getElementById('tocList');
+  var heads=content.querySelectorAll('h2, h3, h4');
+  var items=[];
+  heads.forEach(function(h){
+    if(!h.id){h.id=(h.textContent||'').trim().replace(/\s+/g,'-');}
+    var li=document.createElement('li');
+    var a=document.createElement('a');
+    a.href='#'+h.id; a.textContent=h.textContent.replace('¶','').trim();
+    a.className='lvl-'+h.tagName.substring(1);
+    li.appendChild(a); tocList.appendChild(li);
+    items.push({a:a,h:h});
+  });
+
+  // --- スクロール連動ハイライト ---
+  if('IntersectionObserver' in window && items.length){
+    var byId={}; items.forEach(function(it){byId[it.h.id]=it.a;});
+    var obs=new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if(e.isIntersecting){
+          items.forEach(function(it){it.a.classList.remove('active');});
+          var a=byId[e.target.id]; if(a){a.classList.add('active');
+            a.scrollIntoView({block:'nearest'});}
+        }
+      });
+    },{rootMargin:'0px 0px -75% 0px'});
+    heads.forEach(function(h){obs.observe(h);});
+  }
+
+  // --- コードコピー ---
+  content.querySelectorAll('pre').forEach(function(pre){
+    var btn=document.createElement('button');
+    btn.className='copy-btn'; btn.type='button'; btn.textContent='コピー';
+    btn.addEventListener('click',function(){
+      var code=pre.querySelector('code'); var text=code?code.innerText:pre.innerText;
+      navigator.clipboard.writeText(text).then(function(){
+        btn.textContent='コピー済み'; btn.classList.add('copied');
+        setTimeout(function(){btn.textContent='コピー'; btn.classList.remove('copied');},1500);
+      });
+    });
+    pre.appendChild(btn);
+  });
+
+  // --- モバイル目次開閉 ---
+  var toc=document.getElementById('toc'), backdrop=document.getElementById('backdrop');
+  function closeToc(){toc.classList.remove('open'); backdrop.classList.remove('show');}
+  document.getElementById('menuBtn').addEventListener('click',function(){
+    toc.classList.toggle('open'); backdrop.classList.toggle('show');
+  });
+  backdrop.addEventListener('click',closeToc);
+  tocList.addEventListener('click',function(e){ if(e.target.tagName==='A') closeToc(); });
+
+  // --- ページ内検索（ハイライト） ---
+  var search=document.getElementById('search');
+  function clearMarks(){
+    content.querySelectorAll('mark[data-s]').forEach(function(m){
+      var t=document.createTextNode(m.textContent); m.parentNode.replaceChild(t,m);
+    });
+    content.normalize();
+  }
+  var timer;
+  search.addEventListener('input',function(){
+    clearTimeout(timer);
+    timer=setTimeout(function(){
+      clearMarks();
+      var q=search.value.trim(); if(q.length<2)return;
+      var rx=new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'gi');
+      var walker=document.createTreeWalker(content,NodeFilter.SHOW_TEXT,{
+        acceptNode:function(n){
+          if(!n.nodeValue.trim())return NodeFilter.FILTER_REJECT;
+          var p=n.parentNode.nodeName;
+          if(p==='SCRIPT'||p==='STYLE'||p==='MARK')return NodeFilter.FILTER_REJECT;
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      });
+      var nodes=[],n; while(n=walker.nextNode())nodes.push(n);
+      var first=null;
+      nodes.forEach(function(node){
+        if(!rx.test(node.nodeValue))return; rx.lastIndex=0;
+        var span=document.createElement('span');
+        span.innerHTML=node.nodeValue.replace(rx,function(m){return '<mark data-s="1">'+m+'</mark>';});
+        node.parentNode.replaceChild(span,node);
+        while(span.firstChild)span.parentNode.insertBefore(span.firstChild,span);
+        span.parentNode.removeChild(span);
+      });
+      first=content.querySelector('mark[data-s]');
+      if(first)first.scrollIntoView({block:'center',behavior:'smooth'});
+    },200);
+  });
+})();
+
+</script>
+</body>
+</html>

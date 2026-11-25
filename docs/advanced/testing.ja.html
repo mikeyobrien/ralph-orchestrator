@@ -1,0 +1,720 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>テストと検証 — Ralph Orchestrator 日本語ドキュメント</title>
+<style>
+
+:root{
+  --bg:#ffffff; --fg:#1f2328; --muted:#57606a; --border:#d0d7de;
+  --link:#6f42c1; --accent:#8250df; --code-bg:#f6f8fa; --topbar:#faf8ff;
+  --sidebar:#fbfaff; --mark:#fff3bf;
+}
+:root[data-theme="dark"]{
+  --bg:#0d1117; --fg:#e6edf3; --muted:#9198a1; --border:#30363d;
+  --link:#d2a8ff; --accent:#bc8cff; --code-bg:#161b22; --topbar:#161b22;
+  --sidebar:#0f141b; --mark:#5c4a00;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0d1117; --fg:#e6edf3; --muted:#9198a1; --border:#30363d;
+    --link:#d2a8ff; --accent:#bc8cff; --code-bg:#161b22; --topbar:#161b22;
+    --sidebar:#0f141b; --mark:#5c4a00;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Kaku Gothic ProN","Noto Sans JP",Meiryo,sans-serif;
+  line-height:1.75; font-size:16px;
+}
+.topbar{
+  position:sticky; top:0; z-index:30; display:flex; align-items:center; gap:.6rem;
+  padding:.5rem .9rem; background:var(--topbar); border-bottom:1px solid var(--border);
+  backdrop-filter:saturate(1.2) blur(4px);
+}
+.brand{font-weight:700} .brand small{color:var(--muted); font-weight:500; font-size:.75em}
+.spacer{flex:1}
+.icon-btn{
+  border:1px solid var(--border); background:transparent; color:var(--fg);
+  border-radius:8px; padding:.35rem .55rem; cursor:pointer; font-size:1rem; line-height:1;
+}
+.icon-btn:hover{border-color:var(--accent)}
+.search{
+  border:1px solid var(--border); background:var(--bg); color:var(--fg);
+  border-radius:8px; padding:.4rem .6rem; min-width:8rem; max-width:16rem;
+}
+.layout{display:flex; align-items:flex-start; max-width:1200px; margin:0 auto}
+.toc{
+  position:sticky; top:56px; align-self:flex-start; width:270px; flex:0 0 270px;
+  max-height:calc(100vh - 56px); overflow:auto; padding:1rem .75rem;
+  background:var(--sidebar); border-right:1px solid var(--border);
+}
+.toc-title{font-size:.8rem; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin-bottom:.5rem}
+.toc ul{list-style:none; margin:0; padding:0}
+.toc li{margin:.05rem 0}
+.toc a{display:block; text-decoration:none; color:var(--muted); padding:.2rem .5rem; border-radius:6px; font-size:.9rem}
+.toc a:hover{background:rgba(130,80,223,.1); color:var(--fg)}
+.toc a.active{color:var(--accent); background:rgba(130,80,223,.14); font-weight:600}
+.toc .lvl-3{padding-left:1rem} .toc .lvl-4{padding-left:1.75rem; font-size:.85rem}
+.content{flex:1 1 auto; min-width:0; padding:1.5rem 2rem 6rem; max-width:820px}
+.content h1{font-size:1.9rem; border-bottom:2px solid var(--border); padding-bottom:.3rem; margin-top:0}
+.content h2{font-size:1.45rem; border-bottom:1px solid var(--border); padding-bottom:.25rem; margin-top:2rem}
+.content h3{font-size:1.2rem; margin-top:1.6rem}
+.content a{color:var(--link)}
+.content code{background:var(--code-bg); padding:.15em .4em; border-radius:6px; font-size:.88em;
+  font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.content pre{background:var(--code-bg); border:1px solid var(--border); border-radius:10px;
+  padding:1rem; overflow-x:auto; position:relative}
+.content pre code{background:none; padding:0}
+.content blockquote{border-left:4px solid var(--accent); margin:1rem 0; padding:.2rem 1rem; color:var(--muted)}
+.content table{border-collapse:collapse; width:100%; display:block; overflow-x:auto}
+.content th,.content td{border:1px solid var(--border); padding:.5rem .75rem}
+.content th{background:var(--code-bg)}
+.content img{max-width:100%; height:auto}
+.content .headerlink{opacity:0; text-decoration:none; margin-left:.35rem; color:var(--muted)}
+.content h1:hover .headerlink,.content h2:hover .headerlink,
+.content h3:hover .headerlink,.content h4:hover .headerlink{opacity:1}
+mark{background:var(--mark); color:inherit; border-radius:3px}
+.copy-btn{
+  position:absolute; top:.5rem; right:.5rem; font-size:.72rem; padding:.2rem .5rem;
+  border:1px solid var(--border); background:var(--bg); color:var(--muted);
+  border-radius:6px; cursor:pointer; opacity:0; transition:opacity .15s;
+}
+pre:hover .copy-btn{opacity:1}
+.copy-btn.copied{color:var(--accent); border-color:var(--accent)}
+.backdrop{display:none; position:fixed; inset:56px 0 0 0; background:rgba(0,0,0,.4); z-index:20}
+@media (max-width:820px){
+  .toc{position:fixed; top:56px; left:0; bottom:0; transform:translateX(-100%);
+       transition:transform .2s ease; z-index:25; width:80%; max-width:320px}
+  .toc.open{transform:translateX(0)}
+  .backdrop.show{display:block}
+  .content{padding:1.25rem 1.1rem 5rem}
+  .search{min-width:5rem}
+}
+@media (min-width:821px){ #menuBtn{display:none} }
+
+/* --- Pygments (light) --- */
+pre { line-height: 125%; }
+td.linenos .normal { color: inherit; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+span.linenos { color: inherit; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+td.linenos .special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+.codehilite .hll { background-color: #ffffcc }
+.codehilite { background: #f8f8f8; }
+.codehilite .c { color: #3D7B7B; font-style: italic } /* Comment */
+.codehilite .err { border: 1px solid #F00 } /* Error */
+.codehilite .k { color: #008000; font-weight: bold } /* Keyword */
+.codehilite .o { color: #666 } /* Operator */
+.codehilite .ch { color: #3D7B7B; font-style: italic } /* Comment.Hashbang */
+.codehilite .cm { color: #3D7B7B; font-style: italic } /* Comment.Multiline */
+.codehilite .cp { color: #9C6500 } /* Comment.Preproc */
+.codehilite .cpf { color: #3D7B7B; font-style: italic } /* Comment.PreprocFile */
+.codehilite .c1 { color: #3D7B7B; font-style: italic } /* Comment.Single */
+.codehilite .cs { color: #3D7B7B; font-style: italic } /* Comment.Special */
+.codehilite .gd { color: #A00000 } /* Generic.Deleted */
+.codehilite .ge { font-style: italic } /* Generic.Emph */
+.codehilite .ges { font-weight: bold; font-style: italic } /* Generic.EmphStrong */
+.codehilite .gr { color: #E40000 } /* Generic.Error */
+.codehilite .gh { color: #000080; font-weight: bold } /* Generic.Heading */
+.codehilite .gi { color: #008400 } /* Generic.Inserted */
+.codehilite .go { color: #717171 } /* Generic.Output */
+.codehilite .gp { color: #000080; font-weight: bold } /* Generic.Prompt */
+.codehilite .gs { font-weight: bold } /* Generic.Strong */
+.codehilite .gu { color: #800080; font-weight: bold } /* Generic.Subheading */
+.codehilite .gt { color: #04D } /* Generic.Traceback */
+.codehilite .kc { color: #008000; font-weight: bold } /* Keyword.Constant */
+.codehilite .kd { color: #008000; font-weight: bold } /* Keyword.Declaration */
+.codehilite .kn { color: #008000; font-weight: bold } /* Keyword.Namespace */
+.codehilite .kp { color: #008000 } /* Keyword.Pseudo */
+.codehilite .kr { color: #008000; font-weight: bold } /* Keyword.Reserved */
+.codehilite .kt { color: #B00040 } /* Keyword.Type */
+.codehilite .m { color: #666 } /* Literal.Number */
+.codehilite .s { color: #BA2121 } /* Literal.String */
+.codehilite .na { color: #687822 } /* Name.Attribute */
+.codehilite .nb { color: #008000 } /* Name.Builtin */
+.codehilite .nc { color: #00F; font-weight: bold } /* Name.Class */
+.codehilite .no { color: #800 } /* Name.Constant */
+.codehilite .nd { color: #A2F } /* Name.Decorator */
+.codehilite .ni { color: #717171; font-weight: bold } /* Name.Entity */
+.codehilite .ne { color: #CB3F38; font-weight: bold } /* Name.Exception */
+.codehilite .nf { color: #00F } /* Name.Function */
+.codehilite .nl { color: #767600 } /* Name.Label */
+.codehilite .nn { color: #00F; font-weight: bold } /* Name.Namespace */
+.codehilite .nt { color: #008000; font-weight: bold } /* Name.Tag */
+.codehilite .nv { color: #19177C } /* Name.Variable */
+.codehilite .ow { color: #A2F; font-weight: bold } /* Operator.Word */
+.codehilite .w { color: #BBB } /* Text.Whitespace */
+.codehilite .mb { color: #666 } /* Literal.Number.Bin */
+.codehilite .mf { color: #666 } /* Literal.Number.Float */
+.codehilite .mh { color: #666 } /* Literal.Number.Hex */
+.codehilite .mi { color: #666 } /* Literal.Number.Integer */
+.codehilite .mo { color: #666 } /* Literal.Number.Oct */
+.codehilite .sa { color: #BA2121 } /* Literal.String.Affix */
+.codehilite .sb { color: #BA2121 } /* Literal.String.Backtick */
+.codehilite .sc { color: #BA2121 } /* Literal.String.Char */
+.codehilite .dl { color: #BA2121 } /* Literal.String.Delimiter */
+.codehilite .sd { color: #BA2121; font-style: italic } /* Literal.String.Doc */
+.codehilite .s2 { color: #BA2121 } /* Literal.String.Double */
+.codehilite .se { color: #AA5D1F; font-weight: bold } /* Literal.String.Escape */
+.codehilite .sh { color: #BA2121 } /* Literal.String.Heredoc */
+.codehilite .si { color: #A45A77; font-weight: bold } /* Literal.String.Interpol */
+.codehilite .sx { color: #008000 } /* Literal.String.Other */
+.codehilite .sr { color: #A45A77 } /* Literal.String.Regex */
+.codehilite .s1 { color: #BA2121 } /* Literal.String.Single */
+.codehilite .ss { color: #19177C } /* Literal.String.Symbol */
+.codehilite .bp { color: #008000 } /* Name.Builtin.Pseudo */
+.codehilite .fm { color: #00F } /* Name.Function.Magic */
+.codehilite .vc { color: #19177C } /* Name.Variable.Class */
+.codehilite .vg { color: #19177C } /* Name.Variable.Global */
+.codehilite .vi { color: #19177C } /* Name.Variable.Instance */
+.codehilite .vm { color: #19177C } /* Name.Variable.Magic */
+.codehilite .il { color: #666 } /* Literal.Number.Integer.Long */
+/* --- Pygments (dark) --- */
+:root[data-theme="dark"] .codehilite,
+@media (prefers-color-scheme: dark) {}
+</style>
+<style id="pygments-dark" media="not all">
+pre { line-height: 125%; }
+td.linenos .normal { color: inherit; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+span.linenos { color: inherit; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+td.linenos .special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+.codehilite .hll { background-color: #49483e }
+.codehilite { background: #272822; color: #F8F8F2 }
+.codehilite .c { color: #959077 } /* Comment */
+.codehilite .err { color: #ED007E; background-color: #1E0010 } /* Error */
+.codehilite .esc { color: #F8F8F2 } /* Escape */
+.codehilite .g { color: #F8F8F2 } /* Generic */
+.codehilite .k { color: #66D9EF } /* Keyword */
+.codehilite .l { color: #AE81FF } /* Literal */
+.codehilite .n { color: #F8F8F2 } /* Name */
+.codehilite .o { color: #FF4689 } /* Operator */
+.codehilite .x { color: #F8F8F2 } /* Other */
+.codehilite .p { color: #F8F8F2 } /* Punctuation */
+.codehilite .ch { color: #959077 } /* Comment.Hashbang */
+.codehilite .cm { color: #959077 } /* Comment.Multiline */
+.codehilite .cp { color: #959077 } /* Comment.Preproc */
+.codehilite .cpf { color: #959077 } /* Comment.PreprocFile */
+.codehilite .c1 { color: #959077 } /* Comment.Single */
+.codehilite .cs { color: #959077 } /* Comment.Special */
+.codehilite .gd { color: #FF4689 } /* Generic.Deleted */
+.codehilite .ge { color: #F8F8F2; font-style: italic } /* Generic.Emph */
+.codehilite .ges { color: #F8F8F2; font-weight: bold; font-style: italic } /* Generic.EmphStrong */
+.codehilite .gr { color: #F8F8F2 } /* Generic.Error */
+.codehilite .gh { color: #F8F8F2 } /* Generic.Heading */
+.codehilite .gi { color: #A6E22E } /* Generic.Inserted */
+.codehilite .go { color: #66D9EF } /* Generic.Output */
+.codehilite .gp { color: #FF4689; font-weight: bold } /* Generic.Prompt */
+.codehilite .gs { color: #F8F8F2; font-weight: bold } /* Generic.Strong */
+.codehilite .gu { color: #959077 } /* Generic.Subheading */
+.codehilite .gt { color: #F8F8F2 } /* Generic.Traceback */
+.codehilite .kc { color: #66D9EF } /* Keyword.Constant */
+.codehilite .kd { color: #66D9EF } /* Keyword.Declaration */
+.codehilite .kn { color: #FF4689 } /* Keyword.Namespace */
+.codehilite .kp { color: #66D9EF } /* Keyword.Pseudo */
+.codehilite .kr { color: #66D9EF } /* Keyword.Reserved */
+.codehilite .kt { color: #66D9EF } /* Keyword.Type */
+.codehilite .ld { color: #E6DB74 } /* Literal.Date */
+.codehilite .m { color: #AE81FF } /* Literal.Number */
+.codehilite .s { color: #E6DB74 } /* Literal.String */
+.codehilite .na { color: #A6E22E } /* Name.Attribute */
+.codehilite .nb { color: #F8F8F2 } /* Name.Builtin */
+.codehilite .nc { color: #A6E22E } /* Name.Class */
+.codehilite .no { color: #66D9EF } /* Name.Constant */
+.codehilite .nd { color: #A6E22E } /* Name.Decorator */
+.codehilite .ni { color: #F8F8F2 } /* Name.Entity */
+.codehilite .ne { color: #A6E22E } /* Name.Exception */
+.codehilite .nf { color: #A6E22E } /* Name.Function */
+.codehilite .nl { color: #F8F8F2 } /* Name.Label */
+.codehilite .nn { color: #F8F8F2 } /* Name.Namespace */
+.codehilite .nx { color: #A6E22E } /* Name.Other */
+.codehilite .py { color: #F8F8F2 } /* Name.Property */
+.codehilite .nt { color: #FF4689 } /* Name.Tag */
+.codehilite .nv { color: #F8F8F2 } /* Name.Variable */
+.codehilite .ow { color: #FF4689 } /* Operator.Word */
+.codehilite .pm { color: #F8F8F2 } /* Punctuation.Marker */
+.codehilite .w { color: #F8F8F2 } /* Text.Whitespace */
+.codehilite .mb { color: #AE81FF } /* Literal.Number.Bin */
+.codehilite .mf { color: #AE81FF } /* Literal.Number.Float */
+.codehilite .mh { color: #AE81FF } /* Literal.Number.Hex */
+.codehilite .mi { color: #AE81FF } /* Literal.Number.Integer */
+.codehilite .mo { color: #AE81FF } /* Literal.Number.Oct */
+.codehilite .sa { color: #E6DB74 } /* Literal.String.Affix */
+.codehilite .sb { color: #E6DB74 } /* Literal.String.Backtick */
+.codehilite .sc { color: #E6DB74 } /* Literal.String.Char */
+.codehilite .dl { color: #E6DB74 } /* Literal.String.Delimiter */
+.codehilite .sd { color: #E6DB74 } /* Literal.String.Doc */
+.codehilite .s2 { color: #E6DB74 } /* Literal.String.Double */
+.codehilite .se { color: #AE81FF } /* Literal.String.Escape */
+.codehilite .sh { color: #E6DB74 } /* Literal.String.Heredoc */
+.codehilite .si { color: #E6DB74 } /* Literal.String.Interpol */
+.codehilite .sx { color: #E6DB74 } /* Literal.String.Other */
+.codehilite .sr { color: #E6DB74 } /* Literal.String.Regex */
+.codehilite .s1 { color: #E6DB74 } /* Literal.String.Single */
+.codehilite .ss { color: #E6DB74 } /* Literal.String.Symbol */
+.codehilite .bp { color: #F8F8F2 } /* Name.Builtin.Pseudo */
+.codehilite .fm { color: #A6E22E } /* Name.Function.Magic */
+.codehilite .vc { color: #F8F8F2 } /* Name.Variable.Class */
+.codehilite .vg { color: #F8F8F2 } /* Name.Variable.Global */
+.codehilite .vi { color: #F8F8F2 } /* Name.Variable.Instance */
+.codehilite .vm { color: #F8F8F2 } /* Name.Variable.Magic */
+.codehilite .il { color: #AE81FF } /* Literal.Number.Integer.Long */
+</style>
+</head>
+<body>
+<header class="topbar">
+  <button id="menuBtn" class="icon-btn" aria-label="目次を開閉">☰</button>
+  <span class="brand">Ralph Orchestrator <small>日本語ドキュメント</small></span>
+  <div class="spacer"></div>
+  <input id="search" class="search" type="search" placeholder="ページ内を検索…" aria-label="ページ内検索">
+  <button id="themeBtn" class="icon-btn" aria-label="テーマ切替">🌓</button>
+</header>
+<div class="layout">
+  <nav id="toc" class="toc" aria-label="目次"><div class="toc-title">目次</div><ul id="tocList"></ul></nav>
+  <main id="content" class="content">
+<h1 id="_1"><a class="toclink" href="#_1">テストと検証</a></h1>
+<p>Ralph の開発と検証のための包括的なテストアプローチです。</p>
+<h2 id="_2"><a class="toclink" href="#_2">テストの種類</a></h2>
+<table>
+<thead>
+<tr>
+<th>種類</th>
+<th>用途</th>
+<th>速度</th>
+<th>コスト</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ユニットテスト</td>
+<td>個々の関数をテストする</td>
+<td>速い</td>
+<td>無料</td>
+</tr>
+<tr>
+<td>スモークテスト</td>
+<td>記録されたセッションをリプレイする</td>
+<td>速い</td>
+<td>無料</td>
+</tr>
+<tr>
+<td>E2E テスト</td>
+<td>実際のバックエンドに対して検証する</td>
+<td>遅い</td>
+<td>API コスト</td>
+</tr>
+<tr>
+<td>TUI 検証</td>
+<td>ターミナルの描画を検証する</td>
+<td>中</td>
+<td>無料</td>
+</tr>
+</tbody>
+</table>
+<h2 id="_3"><a class="toclink" href="#_3">テストの実行</a></h2>
+<h3 id="_4"><a class="toclink" href="#_4">すべてのテスト</a></h3>
+<div class="codehilite"><pre><span></span><code>cargo<span class="w"> </span><span class="nb">test</span>
+</code></pre></div>
+
+<p>これはユニットテストとスモークテストを含みます（合計 344 以上のテスト）。</p>
+<h3 id="_5"><a class="toclink" href="#_5">スモークテストのみ</a></h3>
+<div class="codehilite"><pre><span></span><code>cargo<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-p<span class="w"> </span>ralph-core<span class="w"> </span>smoke_runner
+</code></pre></div>
+
+<h3 id="kiro"><a class="toclink" href="#kiro">Kiro 固有のテスト</a></h3>
+<div class="codehilite"><pre><span></span><code>cargo<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-p<span class="w"> </span>ralph-core<span class="w"> </span>kiro
+</code></pre></div>
+
+<h3 id="e2e"><a class="toclink" href="#e2e">E2E テスト</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># すべてのバックエンド</span>
+cargo<span class="w"> </span>run<span class="w"> </span>-p<span class="w"> </span>ralph-e2e<span class="w"> </span>--<span class="w"> </span>all
+
+<span class="c1"># 特定のバックエンド</span>
+cargo<span class="w"> </span>run<span class="w"> </span>-p<span class="w"> </span>ralph-e2e<span class="w"> </span>--<span class="w"> </span>claude
+
+<span class="c1"># シナリオを一覧する</span>
+cargo<span class="w"> </span>run<span class="w"> </span>-p<span class="w"> </span>ralph-e2e<span class="w"> </span>--<span class="w"> </span>--list
+</code></pre></div>
+
+<h2 id="_6"><a class="toclink" href="#_6">スモークテスト</a></h2>
+<p>スモークテストは、ライブの API 呼び出しの代わりに記録された JSONL フィクスチャを使います。
+速く、無料で、決定的です。</p>
+<h3 id="_7"><a class="toclink" href="#_7">仕組み</a></h3>
+<ol>
+<li>セッションを JSONL に記録する</li>
+<li>テスト中にリプレイする</li>
+<li>期待される挙動を検証する</li>
+</ol>
+<h3 id="_8"><a class="toclink" href="#_8">フィクスチャの場所</a></h3>
+<div class="codehilite"><pre><span></span><code>crates/ralph-core/tests/fixtures/
+├── basic_session.jsonl          # Claude CLI session
+└── kiro/                         # Kiro sessions
+    ├── basic.jsonl
+    ├── tool_use.jsonl
+    └── autonomous.jsonl
+</code></pre></div>
+
+<h3 id="_9"><a class="toclink" href="#_9">新しいフィクスチャの記録</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># セッションを記録する</span>
+ralph<span class="w"> </span>run<span class="w"> </span>-c<span class="w"> </span>ralph.yml<span class="w"> </span>--record-session<span class="w"> </span>session.jsonl<span class="w"> </span>-p<span class="w"> </span><span class="s2">&quot;your prompt&quot;</span>
+
+<span class="c1"># または生の CLI 出力を捕捉する</span>
+claude<span class="w"> </span>-p<span class="w"> </span><span class="s2">&quot;your prompt&quot;</span><span class="w"> </span><span class="m">2</span>&gt;<span class="p">&amp;</span><span class="m">1</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>tee<span class="w"> </span>output.txt
+</code></pre></div>
+
+<h3 id="_10"><a class="toclink" href="#_10">フィクスチャの形式</a></h3>
+<p>1 行に 1 イベントの JSONL:</p>
+<div class="codehilite"><pre><span></span><code><span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="s2">&quot;output&quot;</span><span class="p">,</span><span class="nt">&quot;content&quot;</span><span class="p">:</span><span class="s2">&quot;Starting task...&quot;</span><span class="p">,</span><span class="nt">&quot;timestamp&quot;</span><span class="p">:</span><span class="s2">&quot;2024-01-21T10:00:00Z&quot;</span><span class="p">}</span>
+<span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="s2">&quot;tool_call&quot;</span><span class="p">,</span><span class="nt">&quot;tool&quot;</span><span class="p">:</span><span class="s2">&quot;read_file&quot;</span><span class="p">,</span><span class="nt">&quot;args&quot;</span><span class="p">:{</span><span class="nt">&quot;path&quot;</span><span class="p">:</span><span class="s2">&quot;src/lib.rs&quot;</span><span class="p">}}</span>
+<span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="s2">&quot;tool_result&quot;</span><span class="p">,</span><span class="nt">&quot;result&quot;</span><span class="p">:</span><span class="s2">&quot;...contents...&quot;</span><span class="p">}</span>
+<span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="s2">&quot;output&quot;</span><span class="p">,</span><span class="nt">&quot;content&quot;</span><span class="p">:</span><span class="s2">&quot;LOOP_COMPLETE&quot;</span><span class="p">}</span>
+</code></pre></div>
+
+<h2 id="e2e_1"><a class="toclink" href="#e2e_1">E2E テスト</a></h2>
+<p>エンドツーエンドのテストは、実際の AI バックエンドに対して検証します。</p>
+<h3 id="_11"><a class="toclink" href="#_11">テストの階層</a></h3>
+<table>
+<thead>
+<tr>
+<th>階層</th>
+<th>焦点</th>
+<th>シナリオ</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>接続性</td>
+<td>バックエンドの可用性、認証</td>
+</tr>
+<tr>
+<td>2</td>
+<td>オーケストレーション</td>
+<td>単一/複数イテレーション</td>
+</tr>
+<tr>
+<td>3</td>
+<td>イベント</td>
+<td>解析、ルーティング</td>
+</tr>
+<tr>
+<td>4</td>
+<td>能力</td>
+<td>ツール使用、ストリーミング</td>
+</tr>
+<tr>
+<td>5</td>
+<td>ハットコレクション</td>
+<td>ワークフロー、ルーティング</td>
+</tr>
+<tr>
+<td>6</td>
+<td>メモリ</td>
+<td>追加、検索、注入</td>
+</tr>
+<tr>
+<td>7</td>
+<td>エラー処理</td>
+<td>タイムアウト、上限</td>
+</tr>
+</tbody>
+</table>
+<h3 id="e2e_2"><a class="toclink" href="#e2e_2">E2E テストの実行</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Claude のすべてのテスト</span>
+cargo<span class="w"> </span>run<span class="w"> </span>-p<span class="w"> </span>ralph-e2e<span class="w"> </span>--<span class="w"> </span>claude
+
+<span class="c1"># 利用可能なすべてのバックエンド</span>
+cargo<span class="w"> </span>run<span class="w"> </span>-p<span class="w"> </span>ralph-e2e<span class="w"> </span>--<span class="w"> </span>all
+
+<span class="c1"># 高速モード（分析をスキップ）</span>
+cargo<span class="w"> </span>run<span class="w"> </span>-p<span class="w"> </span>ralph-e2e<span class="w"> </span>--<span class="w"> </span>claude<span class="w"> </span>--skip-analysis
+
+<span class="c1"># デバッグモード（ワークスペースを保持）</span>
+cargo<span class="w"> </span>run<span class="w"> </span>-p<span class="w"> </span>ralph-e2e<span class="w"> </span>--<span class="w"> </span>claude<span class="w"> </span>--keep-workspace<span class="w"> </span>--verbose
+</code></pre></div>
+
+<h3 id="e2e_3"><a class="toclink" href="#e2e_3">E2E レポート</a></h3>
+<p><code>.e2e-tests/</code> に生成されます。</p>
+<div class="codehilite"><pre><span></span><code>.e2e-tests/
+├── report.md      # Human-readable Markdown
+├── report.json    # Machine-readable JSON
+└── claude-connect/  # Test workspace (with --keep-workspace)
+</code></pre></div>
+
+<h3 id="e2e_4"><a class="toclink" href="#e2e_4">E2E オーケストレーション</a></h3>
+<p>E2E テストの開発には、分離された設定を使います。</p>
+<div class="codehilite"><pre><span></span><code><span class="c1"># E2E テストの開発</span>
+ralph<span class="w"> </span>run<span class="w"> </span>-c<span class="w"> </span>ralph.e2e.yml<span class="w"> </span>-p<span class="w"> </span><span class="s2">&quot;fix e2e tests&quot;</span>
+</code></pre></div>
+
+<p>これは、汚染を避けるため別のスクラッチパッドを使います。</p>
+<h2 id="tui"><a class="toclink" href="#tui">TUI 検証</a></h2>
+<p>LLM-as-judge を使ってターミナル UI の描画を検証します。</p>
+<h3 id="_12"><a class="toclink" href="#_12">クイックスタート</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># 捕捉した出力から検証する</span>
+/tui-validate<span class="w"> </span>file:output.txt<span class="w"> </span>criteria:ralph-header
+
+<span class="c1"># tmux 経由でライブ TUI を検証する</span>
+/tui-validate<span class="w"> </span>tmux:ralph-session<span class="w"> </span>criteria:ralph-full
+
+<span class="c1"># カスタム基準</span>
+/tui-validate<span class="w"> </span>command:<span class="s2">&quot;cargo run --example tui&quot;</span><span class="w"> </span>criteria:<span class="s2">&quot;Shows header&quot;</span>
+</code></pre></div>
+
+<h3 id="_13"><a class="toclink" href="#_13">組み込みの基準</a></h3>
+<table>
+<thead>
+<tr>
+<th>基準</th>
+<th>検証するもの</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ralph-header</code></td>
+<td>イテレーション数、経過時間、ハット表示</td>
+</tr>
+<tr>
+<td><code>ralph-footer</code></td>
+<td>活動インジケータ、イベントトピック</td>
+</tr>
+<tr>
+<td><code>ralph-full</code></td>
+<td>完全なレイアウトと階層</td>
+</tr>
+<tr>
+<td><code>tui-basic</code></td>
+<td>コンテンツがあり、アーティファクトがない</td>
+</tr>
+</tbody>
+</table>
+<h3 id="tui_1"><a class="toclink" href="#tui_1">ライブ TUI の捕捉</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># 1. tmux で TUI を起動する</span>
+tmux<span class="w"> </span>new-session<span class="w"> </span>-d<span class="w"> </span>-s<span class="w"> </span>ralph-test<span class="w"> </span>-x<span class="w"> </span><span class="m">100</span><span class="w"> </span>-y<span class="w"> </span><span class="m">30</span>
+tmux<span class="w"> </span>send-keys<span class="w"> </span>-t<span class="w"> </span>ralph-test<span class="w"> </span><span class="s2">&quot;ralph run -p &#39;test&#39;&quot;</span><span class="w"> </span>Enter
+
+<span class="c1"># 2. 描画を待つ</span>
+sleep<span class="w"> </span><span class="m">3</span>
+
+<span class="c1"># 3. 捕捉する</span>
+tmux<span class="w"> </span>capture-pane<span class="w"> </span>-t<span class="w"> </span>ralph-test<span class="w"> </span>-p<span class="w"> </span>-e<span class="w"> </span>&gt;<span class="w"> </span>tui-capture.txt
+
+<span class="c1"># 4. 検証する</span>
+/tui-validate<span class="w"> </span>file:tui-capture.txt<span class="w"> </span>criteria:ralph-header
+</code></pre></div>
+
+<h3 id="_14"><a class="toclink" href="#_14">前提条件</a></h3>
+<div class="codehilite"><pre><span></span><code>brew<span class="w"> </span>install<span class="w"> </span>charmbracelet/tap/freeze<span class="w">  </span><span class="c1"># Screenshot tool</span>
+brew<span class="w"> </span>install<span class="w"> </span>tmux<span class="w">                       </span><span class="c1"># Live capture</span>
+</code></pre></div>
+
+<h2 id="lint"><a class="toclink" href="#lint">Lint</a></h2>
+<div class="codehilite"><pre><span></span><code><span class="c1"># 整形を確認する</span>
+cargo<span class="w"> </span>fmt<span class="w"> </span>--check
+
+<span class="c1"># clippy を実行する</span>
+cargo<span class="w"> </span>clippy<span class="w"> </span>--all-targets<span class="w"> </span>--all-features
+</code></pre></div>
+
+<h2 id="pre-commit"><a class="toclink" href="#pre-commit">pre-commit フック</a></h2>
+<p>フックをインストールします。</p>
+<div class="codehilite"><pre><span></span><code>./scripts/setup-hooks.sh
+</code></pre></div>
+
+<p>フックは、各コミットの前に CI と同等の Rust チェックを実行します。</p>
+<ul>
+<li><code>./scripts/sync-embedded-files.sh check</code></li>
+<li><code>cargo fmt --all -- --check</code></li>
+<li><code>cargo clippy --all-targets --all-features -- -D warnings</code></li>
+<li><code>cargo test</code></li>
+</ul>
+<h2 id="telegram"><a class="toclink" href="#telegram">ヒューマンインザループのテスト（Telegram）</a></h2>
+<p>実際の Telegram ボットなしで <code>human.interact</code> を使うカスタムハットをテストするには、Ralph を
+モックの Telegram Bot API サーバーに向けます。</p>
+<div class="codehilite"><pre><span></span><code><span class="c1"># モックサーバーを起動する</span>
+docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span>-p<span class="w"> </span><span class="m">8081</span>:8081<span class="w"> </span>ghcr.io/nickolay/telegram-test-api:latest
+
+<span class="c1"># Ralph をそれに向ける</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">RALPH_TELEGRAM_API_URL</span><span class="o">=</span><span class="s2">&quot;http://localhost:8081&quot;</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">RALPH_TELEGRAM_BOT_TOKEN</span><span class="o">=</span><span class="s2">&quot;test-token&quot;</span>
+
+<span class="c1"># ループを実行する</span>
+ralph<span class="w"> </span>run<span class="w"> </span>-p<span class="w"> </span><span class="s2">&quot;your prompt&quot;</span><span class="w"> </span>--max-iterations<span class="w"> </span><span class="m">5</span>
+</code></pre></div>
+
+<p>または <code>ralph.yml</code> に <code>RObot.telegram.api_url</code> を設定します。詳細は完全な
+<a href="../guide/telegram.ja.html#testing-with-a-mock-telegram-server">Telegram テストガイド</a>
+を参照してください。</p>
+<h2 id="_15"><a class="toclink" href="#_15">テストのベストプラクティス</a></h2>
+<h3 id="1"><a class="toclink" href="#1">1. 変更後にテストを実行する</a></h3>
+<div class="codehilite"><pre><span></span><code>cargo<span class="w"> </span><span class="nb">test</span><span class="w">  </span><span class="c1"># 完了を宣言する前に必ず実行する</span>
+</code></pre></div>
+
+<h3 id="2"><a class="toclink" href="#2">2. スモークテストを優先する</a></h3>
+<p>新機能には、ライブ API に頼るのではなくリプレイフィクスチャを作成します。</p>
+<h3 id="3-e2e"><a class="toclink" href="#3-e2e">3. 統合には E2E を使う</a></h3>
+<p>E2E テストは高価ですが、統合の問題を捕捉します。</p>
+<h3 id="4-tui"><a class="toclink" href="#4-tui">4. TUI の変更を検証する</a></h3>
+<p><code>ralph-tui</code> を変更した後は、TUI 検証を使います。</p>
+<h3 id="5"><a class="toclink" href="#5">5. フィクスチャを最新に保つ</a></h3>
+<p>挙動が変わったら、対応するフィクスチャを更新します。</p>
+<h2 id="_16"><a class="toclink" href="#_16">新しいテストの作成</a></h2>
+<h3 id="_17"><a class="toclink" href="#_17">ユニットテスト</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="cp">#[test]</span>
+<span class="k">fn</span><span class="w"> </span><span class="nf">test_event_parsing</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">input</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">r#&quot;ralph emit &quot;build.done&quot; &quot;tests pass&quot;&quot;#</span><span class="p">;</span>
+<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">event</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">parse_event</span><span class="p">(</span><span class="n">input</span><span class="p">).</span><span class="n">unwrap</span><span class="p">();</span>
+<span class="w">    </span><span class="fm">assert_eq!</span><span class="p">(</span><span class="n">event</span><span class="p">.</span><span class="n">topic</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;build.done&quot;</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="_18"><a class="toclink" href="#_18">スモークテスト</a></h3>
+<ol>
+<li>セッションを記録する: <code>--record-session fixture.jsonl</code></li>
+<li><code>tests/fixtures/</code> に置く</li>
+<li>フィクスチャを参照するテストケースを追加する</li>
+</ol>
+<h3 id="e2e_5"><a class="toclink" href="#e2e_5">E2E シナリオ</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">MyScenario</span><span class="p">;</span>
+
+<span class="k">impl</span><span class="w"> </span><span class="n">E2EScenario</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">MyScenario</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">name</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="kp">&amp;</span><span class="kt">str</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="s">&quot;my-scenario&quot;</span><span class="w"> </span><span class="p">}</span>
+<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">tier</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="kt">u8</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="mi">3</span><span class="w"> </span><span class="p">}</span>
+
+<span class="w">    </span><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">ctx</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">E2EContext</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">E2EResult</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// Test implementation</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h2 id="_19"><a class="toclink" href="#_19">次のステップ</a></h2>
+<ul>
+<li>デバッグには <a href="diagnostics.ja.html">診断</a> を探る</li>
+<li><a href="architecture.ja.html">アーキテクチャ</a> について学ぶ</li>
+<li><a href="../contributing/index.ja.html">コントリビューションガイド</a> を見る</li>
+</ul>
+  </main>
+</div>
+<div id="backdrop" class="backdrop"></div>
+<script>
+
+(function(){
+  var root=document.documentElement;
+  // --- テーマ ---
+  var darkStyle=document.getElementById('pygments-dark');
+  function applyTheme(t){
+    if(t==='dark'||t==='light'){root.setAttribute('data-theme',t);}
+    else{root.removeAttribute('data-theme');}
+    var isDark = t==='dark' || (t!=='light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    if(darkStyle){ darkStyle.media = isDark ? 'all' : 'not all'; }
+  }
+  var saved=localStorage.getItem('ralph-ja-theme')||'auto';
+  applyTheme(saved);
+  document.getElementById('themeBtn').addEventListener('click',function(){
+    var cur=localStorage.getItem('ralph-ja-theme')||'auto';
+    var next=cur==='auto'?'light':cur==='light'?'dark':'auto';
+    localStorage.setItem('ralph-ja-theme',next); applyTheme(next);
+  });
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',function(){
+    if((localStorage.getItem('ralph-ja-theme')||'auto')==='auto')applyTheme('auto');
+  });
+
+  var content=document.getElementById('content');
+
+  // --- 目次生成 ---
+  var tocList=document.getElementById('tocList');
+  var heads=content.querySelectorAll('h2, h3, h4');
+  var items=[];
+  heads.forEach(function(h){
+    if(!h.id){h.id=(h.textContent||'').trim().replace(/\s+/g,'-');}
+    var li=document.createElement('li');
+    var a=document.createElement('a');
+    a.href='#'+h.id; a.textContent=h.textContent.replace('¶','').trim();
+    a.className='lvl-'+h.tagName.substring(1);
+    li.appendChild(a); tocList.appendChild(li);
+    items.push({a:a,h:h});
+  });
+
+  // --- スクロール連動ハイライト ---
+  if('IntersectionObserver' in window && items.length){
+    var byId={}; items.forEach(function(it){byId[it.h.id]=it.a;});
+    var obs=new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if(e.isIntersecting){
+          items.forEach(function(it){it.a.classList.remove('active');});
+          var a=byId[e.target.id]; if(a){a.classList.add('active');
+            a.scrollIntoView({block:'nearest'});}
+        }
+      });
+    },{rootMargin:'0px 0px -75% 0px'});
+    heads.forEach(function(h){obs.observe(h);});
+  }
+
+  // --- コードコピー ---
+  content.querySelectorAll('pre').forEach(function(pre){
+    var btn=document.createElement('button');
+    btn.className='copy-btn'; btn.type='button'; btn.textContent='コピー';
+    btn.addEventListener('click',function(){
+      var code=pre.querySelector('code'); var text=code?code.innerText:pre.innerText;
+      navigator.clipboard.writeText(text).then(function(){
+        btn.textContent='コピー済み'; btn.classList.add('copied');
+        setTimeout(function(){btn.textContent='コピー'; btn.classList.remove('copied');},1500);
+      });
+    });
+    pre.appendChild(btn);
+  });
+
+  // --- モバイル目次開閉 ---
+  var toc=document.getElementById('toc'), backdrop=document.getElementById('backdrop');
+  function closeToc(){toc.classList.remove('open'); backdrop.classList.remove('show');}
+  document.getElementById('menuBtn').addEventListener('click',function(){
+    toc.classList.toggle('open'); backdrop.classList.toggle('show');
+  });
+  backdrop.addEventListener('click',closeToc);
+  tocList.addEventListener('click',function(e){ if(e.target.tagName==='A') closeToc(); });
+
+  // --- ページ内検索（ハイライト） ---
+  var search=document.getElementById('search');
+  function clearMarks(){
+    content.querySelectorAll('mark[data-s]').forEach(function(m){
+      var t=document.createTextNode(m.textContent); m.parentNode.replaceChild(t,m);
+    });
+    content.normalize();
+  }
+  var timer;
+  search.addEventListener('input',function(){
+    clearTimeout(timer);
+    timer=setTimeout(function(){
+      clearMarks();
+      var q=search.value.trim(); if(q.length<2)return;
+      var rx=new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'gi');
+      var walker=document.createTreeWalker(content,NodeFilter.SHOW_TEXT,{
+        acceptNode:function(n){
+          if(!n.nodeValue.trim())return NodeFilter.FILTER_REJECT;
+          var p=n.parentNode.nodeName;
+          if(p==='SCRIPT'||p==='STYLE'||p==='MARK')return NodeFilter.FILTER_REJECT;
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      });
+      var nodes=[],n; while(n=walker.nextNode())nodes.push(n);
+      var first=null;
+      nodes.forEach(function(node){
+        if(!rx.test(node.nodeValue))return; rx.lastIndex=0;
+        var span=document.createElement('span');
+        span.innerHTML=node.nodeValue.replace(rx,function(m){return '<mark data-s="1">'+m+'</mark>';});
+        node.parentNode.replaceChild(span,node);
+        while(span.firstChild)span.parentNode.insertBefore(span.firstChild,span);
+        span.parentNode.removeChild(span);
+      });
+      first=content.querySelector('mark[data-s]');
+      if(first)first.scrollIntoView({block:'center',behavior:'smooth'});
+    },200);
+  });
+})();
+
+</script>
+</body>
+</html>

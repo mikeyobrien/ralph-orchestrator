@@ -1,0 +1,790 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>セキュリティの考慮事項 — Ralph Orchestrator 日本語ドキュメント</title>
+<style>
+
+:root{
+  --bg:#ffffff; --fg:#1f2328; --muted:#57606a; --border:#d0d7de;
+  --link:#6f42c1; --accent:#8250df; --code-bg:#f6f8fa; --topbar:#faf8ff;
+  --sidebar:#fbfaff; --mark:#fff3bf;
+}
+:root[data-theme="dark"]{
+  --bg:#0d1117; --fg:#e6edf3; --muted:#9198a1; --border:#30363d;
+  --link:#d2a8ff; --accent:#bc8cff; --code-bg:#161b22; --topbar:#161b22;
+  --sidebar:#0f141b; --mark:#5c4a00;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0d1117; --fg:#e6edf3; --muted:#9198a1; --border:#30363d;
+    --link:#d2a8ff; --accent:#bc8cff; --code-bg:#161b22; --topbar:#161b22;
+    --sidebar:#0f141b; --mark:#5c4a00;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Kaku Gothic ProN","Noto Sans JP",Meiryo,sans-serif;
+  line-height:1.75; font-size:16px;
+}
+.topbar{
+  position:sticky; top:0; z-index:30; display:flex; align-items:center; gap:.6rem;
+  padding:.5rem .9rem; background:var(--topbar); border-bottom:1px solid var(--border);
+  backdrop-filter:saturate(1.2) blur(4px);
+}
+.brand{font-weight:700} .brand small{color:var(--muted); font-weight:500; font-size:.75em}
+.spacer{flex:1}
+.icon-btn{
+  border:1px solid var(--border); background:transparent; color:var(--fg);
+  border-radius:8px; padding:.35rem .55rem; cursor:pointer; font-size:1rem; line-height:1;
+}
+.icon-btn:hover{border-color:var(--accent)}
+.search{
+  border:1px solid var(--border); background:var(--bg); color:var(--fg);
+  border-radius:8px; padding:.4rem .6rem; min-width:8rem; max-width:16rem;
+}
+.layout{display:flex; align-items:flex-start; max-width:1200px; margin:0 auto}
+.toc{
+  position:sticky; top:56px; align-self:flex-start; width:270px; flex:0 0 270px;
+  max-height:calc(100vh - 56px); overflow:auto; padding:1rem .75rem;
+  background:var(--sidebar); border-right:1px solid var(--border);
+}
+.toc-title{font-size:.8rem; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin-bottom:.5rem}
+.toc ul{list-style:none; margin:0; padding:0}
+.toc li{margin:.05rem 0}
+.toc a{display:block; text-decoration:none; color:var(--muted); padding:.2rem .5rem; border-radius:6px; font-size:.9rem}
+.toc a:hover{background:rgba(130,80,223,.1); color:var(--fg)}
+.toc a.active{color:var(--accent); background:rgba(130,80,223,.14); font-weight:600}
+.toc .lvl-3{padding-left:1rem} .toc .lvl-4{padding-left:1.75rem; font-size:.85rem}
+.content{flex:1 1 auto; min-width:0; padding:1.5rem 2rem 6rem; max-width:820px}
+.content h1{font-size:1.9rem; border-bottom:2px solid var(--border); padding-bottom:.3rem; margin-top:0}
+.content h2{font-size:1.45rem; border-bottom:1px solid var(--border); padding-bottom:.25rem; margin-top:2rem}
+.content h3{font-size:1.2rem; margin-top:1.6rem}
+.content a{color:var(--link)}
+.content code{background:var(--code-bg); padding:.15em .4em; border-radius:6px; font-size:.88em;
+  font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.content pre{background:var(--code-bg); border:1px solid var(--border); border-radius:10px;
+  padding:1rem; overflow-x:auto; position:relative}
+.content pre code{background:none; padding:0}
+.content blockquote{border-left:4px solid var(--accent); margin:1rem 0; padding:.2rem 1rem; color:var(--muted)}
+.content table{border-collapse:collapse; width:100%; display:block; overflow-x:auto}
+.content th,.content td{border:1px solid var(--border); padding:.5rem .75rem}
+.content th{background:var(--code-bg)}
+.content img{max-width:100%; height:auto}
+.content .headerlink{opacity:0; text-decoration:none; margin-left:.35rem; color:var(--muted)}
+.content h1:hover .headerlink,.content h2:hover .headerlink,
+.content h3:hover .headerlink,.content h4:hover .headerlink{opacity:1}
+mark{background:var(--mark); color:inherit; border-radius:3px}
+.copy-btn{
+  position:absolute; top:.5rem; right:.5rem; font-size:.72rem; padding:.2rem .5rem;
+  border:1px solid var(--border); background:var(--bg); color:var(--muted);
+  border-radius:6px; cursor:pointer; opacity:0; transition:opacity .15s;
+}
+pre:hover .copy-btn{opacity:1}
+.copy-btn.copied{color:var(--accent); border-color:var(--accent)}
+.backdrop{display:none; position:fixed; inset:56px 0 0 0; background:rgba(0,0,0,.4); z-index:20}
+@media (max-width:820px){
+  .toc{position:fixed; top:56px; left:0; bottom:0; transform:translateX(-100%);
+       transition:transform .2s ease; z-index:25; width:80%; max-width:320px}
+  .toc.open{transform:translateX(0)}
+  .backdrop.show{display:block}
+  .content{padding:1.25rem 1.1rem 5rem}
+  .search{min-width:5rem}
+}
+@media (min-width:821px){ #menuBtn{display:none} }
+
+/* --- Pygments (light) --- */
+pre { line-height: 125%; }
+td.linenos .normal { color: inherit; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+span.linenos { color: inherit; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+td.linenos .special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+.codehilite .hll { background-color: #ffffcc }
+.codehilite { background: #f8f8f8; }
+.codehilite .c { color: #3D7B7B; font-style: italic } /* Comment */
+.codehilite .err { border: 1px solid #F00 } /* Error */
+.codehilite .k { color: #008000; font-weight: bold } /* Keyword */
+.codehilite .o { color: #666 } /* Operator */
+.codehilite .ch { color: #3D7B7B; font-style: italic } /* Comment.Hashbang */
+.codehilite .cm { color: #3D7B7B; font-style: italic } /* Comment.Multiline */
+.codehilite .cp { color: #9C6500 } /* Comment.Preproc */
+.codehilite .cpf { color: #3D7B7B; font-style: italic } /* Comment.PreprocFile */
+.codehilite .c1 { color: #3D7B7B; font-style: italic } /* Comment.Single */
+.codehilite .cs { color: #3D7B7B; font-style: italic } /* Comment.Special */
+.codehilite .gd { color: #A00000 } /* Generic.Deleted */
+.codehilite .ge { font-style: italic } /* Generic.Emph */
+.codehilite .ges { font-weight: bold; font-style: italic } /* Generic.EmphStrong */
+.codehilite .gr { color: #E40000 } /* Generic.Error */
+.codehilite .gh { color: #000080; font-weight: bold } /* Generic.Heading */
+.codehilite .gi { color: #008400 } /* Generic.Inserted */
+.codehilite .go { color: #717171 } /* Generic.Output */
+.codehilite .gp { color: #000080; font-weight: bold } /* Generic.Prompt */
+.codehilite .gs { font-weight: bold } /* Generic.Strong */
+.codehilite .gu { color: #800080; font-weight: bold } /* Generic.Subheading */
+.codehilite .gt { color: #04D } /* Generic.Traceback */
+.codehilite .kc { color: #008000; font-weight: bold } /* Keyword.Constant */
+.codehilite .kd { color: #008000; font-weight: bold } /* Keyword.Declaration */
+.codehilite .kn { color: #008000; font-weight: bold } /* Keyword.Namespace */
+.codehilite .kp { color: #008000 } /* Keyword.Pseudo */
+.codehilite .kr { color: #008000; font-weight: bold } /* Keyword.Reserved */
+.codehilite .kt { color: #B00040 } /* Keyword.Type */
+.codehilite .m { color: #666 } /* Literal.Number */
+.codehilite .s { color: #BA2121 } /* Literal.String */
+.codehilite .na { color: #687822 } /* Name.Attribute */
+.codehilite .nb { color: #008000 } /* Name.Builtin */
+.codehilite .nc { color: #00F; font-weight: bold } /* Name.Class */
+.codehilite .no { color: #800 } /* Name.Constant */
+.codehilite .nd { color: #A2F } /* Name.Decorator */
+.codehilite .ni { color: #717171; font-weight: bold } /* Name.Entity */
+.codehilite .ne { color: #CB3F38; font-weight: bold } /* Name.Exception */
+.codehilite .nf { color: #00F } /* Name.Function */
+.codehilite .nl { color: #767600 } /* Name.Label */
+.codehilite .nn { color: #00F; font-weight: bold } /* Name.Namespace */
+.codehilite .nt { color: #008000; font-weight: bold } /* Name.Tag */
+.codehilite .nv { color: #19177C } /* Name.Variable */
+.codehilite .ow { color: #A2F; font-weight: bold } /* Operator.Word */
+.codehilite .w { color: #BBB } /* Text.Whitespace */
+.codehilite .mb { color: #666 } /* Literal.Number.Bin */
+.codehilite .mf { color: #666 } /* Literal.Number.Float */
+.codehilite .mh { color: #666 } /* Literal.Number.Hex */
+.codehilite .mi { color: #666 } /* Literal.Number.Integer */
+.codehilite .mo { color: #666 } /* Literal.Number.Oct */
+.codehilite .sa { color: #BA2121 } /* Literal.String.Affix */
+.codehilite .sb { color: #BA2121 } /* Literal.String.Backtick */
+.codehilite .sc { color: #BA2121 } /* Literal.String.Char */
+.codehilite .dl { color: #BA2121 } /* Literal.String.Delimiter */
+.codehilite .sd { color: #BA2121; font-style: italic } /* Literal.String.Doc */
+.codehilite .s2 { color: #BA2121 } /* Literal.String.Double */
+.codehilite .se { color: #AA5D1F; font-weight: bold } /* Literal.String.Escape */
+.codehilite .sh { color: #BA2121 } /* Literal.String.Heredoc */
+.codehilite .si { color: #A45A77; font-weight: bold } /* Literal.String.Interpol */
+.codehilite .sx { color: #008000 } /* Literal.String.Other */
+.codehilite .sr { color: #A45A77 } /* Literal.String.Regex */
+.codehilite .s1 { color: #BA2121 } /* Literal.String.Single */
+.codehilite .ss { color: #19177C } /* Literal.String.Symbol */
+.codehilite .bp { color: #008000 } /* Name.Builtin.Pseudo */
+.codehilite .fm { color: #00F } /* Name.Function.Magic */
+.codehilite .vc { color: #19177C } /* Name.Variable.Class */
+.codehilite .vg { color: #19177C } /* Name.Variable.Global */
+.codehilite .vi { color: #19177C } /* Name.Variable.Instance */
+.codehilite .vm { color: #19177C } /* Name.Variable.Magic */
+.codehilite .il { color: #666 } /* Literal.Number.Integer.Long */
+/* --- Pygments (dark) --- */
+:root[data-theme="dark"] .codehilite,
+@media (prefers-color-scheme: dark) {}
+</style>
+<style id="pygments-dark" media="not all">
+pre { line-height: 125%; }
+td.linenos .normal { color: inherit; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+span.linenos { color: inherit; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+td.linenos .special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+.codehilite .hll { background-color: #49483e }
+.codehilite { background: #272822; color: #F8F8F2 }
+.codehilite .c { color: #959077 } /* Comment */
+.codehilite .err { color: #ED007E; background-color: #1E0010 } /* Error */
+.codehilite .esc { color: #F8F8F2 } /* Escape */
+.codehilite .g { color: #F8F8F2 } /* Generic */
+.codehilite .k { color: #66D9EF } /* Keyword */
+.codehilite .l { color: #AE81FF } /* Literal */
+.codehilite .n { color: #F8F8F2 } /* Name */
+.codehilite .o { color: #FF4689 } /* Operator */
+.codehilite .x { color: #F8F8F2 } /* Other */
+.codehilite .p { color: #F8F8F2 } /* Punctuation */
+.codehilite .ch { color: #959077 } /* Comment.Hashbang */
+.codehilite .cm { color: #959077 } /* Comment.Multiline */
+.codehilite .cp { color: #959077 } /* Comment.Preproc */
+.codehilite .cpf { color: #959077 } /* Comment.PreprocFile */
+.codehilite .c1 { color: #959077 } /* Comment.Single */
+.codehilite .cs { color: #959077 } /* Comment.Special */
+.codehilite .gd { color: #FF4689 } /* Generic.Deleted */
+.codehilite .ge { color: #F8F8F2; font-style: italic } /* Generic.Emph */
+.codehilite .ges { color: #F8F8F2; font-weight: bold; font-style: italic } /* Generic.EmphStrong */
+.codehilite .gr { color: #F8F8F2 } /* Generic.Error */
+.codehilite .gh { color: #F8F8F2 } /* Generic.Heading */
+.codehilite .gi { color: #A6E22E } /* Generic.Inserted */
+.codehilite .go { color: #66D9EF } /* Generic.Output */
+.codehilite .gp { color: #FF4689; font-weight: bold } /* Generic.Prompt */
+.codehilite .gs { color: #F8F8F2; font-weight: bold } /* Generic.Strong */
+.codehilite .gu { color: #959077 } /* Generic.Subheading */
+.codehilite .gt { color: #F8F8F2 } /* Generic.Traceback */
+.codehilite .kc { color: #66D9EF } /* Keyword.Constant */
+.codehilite .kd { color: #66D9EF } /* Keyword.Declaration */
+.codehilite .kn { color: #FF4689 } /* Keyword.Namespace */
+.codehilite .kp { color: #66D9EF } /* Keyword.Pseudo */
+.codehilite .kr { color: #66D9EF } /* Keyword.Reserved */
+.codehilite .kt { color: #66D9EF } /* Keyword.Type */
+.codehilite .ld { color: #E6DB74 } /* Literal.Date */
+.codehilite .m { color: #AE81FF } /* Literal.Number */
+.codehilite .s { color: #E6DB74 } /* Literal.String */
+.codehilite .na { color: #A6E22E } /* Name.Attribute */
+.codehilite .nb { color: #F8F8F2 } /* Name.Builtin */
+.codehilite .nc { color: #A6E22E } /* Name.Class */
+.codehilite .no { color: #66D9EF } /* Name.Constant */
+.codehilite .nd { color: #A6E22E } /* Name.Decorator */
+.codehilite .ni { color: #F8F8F2 } /* Name.Entity */
+.codehilite .ne { color: #A6E22E } /* Name.Exception */
+.codehilite .nf { color: #A6E22E } /* Name.Function */
+.codehilite .nl { color: #F8F8F2 } /* Name.Label */
+.codehilite .nn { color: #F8F8F2 } /* Name.Namespace */
+.codehilite .nx { color: #A6E22E } /* Name.Other */
+.codehilite .py { color: #F8F8F2 } /* Name.Property */
+.codehilite .nt { color: #FF4689 } /* Name.Tag */
+.codehilite .nv { color: #F8F8F2 } /* Name.Variable */
+.codehilite .ow { color: #FF4689 } /* Operator.Word */
+.codehilite .pm { color: #F8F8F2 } /* Punctuation.Marker */
+.codehilite .w { color: #F8F8F2 } /* Text.Whitespace */
+.codehilite .mb { color: #AE81FF } /* Literal.Number.Bin */
+.codehilite .mf { color: #AE81FF } /* Literal.Number.Float */
+.codehilite .mh { color: #AE81FF } /* Literal.Number.Hex */
+.codehilite .mi { color: #AE81FF } /* Literal.Number.Integer */
+.codehilite .mo { color: #AE81FF } /* Literal.Number.Oct */
+.codehilite .sa { color: #E6DB74 } /* Literal.String.Affix */
+.codehilite .sb { color: #E6DB74 } /* Literal.String.Backtick */
+.codehilite .sc { color: #E6DB74 } /* Literal.String.Char */
+.codehilite .dl { color: #E6DB74 } /* Literal.String.Delimiter */
+.codehilite .sd { color: #E6DB74 } /* Literal.String.Doc */
+.codehilite .s2 { color: #E6DB74 } /* Literal.String.Double */
+.codehilite .se { color: #AE81FF } /* Literal.String.Escape */
+.codehilite .sh { color: #E6DB74 } /* Literal.String.Heredoc */
+.codehilite .si { color: #E6DB74 } /* Literal.String.Interpol */
+.codehilite .sx { color: #E6DB74 } /* Literal.String.Other */
+.codehilite .sr { color: #E6DB74 } /* Literal.String.Regex */
+.codehilite .s1 { color: #E6DB74 } /* Literal.String.Single */
+.codehilite .ss { color: #E6DB74 } /* Literal.String.Symbol */
+.codehilite .bp { color: #F8F8F2 } /* Name.Builtin.Pseudo */
+.codehilite .fm { color: #A6E22E } /* Name.Function.Magic */
+.codehilite .vc { color: #F8F8F2 } /* Name.Variable.Class */
+.codehilite .vg { color: #F8F8F2 } /* Name.Variable.Global */
+.codehilite .vi { color: #F8F8F2 } /* Name.Variable.Instance */
+.codehilite .vm { color: #F8F8F2 } /* Name.Variable.Magic */
+.codehilite .il { color: #AE81FF } /* Literal.Number.Integer.Long */
+</style>
+</head>
+<body>
+<header class="topbar">
+  <button id="menuBtn" class="icon-btn" aria-label="目次を開閉">☰</button>
+  <span class="brand">Ralph Orchestrator <small>日本語ドキュメント</small></span>
+  <div class="spacer"></div>
+  <input id="search" class="search" type="search" placeholder="ページ内を検索…" aria-label="ページ内検索">
+  <button id="themeBtn" class="icon-btn" aria-label="テーマ切替">🌓</button>
+</header>
+<div class="layout">
+  <nav id="toc" class="toc" aria-label="目次"><div class="toc-title">目次</div><ul id="tocList"></ul></nav>
+  <main id="content" class="content">
+<h1 id="_1"><a class="toclink" href="#_1">セキュリティの考慮事項</a></h1>
+<h2 id="_2"><a class="toclink" href="#_2">概要</a></h2>
+<p>Ralph Orchestrator は、大きなシステムアクセスを伴って AI エージェントを実行します。この
+ドキュメントは、安全な運用のためのセキュリティの考慮事項とベストプラクティスを概説します。</p>
+<h2 id="_3"><a class="toclink" href="#_3">脅威モデル</a></h2>
+<h3 id="_4"><a class="toclink" href="#_4">潜在的なリスク</a></h3>
+<ol>
+<li>
+<p><strong>意図しないコード実行</strong>
+   - AI エージェントが有害なコードを生成・実行し得る
+   - プロジェクトの範囲を超えたファイルシステムの変更
+   - システムコマンドの実行</p>
+</li>
+<li>
+<p><strong>データの露出</strong>
+   - プロンプトやコード内の API キー
+   - Git 履歴内の機微なデータ
+   - 状態ファイル内の認証情報</p>
+</li>
+<li>
+<p><strong>リソースの枯渇</strong>
+   - 生成されたコード内の無限ループ
+   - 過剰な API 呼び出し
+   - ディスク容量の消費</p>
+</li>
+<li>
+<p><strong>サプライチェーン</strong>
+   - 侵害された AI CLI ツール
+   - 悪意あるプロンプトインジェクション
+   - 依存の脆弱性</p>
+</li>
+</ol>
+<h2 id="_5"><a class="toclink" href="#_5">セキュリティ制御</a></h2>
+<p>Ralph は、脅威から保護するために複数のセキュリティレイヤーを実装しています。</p>
+<div class="codehilite"><pre><span></span><code> 🔒 Security Defense Layers
+
+   ╭───────────────────╮
+   │    User Input     │
+   ╰───────────────────╯
+     │
+     │
+     ∨
+   ┌───────────────────┐
+   │ Input Validation  │
+   └───────────────────┘
+     │
+     │
+     ∨
+   ┌───────────────────┐
+   │ Process Isolation │
+   └───────────────────┘
+     │
+     │
+     ∨
+   ┌───────────────────┐
+   │  File Boundaries  │
+   └───────────────────┘
+     │
+     │
+     ∨
+   ┌───────────────────┐
+   │    Git Safety     │
+   └───────────────────┘
+     │
+     │
+     ∨
+   ┌───────────────────┐
+   │ Env Sanitization  │
+   └───────────────────┘
+     │
+     │
+     ∨
+   ╭───────────────────╮
+   │     AI Agent      │
+   ╰───────────────────╯
+</code></pre></div>
+
+<details>
+<summary>graph-easy のソース</summary>
+
+
+<div class="codehilite"><pre><span></span><code>graph { label: &quot;🔒 Security Defense Layers&quot;; flow: south; }
+[ User Input ] { shape: rounded; } -&gt; [ Input Validation ]
+[ Input Validation ] -&gt; [ Process Isolation ]
+[ Process Isolation ] -&gt; [ File Boundaries ]
+[ File Boundaries ] -&gt; [ Git Safety ]
+[ Git Safety ] -&gt; [ Env Sanitization ]
+[ Env Sanitization ] -&gt; [ AI Agent ] { shape: rounded; }
+</code></pre></div>
+
+
+
+</details>
+
+<h3 id="_6"><a class="toclink" href="#_6">プロセスの分離</a></h3>
+<p>Ralph は AI エージェントを、次を伴うサブプロセスで実行します。</p>
+<ul>
+<li>タイムアウト保護（既定 5 分）</li>
+<li>出力サイズの上限</li>
+<li>エラー境界</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+    <span class="n">cmd</span><span class="p">,</span>
+    <span class="n">capture_output</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">text</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">timeout</span><span class="o">=</span><span class="mi">300</span><span class="p">,</span>  <span class="c1"># 5-minute timeout</span>
+    <span class="n">env</span><span class="o">=</span><span class="n">filtered_env</span>  <span class="c1"># Sanitized environment</span>
+<span class="p">)</span>
+</code></pre></div>
+
+<h3 id="_7"><a class="toclink" href="#_7">ファイルシステムの境界</a></h3>
+<h4 id="_8"><a class="toclink" href="#_8">制限されたパス</a></h4>
+<ul>
+<li>プロジェクトディレクトリ内で作業する</li>
+<li>システムファイルにアクセスしない</li>
+<li>.git の整合性を保つ</li>
+</ul>
+<h4 id="_9"><a class="toclink" href="#_9">安全な既定</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Validate paths stay within project</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">validate_path</span><span class="p">(</span><span class="n">path</span><span class="p">):</span>
+    <span class="n">abs_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+    <span class="n">project_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="s1">&#39;.&#39;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">abs_path</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="n">project_path</span><span class="p">)</span>
+</code></pre></div>
+
+<h3 id="git"><a class="toclink" href="#git">Git の安全性</a></h3>
+<h4 id="_10"><a class="toclink" href="#_10">保護される操作</a></h4>
+<ul>
+<li>フォースプッシュなし</li>
+<li>ブランチの削除なし</li>
+<li>履歴の書き換えなし</li>
+</ul>
+<h4 id="_11"><a class="toclink" href="#_11">チェックポイントのみのコミット</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Ralph only creates checkpoint commits</span>
+git<span class="w"> </span>add<span class="w"> </span>.
+git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;Ralph checkpoint: iteration N&quot;</span>
+</code></pre></div>
+
+<h3 id="_12"><a class="toclink" href="#_12">環境のサニタイズ</a></h3>
+<h4 id="_13"><a class="toclink" href="#_13">フィルタされた変数</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="n">SAFE_ENV_VARS</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="s1">&#39;PATH&#39;</span><span class="p">,</span> <span class="s1">&#39;HOME&#39;</span><span class="p">,</span> <span class="s1">&#39;USER&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;LANG&#39;</span><span class="p">,</span> <span class="s1">&#39;LC_ALL&#39;</span><span class="p">,</span> <span class="s1">&#39;TERM&#39;</span>
+<span class="p">]</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">get_safe_env</span><span class="p">():</span>
+    <span class="k">return</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">v</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+            <span class="k">if</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">SAFE_ENV_VARS</span><span class="p">}</span>
+</code></pre></div>
+
+<h4 id="_14"><a class="toclink" href="#_14">認証情報の露出なし</a></h4>
+<ul>
+<li>API キーを決して環境経由で渡さない</li>
+<li>エージェントは自身の認証情報ストアを使うべき</li>
+<li>プロンプトやログに秘密情報を入れない</li>
+</ul>
+<h2 id="_15"><a class="toclink" href="#_15">ベストプラクティス</a></h2>
+<h3 id="1"><a class="toclink" href="#1">1. プロンプトのセキュリティ</a></h3>
+<h4 id="_16"><a class="toclink" href="#_16">する</a></h4>
+<ul>
+<li>実行前にプロンプトをレビューする</li>
+<li>具体的で境界のある指示を使う</li>
+<li>安全上の制約を含める</li>
+</ul>
+<h4 id="_17"><a class="toclink" href="#_17">しない</a></h4>
+<ul>
+<li>プロンプトに認証情報を含める</li>
+<li>システムレベルの変更を要求する</li>
+<li>無制限のイテレーションを使う</li>
+</ul>
+<h3 id="2"><a class="toclink" href="#2">2. エージェントの設定</a></h3>
+<h4 id="claude"><a class="toclink" href="#claude">Claude</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Use restricted mode if available</span>
+claude<span class="w"> </span>--safe-mode<span class="w"> </span>PROMPT.md
+</code></pre></div>
+
+<h4 id="gemini"><a class="toclink" href="#gemini">Gemini</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Limit context and capabilities</span>
+gemini<span class="w"> </span>--no-web<span class="w"> </span>--no-exec<span class="w"> </span>PROMPT.md
+</code></pre></div>
+
+<h3 id="3"><a class="toclink" href="#3">3. リポジトリのセットアップ</a></h3>
+<h4 id="gitignore"><a class="toclink" href="#gitignore">.gitignore</a></h4>
+<div class="codehilite"><pre><span></span><code># Security-sensitive files
+*.key
+*.pem
+.env
+.env.*
+secrets/
+credentials/
+
+# Ralph workspace
+.agent/metrics/
+.agent/logs/
+</code></pre></div>
+
+<h4 id="pre-commit"><a class="toclink" href="#pre-commit">pre-commit フック</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="c1"># .pre-commit-config.yaml</span>
+<span class="nt">repos</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">repo</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://github.com/Yelp/detect-secrets</span>
+<span class="w">    </span><span class="nt">hooks</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">detect-secrets</span>
+<span class="w">        </span><span class="nt">args</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;--baseline&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;.secrets.baseline&quot;</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+
+<h3 id="4"><a class="toclink" href="#4">4. ランタイムの監視</a></h3>
+<h4 id="_18"><a class="toclink" href="#_18">リソース上限</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Set resource limits</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">resource</span>
+
+<span class="c1"># Limit memory usage to 1GB</span>
+<span class="n">resource</span><span class="o">.</span><span class="n">setrlimit</span><span class="p">(</span>
+    <span class="n">resource</span><span class="o">.</span><span class="n">RLIMIT_AS</span><span class="p">,</span>
+    <span class="p">(</span><span class="mi">1024</span> <span class="o">*</span> <span class="mi">1024</span> <span class="o">*</span> <span class="mi">1024</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+<span class="p">)</span>
+
+<span class="c1"># Limit CPU time to 1 hour</span>
+<span class="n">resource</span><span class="o">.</span><span class="n">setrlimit</span><span class="p">(</span>
+    <span class="n">resource</span><span class="o">.</span><span class="n">RLIMIT_CPU</span><span class="p">,</span>
+    <span class="p">(</span><span class="mi">3600</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+<span class="p">)</span>
+</code></pre></div>
+
+<h4 id="_19"><a class="toclink" href="#_19">監査ロギング</a></h4>
+<div class="codehilite"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+
+<span class="c1"># Log all agent executions</span>
+<span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span>
+    <span class="s1">&#39;event&#39;</span><span class="p">:</span> <span class="s1">&#39;agent_execution&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;agent&#39;</span><span class="p">:</span> <span class="n">agent_name</span><span class="p">,</span>
+    <span class="s1">&#39;timestamp&#39;</span><span class="p">:</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">(),</span>
+    <span class="s1">&#39;user&#39;</span><span class="p">:</span> <span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s1">&#39;USER&#39;</span><span class="p">),</span>
+    <span class="s1">&#39;prompt_hash&#39;</span><span class="p">:</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">(</span><span class="n">prompt</span><span class="o">.</span><span class="n">encode</span><span class="p">())</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
+<span class="p">}))</span>
+</code></pre></div>
+
+<h2 id="_20"><a class="toclink" href="#_20">セキュリティチェックリスト</a></h2>
+<h3 id="ralph"><a class="toclink" href="#ralph">Ralph を実行する前に</a></h3>
+<ul>
+<li>[ ] 安全でない指示がないか PROMPT.md をレビューする</li>
+<li>[ ] プロンプトに認証情報がないことを確認する</li>
+<li>[ ] 作業ディレクトリが正しいことを検証する</li>
+<li>[ ] Git リポジトリがバックアップされていることを確認する</li>
+<li>[ ] エージェントツールが最新であることを確認する</li>
+</ul>
+<h3 id="_21"><a class="toclink" href="#_21">実行中</a></h3>
+<ul>
+<li>[ ] リソース使用を監視する</li>
+<li>[ ] 予期しないファイル変更に注意する</li>
+<li>[ ] エージェント出力に異常がないか確認する</li>
+<li>[ ] チェックポイントが作成されていることを検証する</li>
+<li>[ ] ログに機微なデータがないことを確認する</li>
+</ul>
+<h3 id="_22"><a class="toclink" href="#_22">完了後</a></h3>
+<ul>
+<li>[ ] 生成されたコードにセキュリティ問題がないかレビューする</li>
+<li>[ ] Git 履歴に露出した秘密情報がないか確認する</li>
+<li>[ ] システムファイルが変更されていないことを検証する</li>
+<li>[ ] 一時ファイルをクリーンアップする</li>
+<li>[ ] 露出した可能性のある認証情報をローテーションする</li>
+</ul>
+<h2 id="_23"><a class="toclink" href="#_23">インシデント対応</a></h2>
+<h3 id="_24"><a class="toclink" href="#_24">侵害が疑われる場合</a></h3>
+<ol>
+<li><strong>即座の行動</strong></li>
+</ol>
+<p>```bash
+   # Stop Ralph
+   pkill -f ralph_orchestrator</p>
+<p># Preserve evidence
+   cp -r .agent /tmp/ralph-incident-$(date +%s)</p>
+<p># Check for modifications
+   git status
+   git diff
+   ```</p>
+<ol start="2">
+<li>
+<p><strong>調査</strong>
+   - .agent/metrics/state_*.json をレビューする
+   - システムログを確認する
+   - Git 履歴を調べる
+   - エージェント出力を分析する</p>
+</li>
+<li>
+<p><strong>回復</strong></p>
+</li>
+</ol>
+<p>```bash
+   # Reset to last known good state
+   git reset --hard <last-good-commit></p>
+<p># Clean workspace
+   rm -rf .agent</p>
+<p># Rotate credentials if needed
+   # Update API keys for affected services
+   ```</p>
+<h2 id="_25"><a class="toclink" href="#_25">サンドボックスの選択肢</a></h2>
+<h3 id="docker"><a class="toclink" href="#docker">Docker コンテナ</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="k">FROM</span><span class="w"> </span><span class="s">python:3.11-slim</span>
+<span class="k">RUN</span><span class="w"> </span>useradd<span class="w"> </span>-m<span class="w"> </span>-s<span class="w"> </span>/bin/bash<span class="w"> </span>ralph
+<span class="k">USER</span><span class="w"> </span><span class="s">ralph</span>
+<span class="k">WORKDIR</span><span class="w"> </span><span class="s">/home/ralph/project</span>
+<span class="k">COPY</span><span class="w"> </span>--chown<span class="o">=</span>ralph:ralph<span class="w"> </span>.<span class="w"> </span>.
+<span class="k">CMD</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;./ralph&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;run&quot;</span><span class="p">]</span>
+</code></pre></div>
+
+<h3 id="_26"><a class="toclink" href="#_26">仮想マシン</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Run in VM with snapshot</span>
+vagrant<span class="w"> </span>up
+vagrant<span class="w"> </span>ssh<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;cd /project &amp;&amp; ./ralph run&quot;</span>
+vagrant<span class="w"> </span>snapshot<span class="w"> </span>restore<span class="w"> </span>clean
+</code></pre></div>
+
+<h3 id="_27"><a class="toclink" href="#_27">制限されたユーザー</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Create restricted user</span>
+sudo<span class="w"> </span>useradd<span class="w"> </span>-m<span class="w"> </span>-s<span class="w"> </span>/bin/bash<span class="w"> </span>ralph-runner
+sudo<span class="w"> </span>usermod<span class="w"> </span>-L<span class="w"> </span>ralph-runner<span class="w">  </span><span class="c1"># No password login</span>
+
+<span class="c1"># Run as restricted user</span>
+sudo<span class="w"> </span>-u<span class="w"> </span>ralph-runner<span class="w"> </span>./ralph<span class="w"> </span>run
+</code></pre></div>
+
+<h2 id="api"><a class="toclink" href="#api">API キーの管理</a></h2>
+<h3 id="_28"><a class="toclink" href="#_28">安全な保管</a></h3>
+<h4 id="_29"><a class="toclink" href="#_29">キーを決して保管しない場所</a></h4>
+<ul>
+<li>PROMPT.md ファイル</li>
+<li>Git リポジトリ</li>
+<li>スクリプト内の環境変数</li>
+<li>ログファイル</li>
+</ul>
+<h4 id="_30"><a class="toclink" href="#_30">推奨されるアプローチ</a></h4>
+<ol>
+<li>エージェント固有の認証情報ストア</li>
+<li>システムのキーチェーン/キーリング</li>
+<li>暗号化されたボールト（例: HashiCorp Vault）</li>
+<li>クラウドのシークレットマネージャ</li>
+</ol>
+<h3 id="_31"><a class="toclink" href="#_31">キーのローテーション</a></h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Regular rotation schedule</span>
+<span class="c1"># 1. Generate new keys</span>
+<span class="c1"># 2. Update agent configurations</span>
+<span class="c1"># 3. Test with new keys</span>
+<span class="c1"># 4. Revoke old keys</span>
+</code></pre></div>
+
+<h2 id="_32"><a class="toclink" href="#_32">コンプライアンスの考慮事項</a></h2>
+<h3 id="_33"><a class="toclink" href="#_33">データプライバシー</a></h3>
+<ul>
+<li>プロンプトで PII を処理しない</li>
+<li>共有する前に出力をサニタイズする</li>
+<li>データレジデンシーの要件を遵守する</li>
+</ul>
+<h3 id="_34"><a class="toclink" href="#_34">監査証跡</a></h3>
+<ul>
+<li>実行ログを維持する</li>
+<li>プロンプトの変更を追跡する</li>
+<li>エージェントとのやり取りを文書化する</li>
+</ul>
+<h3 id="_35"><a class="toclink" href="#_35">アクセス制御</a></h3>
+<ul>
+<li>誰が Ralph を実行できるかを制限する</li>
+<li>エージェントの権限を制限する</li>
+<li>リポジトリのアクセスを制御する</li>
+</ul>
+<h2 id="_36"><a class="toclink" href="#_36">セキュリティ更新</a></h2>
+<p>次を最新に保ちます。</p>
+<ul>
+<li>AI CLI ツールの更新</li>
+<li>Python のセキュリティパッチ</li>
+<li>Git のセキュリティ勧告</li>
+<li>依存の脆弱性</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Check for updates</span>
+npm<span class="w"> </span>update<span class="w"> </span>-g<span class="w"> </span>@anthropic-ai/claude-code
+pip<span class="w"> </span>install<span class="w"> </span>--upgrade<span class="w"> </span>subprocess
+git<span class="w"> </span>--version
+</code></pre></div>
+
+<h2 id="_37"><a class="toclink" href="#_37">セキュリティ問題の報告</a></h2>
+<p>セキュリティの脆弱性を発見した場合:</p>
+<ol>
+<li>公開の issue を<strong>開かない</strong></li>
+<li>セキュリティレポートを次にメールする: <a href="&#109;&#97;&#105;&#108;&#116;&#111;&#58;&#115;&#101;&#99;&#117;&#114;&#105;&#116;&#121;&#64;&#114;&#97;&#108;&#112;&#104;&#45;&#111;&#114;&#99;&#104;&#101;&#115;&#116;&#114;&#97;&#116;&#111;&#114;&#46;&#111;&#114;&#103;">&#115;&#101;&#99;&#117;&#114;&#105;&#116;&#121;&#64;&#114;&#97;&#108;&#112;&#104;&#45;&#111;&#114;&#99;&#104;&#101;&#115;&#116;&#114;&#97;&#116;&#111;&#114;&#46;&#111;&#114;&#103;</a></li>
+<li>次を含める:
+   - 脆弱性の説明
+   - 再現手順
+   - 潜在的な影響
+   - 提案する修正（あれば）</li>
+</ol>
+<p>48 時間以内に応答し、速やかに修正を提供することを目指します。</p>
+  </main>
+</div>
+<div id="backdrop" class="backdrop"></div>
+<script>
+
+(function(){
+  var root=document.documentElement;
+  // --- テーマ ---
+  var darkStyle=document.getElementById('pygments-dark');
+  function applyTheme(t){
+    if(t==='dark'||t==='light'){root.setAttribute('data-theme',t);}
+    else{root.removeAttribute('data-theme');}
+    var isDark = t==='dark' || (t!=='light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    if(darkStyle){ darkStyle.media = isDark ? 'all' : 'not all'; }
+  }
+  var saved=localStorage.getItem('ralph-ja-theme')||'auto';
+  applyTheme(saved);
+  document.getElementById('themeBtn').addEventListener('click',function(){
+    var cur=localStorage.getItem('ralph-ja-theme')||'auto';
+    var next=cur==='auto'?'light':cur==='light'?'dark':'auto';
+    localStorage.setItem('ralph-ja-theme',next); applyTheme(next);
+  });
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',function(){
+    if((localStorage.getItem('ralph-ja-theme')||'auto')==='auto')applyTheme('auto');
+  });
+
+  var content=document.getElementById('content');
+
+  // --- 目次生成 ---
+  var tocList=document.getElementById('tocList');
+  var heads=content.querySelectorAll('h2, h3, h4');
+  var items=[];
+  heads.forEach(function(h){
+    if(!h.id){h.id=(h.textContent||'').trim().replace(/\s+/g,'-');}
+    var li=document.createElement('li');
+    var a=document.createElement('a');
+    a.href='#'+h.id; a.textContent=h.textContent.replace('¶','').trim();
+    a.className='lvl-'+h.tagName.substring(1);
+    li.appendChild(a); tocList.appendChild(li);
+    items.push({a:a,h:h});
+  });
+
+  // --- スクロール連動ハイライト ---
+  if('IntersectionObserver' in window && items.length){
+    var byId={}; items.forEach(function(it){byId[it.h.id]=it.a;});
+    var obs=new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if(e.isIntersecting){
+          items.forEach(function(it){it.a.classList.remove('active');});
+          var a=byId[e.target.id]; if(a){a.classList.add('active');
+            a.scrollIntoView({block:'nearest'});}
+        }
+      });
+    },{rootMargin:'0px 0px -75% 0px'});
+    heads.forEach(function(h){obs.observe(h);});
+  }
+
+  // --- コードコピー ---
+  content.querySelectorAll('pre').forEach(function(pre){
+    var btn=document.createElement('button');
+    btn.className='copy-btn'; btn.type='button'; btn.textContent='コピー';
+    btn.addEventListener('click',function(){
+      var code=pre.querySelector('code'); var text=code?code.innerText:pre.innerText;
+      navigator.clipboard.writeText(text).then(function(){
+        btn.textContent='コピー済み'; btn.classList.add('copied');
+        setTimeout(function(){btn.textContent='コピー'; btn.classList.remove('copied');},1500);
+      });
+    });
+    pre.appendChild(btn);
+  });
+
+  // --- モバイル目次開閉 ---
+  var toc=document.getElementById('toc'), backdrop=document.getElementById('backdrop');
+  function closeToc(){toc.classList.remove('open'); backdrop.classList.remove('show');}
+  document.getElementById('menuBtn').addEventListener('click',function(){
+    toc.classList.toggle('open'); backdrop.classList.toggle('show');
+  });
+  backdrop.addEventListener('click',closeToc);
+  tocList.addEventListener('click',function(e){ if(e.target.tagName==='A') closeToc(); });
+
+  // --- ページ内検索（ハイライト） ---
+  var search=document.getElementById('search');
+  function clearMarks(){
+    content.querySelectorAll('mark[data-s]').forEach(function(m){
+      var t=document.createTextNode(m.textContent); m.parentNode.replaceChild(t,m);
+    });
+    content.normalize();
+  }
+  var timer;
+  search.addEventListener('input',function(){
+    clearTimeout(timer);
+    timer=setTimeout(function(){
+      clearMarks();
+      var q=search.value.trim(); if(q.length<2)return;
+      var rx=new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'gi');
+      var walker=document.createTreeWalker(content,NodeFilter.SHOW_TEXT,{
+        acceptNode:function(n){
+          if(!n.nodeValue.trim())return NodeFilter.FILTER_REJECT;
+          var p=n.parentNode.nodeName;
+          if(p==='SCRIPT'||p==='STYLE'||p==='MARK')return NodeFilter.FILTER_REJECT;
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      });
+      var nodes=[],n; while(n=walker.nextNode())nodes.push(n);
+      var first=null;
+      nodes.forEach(function(node){
+        if(!rx.test(node.nodeValue))return; rx.lastIndex=0;
+        var span=document.createElement('span');
+        span.innerHTML=node.nodeValue.replace(rx,function(m){return '<mark data-s="1">'+m+'</mark>';});
+        node.parentNode.replaceChild(span,node);
+        while(span.firstChild)span.parentNode.insertBefore(span.firstChild,span);
+        span.parentNode.removeChild(span);
+      });
+      first=content.querySelector('mark[data-s]');
+      if(first)first.scrollIntoView({block:'center',behavior:'smooth'});
+    },200);
+  });
+})();
+
+</script>
+</body>
+</html>
